@@ -1,12 +1,12 @@
 # Petdex-compatible Codex pets
 
-Open Island can render the user's locally installed Codex pet in the closed
+Agent Island can render the user's locally installed Codex pet in the closed
 island while a Codex session is running. This integration is local-only: the
 app never downloads, bundles, or redistributes community pet artwork.
 
 ## Selection
 
-Open Island follows Petdex's active selection in `~/.petdex/active.json`:
+Agent Island follows Petdex's active selection in `~/.petdex/active.json`:
 
 ```json
 {"slug":"null-signal"}
@@ -17,7 +17,7 @@ If there is no valid active selection, it uses the first valid installed pet.
 If no package can be loaded, the code-drawn Codex companion remains the
 fallback.
 
-Pet selection is read when the app process starts. Relaunch Open Island after
+Pet selection is read when the app process starts. Relaunch Agent Island after
 changing `active.json` or installing a different pet.
 
 ## Package validation
