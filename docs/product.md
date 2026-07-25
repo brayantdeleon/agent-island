@@ -57,6 +57,12 @@ CLI coding agents are powerful, but they pull attention away from the editor and
 - **DMG packaging** — signing, notarization, GitHub Actions release workflow
 - **Auto-update** — Sparkle-based automatic updates with appcast
 
+## Optional Hardware Integrations
+
+| Hardware | Status | Notes |
+|---|---|---|
+| **Keychron K0 Max** | Planned | Optional custom QMK firmware; ten agent-status slots, selection, jump, allow-once, and deny. USB is the first required transport; 2.4 GHz remains unclaimed until hardware verification, and Bluetooth is outside v1 scope. |
+
 ## Success Criteria
 
 - Agent events appear in the overlay with low latency
@@ -67,5 +73,6 @@ CLI coding agents are powerful, but they pull attention away from the editor and
 ## Future Directions
 
 - Warp precision jump support
+- Keychron K0 Max Agent Control implementation
 - Sound packs, themes, and onboarding polish
 - Deeper terminal split targeting
