@@ -59,15 +59,20 @@ else
     echo "WARNING: Sparkle.framework not found at $sparkle_framework — run 'swift package resolve' first." >&2
 fi
 
-# Copy SPM resource bundle into Contents/Resources/ so the .app root stays
-# clean for code signing (no unsealed contents). Our custom
-# resource_bundle_accessor.swift searches Bundle.main.resourceURL first.
-spm_resource_bundle="$build_bin_dir/AgentIsland_AgentIslandApp.bundle"
-if [[ -d "$spm_resource_bundle" ]]; then
+# Copy every SPM resource bundle used at runtime into Contents/Resources so
+# the signed .app root stays free of unsealed contents.
+spm_resource_bundle_names=(
+    "AgentIsland_AgentIslandApp.bundle"
+    "SwiftMath_SwiftMath.bundle"
+)
+for spm_resource_bundle_name in "${spm_resource_bundle_names[@]}"; do
+    spm_resource_bundle="$build_bin_dir/$spm_resource_bundle_name"
+    if [[ ! -d "$spm_resource_bundle" ]]; then
+        echo "ERROR: missing SPM resource bundle: $spm_resource_bundle" >&2
+        exit 1
+    fi
     cp -R "$spm_resource_bundle" "$bundle_dir/Contents/Resources/"
-else
-    echo "WARNING: SPM resource bundle not found at $spm_resource_bundle — app may crash on launch." >&2
-fi
+done
 
 chmod +x \
     "$bundle_dir/Contents/MacOS/AgentIslandApp" \
@@ -128,6 +133,7 @@ for required in \
     "Contents/Helpers/AgentIslandSetup" \
     "Contents/Resources/AgentIsland.icns" \
     "Contents/Resources/AgentIsland_AgentIslandApp.bundle" \
+    "Contents/Resources/SwiftMath_SwiftMath.bundle" \
 ; do
     if [[ ! -e "$bundle_dir/$required" ]]; then
         echo "ERROR: missing required file: $required" >&2
@@ -151,6 +157,10 @@ smoke_app="$smoke_dir/$(basename "$bundle_dir")"
 smoke_binary="$smoke_app/Contents/MacOS/AgentIslandApp"
 if [[ -x "$smoke_binary" ]]; then
     # Launch and give it a few seconds — if it crashes, the pid disappears.
+    AGENT_ISLAND_HARNESS_SCENARIO=completionCard \
+    AGENT_ISLAND_HARNESS_PRESENT_OVERLAY=1 \
+    AGENT_ISLAND_HARNESS_START_BRIDGE=0 \
+    AGENT_ISLAND_HARNESS_BOOT_ANIMATION=0 \
     "$smoke_binary" &
     smoke_pid=$!
     sleep 3
