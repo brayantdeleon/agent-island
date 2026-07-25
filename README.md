@@ -114,15 +114,7 @@ Think of it as an open-source [Vibe Island](https://vibeisland.app/) — **free,
 
 Grab the latest DMG from [GitHub Releases](https://github.com/brayantdeleon/agent-island/releases) — signed and notarized, ready to run.
 
-### Option 2: Homebrew
-
-```bash
-brew install --cask agent-island
-```
-
-Upgrade later with `brew upgrade --cask agent-island`.
-
-### Option 3: Build from source
+### Option 2: Build from source
 
 ```bash
 git clone https://github.com/brayantdeleon/agent-island.git

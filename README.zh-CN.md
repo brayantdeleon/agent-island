@@ -113,15 +113,7 @@ Agent-Island 驻留在 Mac 的**刘海区域**（或顶部栏），为你的 AI 
 
 从 [GitHub Releases](https://github.com/brayantdeleon/agent-island/releases) 下载最新 DMG——已签名公证，开箱即用。
 
-### 方式二：Homebrew
-
-```bash
-brew install --cask agent-island
-```
-
-后续升级用 `brew upgrade --cask agent-island`。
-
-### 方式三：从源码构建
+### 方式二：从源码构建
 
 ```bash
 git clone https://github.com/brayantdeleon/agent-island.git

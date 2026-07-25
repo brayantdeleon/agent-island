@@ -10,7 +10,7 @@ Agent-Island 由社区驱动。我们相信最好的产品体验会由每个工�
 
 > **如何参与**：
 > 1. 在 issue 中清晰描述你的想法，然后提交 PR。详见 [CONTRIBUTING.zh-CN.md](../CONTRIBUTING.zh-CN.md)。
-> 2. 在有任意代码（或其他形式的贡献）被合并后，你可以选择成为 maintainer 之一，只需要联系 [@Octane0411](https://github.com/Octane0411)（通常来说你可以在微信群直接找到我，当然你也可以使用邮箱）。
+> 2. 在有任意代码（或其他形式的贡献）被合并后，你可以选择成为 maintainer 之一，只需要联系 [@brayantdeleon](https://github.com/brayantdeleon)。
 
 ## 重点方向
 

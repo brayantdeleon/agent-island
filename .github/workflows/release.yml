@@ -248,54 +248,6 @@ jobs:
           EOF
           )"
 
-      - name: Update Homebrew tap cask
-        if: vars.SKIP_HOMEBREW != 'true'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          if [[ -z "${GH_TOKEN}" ]]; then
-            echo "::warning::HOMEBREW_TAP_TOKEN not set — skipping homebrew tap update"
-            exit 0
-          fi
-
-          dmg_path="output/package/Agent-Island.dmg"
-          sha256="$(shasum -a 256 "$dmg_path" | awk '{print $1}')"
-          echo "DMG sha256: $sha256"
-
-          workdir="$(mktemp -d)"
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/Octane0411/homebrew-tap.git" "$workdir/tap"
-          cd "$workdir/tap"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          branch="bump/agentisland-v${VERSION}"
-          git checkout -b "$branch"
-
-          sed -i '' \
-            -e "s/^  version \".*\"/  version \"${VERSION}\"/" \
-            -e "s/^  sha256 \".*\"/  sha256 \"${sha256}\"/" \
-            Casks/agentisland.rb
-
-          if git diff --quiet; then
-            echo "Cask already at v${VERSION}, nothing to do"
-            exit 0
-          fi
-
-          git add Casks/agentisland.rb
-          git commit -m "agentisland: bump to v${VERSION}"
-          git push --force origin "$branch"
-
-          gh pr create \
-            --repo Octane0411/homebrew-tap \
-            --base main \
-            --head "$branch" \
-            --title "agentisland: bump to v${VERSION}" \
-            --body "Automated bump from https://github.com/brayantdeleon/agent-island/releases/tag/v${VERSION}"
-          gh pr merge "$branch" --repo Octane0411/homebrew-tap --merge --delete-branch
-
       - name: Refresh contributors image cache via PR
         continue-on-error: true
         env:

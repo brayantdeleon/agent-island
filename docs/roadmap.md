@@ -10,7 +10,7 @@ You can also fork your own version and modify it however you like — but PRing 
 
 > **How to contribute**:
 > 1. Describe your idea clearly in an issue, then submit a PR. See [CONTRIBUTING.md](../CONTRIBUTING.md) for details.
-> 2. After any contribution (code or otherwise) gets merged, you can become a maintainer — just reach out to [@Octane0411](https://github.com/Octane0411) (you can usually find me in the WeChat group, or by email).
+> 2. After any contribution (code or otherwise) gets merged, you can become a maintainer — just reach out to [@brayantdeleon](https://github.com/brayantdeleon).
 
 ## Focus Areas
 
