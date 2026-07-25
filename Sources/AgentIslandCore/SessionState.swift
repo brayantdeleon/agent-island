@@ -122,6 +122,7 @@ public struct SessionState: Equatable, Sendable {
             }
 
             session.updatedAt = payload.timestamp
+            Self.clearSessionEnded(for: &session)
             upsert(session)
 
         case let .permissionRequested(payload):
@@ -134,6 +135,7 @@ public struct SessionState: Equatable, Sendable {
             session.permissionRequest = payload.request
             session.questionPrompt = nil
             session.updatedAt = payload.timestamp
+            Self.clearSessionEnded(for: &session)
             upsert(session)
 
         case let .questionAsked(payload):
@@ -146,6 +148,7 @@ public struct SessionState: Equatable, Sendable {
             session.questionPrompt = payload.prompt
             session.permissionRequest = nil
             session.updatedAt = payload.timestamp
+            Self.clearSessionEnded(for: &session)
             upsert(session)
 
         case let .sessionCompleted(payload):
@@ -232,6 +235,7 @@ public struct SessionState: Equatable, Sendable {
             session.permissionRequest = nil
             session.questionPrompt = nil
             session.updatedAt = payload.timestamp
+            Self.clearSessionEnded(for: &session)
             upsert(session)
         }
     }
@@ -339,6 +343,28 @@ public struct SessionState: Equatable, Sendable {
             // Codex.app sessions use app-level liveness, not hook-managed polling.
             session.isHookManaged = false
         }
+    }
+
+    /// An inbound hook proves the agent is still running, so clear the ended
+    /// flag.
+    ///
+    /// Without this, a session that the liveness fallback aged out stays
+    /// `isSessionEnded` forever: `ensureClaudeSessionExists` only guards on
+    /// "does a session with this id exist", so it never re-creates one, and
+    /// `isVisibleInIsland` returns false for an ended hook-managed session.
+    /// The conversation would then run *invisibly* until
+    /// `removeInvisibleSessions` purged it and the next hook rebuilt it as a
+    /// brand-new row.
+    ///
+    /// Only called for events that can only originate from a live hook.
+    /// Metadata/title/jumpTarget updates are deliberately excluded because
+    /// transcript and rollout watchers emit those for sessions that really
+    /// have ended. Process-liveness bookkeeping stays in
+    /// ``markSingleSessionAlive(sessionID:)`` — reviving on an
+    /// environment-derived signal would let a mis-matched process resurrect a
+    /// genuinely ended session.
+    private static func clearSessionEnded(for session: inout AgentSession) {
+        session.isSessionEnded = false
     }
 
     /// Mark a single session as alive (e.g. when a hook event is received).

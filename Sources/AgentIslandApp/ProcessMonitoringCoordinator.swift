@@ -54,7 +54,16 @@ final class ProcessMonitoringCoordinator {
     private static let idlePollInterval: TimeInterval = 300
     private static let cursorStalenessTimeout: TimeInterval = 600  // 10 minutes
     private static let codexAppStalenessTimeout: TimeInterval = 600  // 10 minutes
-    private static let claudeDesktopStalenessTimeout: TimeInterval = 600  // 10 minutes
+
+    /// Claude Desktop has no per-conversation "closed" signal: the Stop hook
+    /// fires `.completed` after *every* turn, so an open-but-idle
+    /// conversation is indistinguishable from a finished one. This is
+    /// therefore **not** a staleness cutoff — it is an abandonment backstop
+    /// that only bounds state growth for a Claude.app instance left running
+    /// for days. UI visibility is bounded independently at one hour by
+    /// `AgentSession.islandCompletedVisibilityWindow`, and quitting Claude.app
+    /// clears the whole set via the `isClaudeDesktopRunning` check.
+    private static let claudeDesktopAbandonedSessionTimeout: TimeInterval = 60 * 60 * 24
 
     static func monitoringPollInterval(
         isResolvingInitialLiveSessions: Bool,
@@ -202,7 +211,8 @@ final class ProcessMonitoringCoordinator {
         ghosttyAvailability: TerminalSessionAttachmentProbe.SnapshotAvailability<TerminalSessionAttachmentProbe.GhosttyTerminalSnapshot>? = nil,
         terminalAvailability: TerminalSessionAttachmentProbe.SnapshotAvailability<TerminalSessionAttachmentProbe.TerminalTabSnapshot>? = nil,
         preResolvedJumpTargets: [String: JumpTarget]? = nil,
-        observedCodexAppRunning: Bool? = nil
+        observedCodexAppRunning: Bool? = nil,
+        observedClaudeDesktopRunning: Bool? = nil
     ) {
         let activeProcesses = activeProcesses ?? activeAgentProcessDiscovery.discover()
 
@@ -275,9 +285,15 @@ final class ProcessMonitoringCoordinator {
         _ = local.reconcileJumpTargets(jumpTargetUpdates)
 
         // Phase 1: populate isProcessAlive in parallel with existing system.
+        // Pass `local.sessions` rather than letting this read `state.sessions`:
+        // synthetic merges and TTY adoption above have already run on the local
+        // copy, and reading the published state here would evaluate liveness
+        // against a snapshot that is one tick behind.
         let aliveIDs = sessionIDsWithAliveProcesses(
             activeProcesses: activeProcesses,
-            isCodexAppRunning: isCodexAppRunning
+            isCodexAppRunning: isCodexAppRunning,
+            isClaudeDesktopRunning: observedClaudeDesktopRunning,
+            sessions: local.sessions
         )
         _ = local.markProcessLiveness(
             aliveSessionIDs: aliveIDs,
@@ -386,10 +402,13 @@ final class ProcessMonitoringCoordinator {
     /// Codex/Claude/Gemini).
     func sessionIDsWithAliveProcesses(
         activeProcesses: [ActiveProcessSnapshot],
-        isCodexAppRunning: Bool
+        isCodexAppRunning: Bool,
+        isClaudeDesktopRunning: Bool? = nil,
+        sessions: [AgentSession]? = nil,
+        now: Date = .now
     ) -> Set<String> {
         var aliveIDs: Set<String> = []
-        let sessions = state.sessions
+        let sessions = sessions ?? state.sessions
 
         // Codex CLI sessions: match by session ID directly.
         let codexProcessIDs = Set(
@@ -404,7 +423,7 @@ final class ProcessMonitoringCoordinator {
                     continue
                 }
                 let isStale = session.phase == .completed
-                    && session.updatedAt.addingTimeInterval(Self.codexAppStalenessTimeout) < Date.now
+                    && session.updatedAt.addingTimeInterval(Self.codexAppStalenessTimeout) < now
                 if isCodexAppRunning, !isStale {
                     aliveIDs.insert(session.id)
                 }
@@ -545,7 +564,7 @@ final class ProcessMonitoringCoordinator {
                 if session.isSessionEnded { continue }
                 if normalizedTTYForMatching(session.jumpTarget?.terminalTTY) != nil { continue }
                 let isStale = session.phase == .completed
-                    && session.updatedAt.addingTimeInterval(Self.cursorStalenessTimeout) < Date.now
+                    && session.updatedAt.addingTimeInterval(Self.cursorStalenessTimeout) < now
                 if !isStale {
                     aliveIDs.insert(session.id)
                 }
@@ -556,21 +575,22 @@ final class ProcessMonitoringCoordinator {
         // agent mode") runs as a TTY-less subprocess that ps/lsof discovery
         // never sees, so the hook-managed liveness fallback in
         // SessionState.markProcessLiveness would evict these sessions ~6s after
-        // they appear (#510).  Keep them alive while Claude.app is running, but
-        // let completed sessions expire after a staleness window — Claude
-        // Desktop has no per-conversation "closed" signal beyond the SessionEnd
-        // hook (mirrors the Cursor handling above).  The session is identified
-        // by the "Claude.app" terminalApp tag stamped by the hook.
-        let isClaudeDesktopRunning = Self.isClaudeDesktopAppRunning()
+        // they appear (#510).  Keep them alive while Claude.app is running.
+        //
+        // This deliberately does NOT expire idle conversations.  Claude's Stop
+        // hook fires .completed after every turn, so "completed 10 minutes ago"
+        // means "you haven't typed in 10 minutes", not "this conversation is
+        // over" — the previous staleness window ended perfectly healthy
+        // sessions roughly 12 minutes after their last turn.  Only the
+        // abandonment backstop applies; see
+        // claudeDesktopAbandonedSessionTimeout.
+        let isClaudeDesktopRunning = isClaudeDesktopRunning ?? Self.isClaudeDesktopAppRunning()
         if isClaudeDesktopRunning {
-            for session in sessions
-            where session.tool == .claudeCode
-                && !session.isDemoSession
-                && session.jumpTarget?.terminalApp == "Claude.app" {
+            for session in sessions where session.isClaudeDesktopSession && !session.isDemoSession {
                 if session.isSessionEnded { continue }
-                let isStale = session.phase == .completed
-                    && session.updatedAt.addingTimeInterval(Self.claudeDesktopStalenessTimeout) < Date.now
-                if !isStale {
+                let isAbandoned = session.updatedAt
+                    .addingTimeInterval(Self.claudeDesktopAbandonedSessionTimeout) < now
+                if !isAbandoned {
                     aliveIDs.insert(session.id)
                 }
             }
@@ -1096,6 +1116,13 @@ final class ProcessMonitoringCoordinator {
             for index in sessions.indices {
                 let session = sessions[index]
                 guard session.tool == .claudeCode,
+                      !session.isSessionEnded,
+                      // Claude.app sessions have no TTY by construction.
+                      // Letting a terminal `claude` in the same cwd adopt one
+                      // hands it to TerminalJumpTargetResolver, which rewrites
+                      // jumpTarget and destroys the "Claude.app" tag that the
+                      // desktop liveness gate keys on.
+                      !session.isClaudeDesktopSession,
                       !isSyntheticClaudeSession(session),
                       let jumpTarget = session.jumpTarget,
                       normalizedPathForMatching(jumpTarget.workingDirectory) == processCWD,
@@ -1121,7 +1148,13 @@ final class ProcessMonitoringCoordinator {
 
                 sessions[index].jumpTarget?.terminalTTY = processTTY
                 sessions[index].attachmentState = .attached
-                sessions[index].updatedAt = .now
+                // Deliberately does not touch updatedAt: adopting a TTY is an
+                // internal attachment correction, not user activity, and
+                // updatedAt drives list ordering, the cwd-match tie-break in
+                // uniqueTrackedClaudeSession, the Done -> Idle age split, and
+                // the one-hour completed-session retention window.  Matches
+                // reconcileAttachmentStates / reconcileJumpTargets, which
+                // leave it alone for the same reason.
                 changed = true
                 break
             }

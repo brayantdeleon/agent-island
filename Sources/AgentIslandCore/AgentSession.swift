@@ -545,6 +545,19 @@ public extension AgentSession {
         tool == .codex && !isDemoSession
     }
 
+    /// Claude Code running inside Claude.app ("local agent mode").
+    ///
+    /// Identified by the `terminalApp` tag the hook stamps from
+    /// `CLAUDE_CODE_ENTRYPOINT` / `__CFBundleIdentifier` (see
+    /// `ClaudeHooks.inferTerminalApp`) rather than by a stored flag, because
+    /// the tag is re-stamped on every hook and no resolver rewrites it.
+    /// Unlike `isCodexAppSession` this deliberately does not flip
+    /// `isHookManaged` — these sessions keep the debounced hook-managed
+    /// liveness path.
+    var isClaudeDesktopSession: Bool {
+        tool == .claudeCode && jumpTarget?.terminalApp == "Claude.app"
+    }
+
     var isAttachedToTerminal: Bool {
         attachmentState.isLive
     }

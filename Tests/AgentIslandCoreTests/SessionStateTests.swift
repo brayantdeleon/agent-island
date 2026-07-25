@@ -174,6 +174,120 @@ struct SessionStateTests {
         #expect(state.session(id: "desktop-1")?.isVisibleInIsland == false)
     }
 
+    /// Builds a hook-managed Claude session that the liveness fallback has
+    /// already aged out, which is the state every revival test starts from.
+    private func endedHookManagedClaudeSession(
+        id: String = "desktop-1",
+        phase: SessionPhase = .completed
+    ) -> SessionState {
+        var session = AgentSession(
+            id: id,
+            title: "Claude · demo",
+            tool: .claudeCode,
+            phase: phase,
+            summary: "Completed the turn",
+            updatedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        session.isHookManaged = true
+        session.isProcessAlive = true
+        var state = SessionState(sessions: [session])
+
+        state.markProcessLiveness(aliveSessionIDs: [])
+        state.markProcessLiveness(aliveSessionIDs: [])
+        #expect(state.session(id: id)?.isSessionEnded == true)
+
+        return state
+    }
+
+    /// The reported bug: a Claude conversation the liveness fallback aged out
+    /// while it sat idle would come back as `.running` but stay invisible,
+    /// because nothing ever cleared `isSessionEnded`
+    /// (`ensureClaudeSessionExists` only checks whether the id exists, so it
+    /// never re-creates one). An inbound hook must revive the row.
+    @Test
+    func hookEventClearsSessionEndedSoResumedConversationStaysVisible() {
+        var state = endedHookManagedClaudeSession()
+
+        state.apply(.activityUpdated(
+            SessionActivityUpdated(
+                sessionID: "desktop-1",
+                summary: "Reading files",
+                phase: .running,
+                timestamp: Date(timeIntervalSince1970: 2_000)
+            )
+        ))
+
+        #expect(state.session(id: "desktop-1")?.isSessionEnded == false)
+        #expect(state.session(id: "desktop-1")?.phase == .running)
+        #expect(state.session(id: "desktop-1")?.isVisibleInIsland == true)
+    }
+
+    @Test
+    func permissionRequestRevivesEndedSession() {
+        var state = endedHookManagedClaudeSession()
+
+        state.apply(.permissionRequested(
+            PermissionRequested(
+                sessionID: "desktop-1",
+                request: PermissionRequest(
+                    title: "Run tests",
+                    summary: "Needs approval",
+                    affectedPath: "/tmp/repo"
+                ),
+                timestamp: Date(timeIntervalSince1970: 2_000)
+            )
+        ))
+
+        #expect(state.session(id: "desktop-1")?.isSessionEnded == false)
+        #expect(state.session(id: "desktop-1")?.isVisibleInIsland == true)
+        #expect(state.attentionCount == 1)
+    }
+
+    /// Revival must not swallow a real SessionEnd that arrives afterwards.
+    @Test
+    func sessionEndHookStillEndsSessionAfterRevival() {
+        var state = endedHookManagedClaudeSession()
+
+        state.apply(.activityUpdated(
+            SessionActivityUpdated(
+                sessionID: "desktop-1",
+                summary: "Reading files",
+                phase: .running,
+                timestamp: Date(timeIntervalSince1970: 2_000)
+            )
+        ))
+        state.apply(.sessionCompleted(
+            SessionCompleted(
+                sessionID: "desktop-1",
+                summary: "Session ended",
+                timestamp: Date(timeIntervalSince1970: 3_000),
+                isSessionEnd: true
+            )
+        ))
+
+        #expect(state.session(id: "desktop-1")?.isSessionEnded == true)
+        #expect(state.session(id: "desktop-1")?.isVisibleInIsland == false)
+    }
+
+    /// Metadata updates are emitted by transcript and rollout watchers for
+    /// sessions that really have ended, so they must not count as proof of
+    /// life. Pins the deliberately narrow revive list.
+    @Test
+    func metadataUpdateDoesNotReviveEndedSession() {
+        var state = endedHookManagedClaudeSession()
+
+        state.apply(.claudeSessionMetadataUpdated(
+            ClaudeSessionMetadataUpdated(
+                sessionID: "desktop-1",
+                claudeMetadata: ClaudeSessionMetadata(lastAssistantMessage: "Done."),
+                timestamp: Date(timeIntervalSince1970: 2_000)
+            )
+        ))
+
+        #expect(state.session(id: "desktop-1")?.isSessionEnded == true)
+        #expect(state.session(id: "desktop-1")?.isVisibleInIsland == false)
+    }
+
     @Test
     func invisibleCleanupRetainsOnlyRecentCompletedSessionsWhenRequested() {
         let now = Date(timeIntervalSince1970: 10_000)
