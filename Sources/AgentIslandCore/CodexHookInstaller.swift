@@ -405,11 +405,15 @@ public enum CodexHookInstaller {
 
     private static func isLegacyAgentIslandHookCommand(_ command: String) -> Bool {
         let normalized = command.lowercased()
-        if normalized.contains("agentislandhooks") || normalized.contains("vibeislandhooks") {
+        if normalized.contains("agentislandhooks")
+            || normalized.contains("openislandhooks")
+            || normalized.contains("vibeislandhooks") {
             return true
         }
 
-        return normalized.contains("agent-island-bridge") || normalized.contains("vibe-island-bridge")
+        return normalized.contains("agent-island-bridge")
+            || normalized.contains("open-island-bridge")
+            || normalized.contains("vibe-island-bridge")
     }
 
     private static func sectionRange(named section: String, lines: [String]) -> Range<Int>? {
