@@ -2,9 +2,9 @@
 
 <strong>中文</strong> | <a href="roadmap.md">English</a>
 
-Open Island 由社区驱动。我们相信最好的产品体验会由每个工具的深度用户创造。欢迎任何形式的贡献——选一个你感兴趣的方向，开始 vibe。
+Agent-Island 由社区驱动。我们相信最好的产品体验会由每个工具的深度用户创造。欢迎任何形式的贡献——选一个你感兴趣的方向，开始 vibe。
 
-你可以认为 Open Island 做了那些最基础的事：一个 mac island 的壳子 + code agent 通信层 + 基础的功能如通知/终端跳转，其他的一切都可以由你定义。
+你可以认为 Agent-Island 做了那些最基础的事：一个 mac island 的壳子 + code agent 通信层 + 基础的功能如通知/终端跳转，其他的一切都可以由你定义。
 
 当然你也可以 fork 自己的版本并任意改造，不过 PR 到这里有机会让它被更多人使用（btw，我们使用 GPL 协议）。
 
@@ -17,7 +17,7 @@ Open Island 由社区驱动。我们相信最好的产品体验会由每个工�
 | # | 方向 | 说明 | 状态 | 链接 |
 |---|------|------|------|------|
 | 1 | **Code Agent 集成体验** | 我们目前主要只关注了 Claude Code 和 Codex，希望和社区一起改进体验。对于其他 agent（OpenCode、Gemini CLI 等），我们相信最好的体验会由这些产品的深度用户创造——欢迎社区自由迭代。 | 活跃 | — |
-| 2 | **IDE / 插件跳转** | 支持跳转回 IDE 或 IDE 内 terminal，或集成了 code agent 插件的 app 窗口（Cursor、VSCode、GoLand、Obsidian 等）。 | 已规划 | [#173](https://github.com/Octane0411/open-vibe-island/issues/173), [#183](https://github.com/Octane0411/open-vibe-island/issues/183) |
+| 2 | **IDE / 插件跳转** | 支持跳转回 IDE 或 IDE 内 terminal，或集成了 code agent 插件的 app 窗口（Cursor、VSCode、GoLand、Obsidian 等）。 | 已规划 | [#173](https://github.com/Octane0411/agent-island/issues/173), [#183](https://github.com/Octane0411/agent-island/issues/183) |
 | 3 | **更多终端支持** | 为尚未支持的终端 app 添加支持。如果你用的终端还不在列表里，你就是最适合做这件事的人。 | 开放 | — |
 | 4 | **SSH 跳转** | 我们目前只支持了 SSH 内 code agent 的识别和通知，跳转会更麻烦，需要更多的工作。 | 开放 | — |
 | 5 | **交互体验提升** | 更好的 UX、UI、动画、音效设计和整体质感。[Vibe Island](https://vibeisland.app/) 在这方面做得非常出色——我们非常欢迎社区在这个方向上的意见和贡献。 | 开放 | — |

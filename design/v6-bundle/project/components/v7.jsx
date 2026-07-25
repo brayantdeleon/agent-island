@@ -3,14 +3,14 @@ const { useState: useS, useEffect: useE, useRef: useR } = React;
 
 // ---------- Data ----------
 const SESSIONS = [
-  { id: 's1', agent: 'claude', state: 'waiting', project: 'open-island', branch: 'refactor/claude-kernel-pid-monitor', msg: '开始执行吧，先补测试再提 PR', you: '<task-notification>', terminal: 'Ghostty', age: '2h', detail: { tool: 'Edit', target: 'Sources/OpenIslandCore/Sessions/SessionState.swift L124-156' } },
-  { id: 's2', agent: 'claude', state: 'waiting', project: 'open-island', branch: 'fix/external-island-width', msg: '有用户反馈外接屏宽度计算有问题', you: '提个 PR', terminal: 'Ghostty', age: '4h', detail: { tool: 'Bash', target: 'git diff --stat' } },
-  { id: 's3', agent: 'codex',  state: 'running', project: 'open-island', branch: 'main', msg: '分析 session reducer 的测试覆盖率', you: 'run tests', terminal: 'Terminal', age: '3m', detail: { tool: 'Bash', target: 'swift test --filter SessionStateTests' } },
-  { id: 's4', agent: 'claude', state: 'idle', project: 'open-island', branch: 'main', msg: '', you: '', terminal: 'Ghostty', age: '<1m' },
-  { id: 's5', agent: 'claude', state: 'idle', project: 'open-island', branch: 'main', msg: '', you: '', terminal: 'Ghostty', age: '<1m' },
-  { id: 's6', agent: 'codex',  state: 'idle', project: 'open-island', branch: 'main', msg: '', you: '', terminal: 'cmux', age: '<1m' },
+  { id: 's1', agent: 'claude', state: 'waiting', project: 'agent-island', branch: 'refactor/claude-kernel-pid-monitor', msg: '开始执行吧，先补测试再提 PR', you: '<task-notification>', terminal: 'Ghostty', age: '2h', detail: { tool: 'Edit', target: 'Sources/AgentIslandCore/Sessions/SessionState.swift L124-156' } },
+  { id: 's2', agent: 'claude', state: 'waiting', project: 'agent-island', branch: 'fix/external-island-width', msg: '有用户反馈外接屏宽度计算有问题', you: '提个 PR', terminal: 'Ghostty', age: '4h', detail: { tool: 'Bash', target: 'git diff --stat' } },
+  { id: 's3', agent: 'codex',  state: 'running', project: 'agent-island', branch: 'main', msg: '分析 session reducer 的测试覆盖率', you: 'run tests', terminal: 'Terminal', age: '3m', detail: { tool: 'Bash', target: 'swift test --filter SessionStateTests' } },
+  { id: 's4', agent: 'claude', state: 'idle', project: 'agent-island', branch: 'main', msg: '', you: '', terminal: 'Ghostty', age: '<1m' },
+  { id: 's5', agent: 'claude', state: 'idle', project: 'agent-island', branch: 'main', msg: '', you: '', terminal: 'Ghostty', age: '<1m' },
+  { id: 's6', agent: 'codex',  state: 'idle', project: 'agent-island', branch: 'main', msg: '', you: '', terminal: 'cmux', age: '<1m' },
   { id: 's7', agent: 'claude', state: 'done', project: 'dotfiles', branch: 'main', msg: 'Commit pushed · 3 files changed', you: 'commit all and push', terminal: 'Kaku', age: '12m' },
-  { id: 's8', agent: 'codex',  state: 'idle', project: 'open-island', branch: 'main', msg: '', you: '', terminal: 'WezTerm', age: '<1m' },
+  { id: 's8', agent: 'codex',  state: 'idle', project: 'agent-island', branch: 'main', msg: '', you: '', terminal: 'WezTerm', age: '<1m' },
 ];
 const pickSessions = (n) => SESSIONS.slice(0, n);
 
@@ -206,15 +206,15 @@ function ContentNotif({ kind, macbook, onClose }) {
       state: 'waiting', label: 'Permission', right: 'Claude',
       title: 'Run shell command?',
       code: '$ git push origin refactor/claude-kernel-pid-monitor',
-      sub: 'open-island · Ghostty',
+      sub: 'agent-island · Ghostty',
       acts: [{k:'deny', l:'Deny', cls:'danger'}, {k:'ok', l:'Allow', cls:'primary'}],
       hint: <><kbd>↵</kbd> allow · <kbd>esc</kbd> deny</>,
     },
     three: {
       state: 'waiting', label: 'Permission', right: 'Codex',
       title: 'Edit SessionState.swift?',
-      code: 'Sources/OpenIslandCore/Sessions/SessionState.swift\n+ 23 lines  − 8 lines  · L124–L156',
-      sub: 'open-island · fix/external-island-width',
+      code: 'Sources/AgentIslandCore/Sessions/SessionState.swift\n+ 23 lines  − 8 lines  · L124–L156',
+      sub: 'agent-island · fix/external-island-width',
       acts: [{k:'deny', l:'Deny'}, {k:'once', l:'Allow once'}, {k:'always', l:'Always allow', cls:'primary'}],
       hint: <><kbd>1</kbd> deny · <kbd>2</kbd> once · <kbd>3</kbd> always</>,
     },
@@ -228,8 +228,8 @@ function ContentNotif({ kind, macbook, onClose }) {
     done: {
       state: 'done', label: 'Done', right: 'Claude',
       title: 'Commit pushed to origin/main',
-      code: '3 files changed, 47 insertions(+), 12 deletions(−)\n  M  Sources/OpenIslandCore/Sessions/SessionState.swift\n  M  Tests/OpenIslandCoreTests/SessionStateTests.swift\n  A  docs/hooks.md',
-      sub: 'open-island · refactor/claude-kernel-pid-monitor',
+      code: '3 files changed, 47 insertions(+), 12 deletions(−)\n  M  Sources/AgentIslandCore/Sessions/SessionState.swift\n  M  Tests/AgentIslandCoreTests/SessionStateTests.swift\n  A  docs/hooks.md',
+      sub: 'agent-island · refactor/claude-kernel-pid-monitor',
       acts: [{k:'diff', l:'Open diff'}, {k:'jmp', l:'Jump back ↗', cls:'primary'}],
     },
   };
@@ -422,7 +422,7 @@ function V7App() {
   return (
     <div className="app v3">
       <header className="topbar">
-        <div className="brand"><span className="dot-v3"/><span>Open Island · v7 — pill as panel</span></div>
+        <div className="brand"><span className="dot-v3"/><span>Agent-Island · v7 — pill as panel</span></div>
         <span className="meta mono">// 所有模块都是 notch 的延伸</span>
         <div className="spacer"/>
       </header>

@@ -1,6 +1,6 @@
 # Release Signing & Notarization
 
-Open Island releases are code-signed and notarized via GitHub Actions. This document explains how to set up the required secrets.
+Agent-Island releases are code-signed and notarized via GitHub Actions. This document explains how to set up the required secrets.
 
 ## Required GitHub Secrets
 
@@ -29,7 +29,7 @@ Go to **Settings → Secrets and variables → Actions** in the repository and a
 ## How to generate an app-specific password
 
 1. Go to [appleid.apple.com](https://appleid.apple.com) → **Sign-In and Security** → **App-Specific Passwords**
-2. Generate a new password, label it `open-island-notary`
+2. Generate a new password, label it `agent-island-notary`
 3. Save it as the `APPLE_APP_SPECIFIC_PASSWORD` secret
 
 ## Local signed builds
@@ -37,12 +37,12 @@ Go to **Settings → Secrets and variables → Actions** in the repository and a
 You can also build signed locally:
 
 ```bash
-export OPEN_ISLAND_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
-export OPEN_ISLAND_NOTARY_PROFILE="open-island-notary"
-export OPEN_ISLAND_VERSION="0.2.0"
+export AGENT_ISLAND_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export AGENT_ISLAND_NOTARY_PROFILE="agent-island-notary"
+export AGENT_ISLAND_VERSION="0.2.0"
 
 # First, store notarization credentials (one-time):
-xcrun notarytool store-credentials "open-island-notary" \
+xcrun notarytool store-credentials "agent-island-notary" \
   --apple-id "you@example.com" \
   --team-id "TEAMID" \
   --password "xxxx-xxxx-xxxx-xxxx"

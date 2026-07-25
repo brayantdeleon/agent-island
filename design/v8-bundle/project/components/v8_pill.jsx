@@ -348,9 +348,9 @@ function NotifBody({ kind, onClose, embed=false }){
       // TODO[engineering]: replace `code` block with the agent's actual prompt body (tool name + args).
       // Hooks DO expose tool name + raw args; not a guaranteed unified diff.
       code:'<agent prompt body · injected by PreToolUse hook>',
-      sub:'open-island · refactor/claude-kernel-pid-monitor',
+      sub:'agent-island · refactor/claude-kernel-pid-monitor',
       // TODO[engineering]: use the agent's actual options. PermissionRequest in
-      // Sources/OpenIslandCore/AgentSession.swift carries primaryActionTitle /
+      // Sources/AgentIslandCore/AgentSession.swift carries primaryActionTitle /
       // secondaryActionTitle (default "Allow"/"Deny") and may include
       // suggestedUpdates for "always allow" rules.
       acts:[{k:'deny',l:'Option B',cls:'danger'},{k:'ok',l:'Option A',cls:'primary'}],
@@ -362,7 +362,7 @@ function NotifBody({ kind, onClose, embed=false }){
       state:'waitingForApproval', label:'Approval', right:'Claude · Ghostty',
       title:'Tool permission requested',
       code:'<agent prompt body · injected by pre_tool_use hook>',
-      sub:'open-island · main',
+      sub:'agent-island · main',
       acts:[{k:'a',l:'Option C'},{k:'b',l:'Option B'},{k:'c',l:'Option A',cls:'primary'}],
       hint:<><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> pick · <span style={{opacity:0.5}}>options injected from agent</span></>,
     },
@@ -383,7 +383,7 @@ function NotifBody({ kind, onClose, embed=false }){
     done: {
       // Phase: .completed — Stop hook fired; reply is written back to stdin.
       state:'completed', label:'Done', right:'Claude · Ghostty',
-      title:'open-island · refactor/claude-kernel-pid-monitor',
+      title:'agent-island · refactor/claude-kernel-pid-monitor',
       sub:'Claude Code · just now · 142/142 tests',
       reply:`PR 已提上去 ✓
 

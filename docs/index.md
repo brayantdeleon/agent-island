@@ -32,6 +32,7 @@ This index is the repository map for humans and coding agents. Read these files 
 
 - [docs/notch-surface-model.md](./notch-surface-model.md) for the island surface routing model and debug harness intent
 - [docs/app-ghostty-codex-chain.md](./app-ghostty-codex-chain.md) for terminal environment findings across the current supported chain
+- [docs/petdex-pets.md](./petdex-pets.md) for Agent Island's local Petdex-compatible Codex pet integration
 
 ## Refactoring Plans
 
@@ -44,7 +45,7 @@ This index is the repository map for humans and coding agents. Read these files 
 
 ## Remote / SSH
 
-- [docs/ssh-setup.md](./ssh-setup.md) for connecting Open Island to Claude Code running on remote servers via SSH socket forwarding
+- [docs/ssh-setup.md](./ssh-setup.md) for connecting Agent-Island to Claude Code running on remote servers via SSH socket forwarding
 
 ## Release
 

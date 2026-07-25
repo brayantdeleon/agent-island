@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Replay bridge events into a running Open Island dev app.
+Replay bridge events into a running Agent-Island dev app.
 
 This is a manual UI verification helper.  It sends realistic bridge commands
 over the same Unix socket used by hook clients.  Permission/question events keep
@@ -27,10 +27,10 @@ DEFAULT_HOLD_TIMEOUT = 0.0
 
 
 def default_socket_path() -> str:
-    path = os.environ.get("OPEN_ISLAND_SOCKET_PATH") or os.environ.get("VIBE_ISLAND_SOCKET_PATH")
+    path = os.environ.get("AGENT_ISLAND_SOCKET_PATH") or os.environ.get("VIBE_ISLAND_SOCKET_PATH")
     if path:
         return path
-    return str(Path.home() / "Library/Application Support/OpenIsland/bridge.sock")
+    return str(Path.home() / "Library/Application Support/AgentIsland/bridge.sock")
 
 
 def repo_root() -> Path:
@@ -58,11 +58,11 @@ def codex_payload(
     last_assistant_message: str | None = None,
 ) -> dict[str, Any]:
     payload = {
-        **base_payload(session_id, cwd, "codex replay ~/Personal/open-island"),
+        **base_payload(session_id, cwd, "codex replay ~/Personal/agent-island"),
         "hook_event_name": event,
         "model": "gpt-5.3-codex-replay",
         "permission_mode": "default",
-        "transcript_path": f"/tmp/open-island-{session_id}.jsonl",
+        "transcript_path": f"/tmp/agent-island-{session_id}.jsonl",
     }
     if prompt is not None:
         payload["prompt"] = prompt
@@ -89,7 +89,7 @@ def opencode_payload(
     last_assistant_message: str | None = None,
 ) -> dict[str, Any]:
     payload = {
-        **base_payload(session_id, cwd, "opencode replay ~/Personal/open-island"),
+        **base_payload(session_id, cwd, "opencode replay ~/Personal/agent-island"),
         "hook_event_name": event,
         "model": "opencode-replay",
     }
@@ -189,7 +189,7 @@ def replay_question_prompt() -> tuple[str, list[dict[str, Any]]]:
 
 def scenario_commands(scenario: str, cwd: str) -> list[tuple[str, dict[str, Any], bool, bool]]:
     if scenario == "approval":
-        session_id = "open-island-replay-approval"
+        session_id = "agent-island-replay-approval"
         return [
             (
                 "codex session start",
@@ -227,7 +227,7 @@ def scenario_commands(scenario: str, cwd: str) -> list[tuple[str, dict[str, Any]
         ]
 
     if scenario == "question":
-        session_id = "open-island-replay-question"
+        session_id = "agent-island-replay-question"
         question_title, questions = replay_question_prompt()
         return [
             (
@@ -258,7 +258,7 @@ def scenario_commands(scenario: str, cwd: str) -> list[tuple[str, dict[str, Any]
         ]
 
     if scenario == "question-hook":
-        session_id = "open-island-replay-question-hook"
+        session_id = "agent-island-replay-question-hook"
         question_title, questions = replay_question_prompt()
         return [
             (
@@ -297,7 +297,7 @@ def scenario_commands(scenario: str, cwd: str) -> list[tuple[str, dict[str, Any]
         ]
 
     if scenario == "completion":
-        session_id = "open-island-replay-completion"
+        session_id = "agent-island-replay-completion"
         return [
             (
                 "codex session start",
@@ -418,7 +418,7 @@ def hold_interaction(
     with connect_bridge(socket_path) as sock:
         sock.sendall(line.encode("utf-8") + b"\n")
         print(f"  sent {label}; keeping hook connected until UI resolution")
-        print("  answer the card in Open Island, or press Ctrl-C to cancel")
+        print("  answer the card in Agent-Island, or press Ctrl-C to cancel")
         return recv_response(sock, timeout)
 
 
@@ -464,7 +464,7 @@ def replay_one(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Replay Open Island bridge scenarios into the running dev app."
+        description="Replay Agent-Island bridge scenarios into the running dev app."
     )
     parser.add_argument(
         "scenario",
@@ -474,7 +474,7 @@ def main() -> int:
     parser.add_argument(
         "--socket",
         default=default_socket_path(),
-        help="Bridge socket path. Defaults to OPEN_ISLAND_SOCKET_PATH or the stable OpenIsland app-support socket.",
+        help="Bridge socket path. Defaults to AGENT_ISLAND_SOCKET_PATH or the stable AgentIsland app-support socket.",
     )
     parser.add_argument(
         "--cwd",
@@ -541,7 +541,7 @@ def main() -> int:
     if args.dry_run:
         print("Dry run complete.")
     else:
-        print("Replay complete. Inspect the Open Island overlay.")
+        print("Replay complete. Inspect the Agent-Island overlay.")
     return 0
 
 
