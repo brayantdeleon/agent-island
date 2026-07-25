@@ -13,12 +13,14 @@ struct AppModelSessionListTests {
             "appearance.island.v8.sessionSort",
             "appearance.island.v8.completedStaleThreshold",
             "appearance.island.v8.notch.rightSlot",
+            "appearance.island.v8.notch.closedPresentation",
             "appearance.island.v8.notch.centerLabel",
             "appearance.island.v8.notch.stateIndicator",
             "appearance.island.v8.notch.sessionGroup",
             "appearance.island.v8.notch.sessionSort",
             "appearance.island.v8.notch.completedStaleThreshold",
             "appearance.island.v8.topBar.rightSlot",
+            "appearance.island.v8.topBar.closedPresentation",
             "appearance.island.v8.topBar.centerLabel",
             "appearance.island.v8.topBar.stateIndicator",
             "appearance.island.v8.topBar.sessionGroup",
@@ -26,13 +28,14 @@ struct AppModelSessionListTests {
             "appearance.island.v8.topBar.completedStaleThreshold",
             "app.suppressFrontmostNotifications",
             "feature.completionReply.enabled",
+            HiddenSessionStore.defaultsKey,
             "overlay.sound.muted",
         ].forEach(UserDefaults.standard.removeObject(forKey:))
     }
 
     @Test
-    func islandListSessionsOnlyIncludeLiveAttachedSessions() {
-        let now = Date(timeIntervalSince1970: 2_000)
+    func islandListKeepsRecentCompletedSessionsAfterTheirProcessEnds() {
+        let now = Date()
         let model = AppModel()
 
         var liveSession = AgentSession(
@@ -85,14 +88,83 @@ struct AppModelSessionListTests {
             ]
         )
 
-        #expect(model.surfacedSessions.map(\.id) == ["live-session"])
-        #expect(model.recentSessions.map(\.id) == ["recent-session"])
-        #expect(model.islandListSessions.map(\.id) == ["live-session"])
+        #expect(model.surfacedSessions.map(\.id) == ["live-session", "recent-session"])
+        #expect(model.recentSessions.isEmpty)
+        #expect(model.islandListSessions.map(\.id) == ["live-session", "recent-session"])
+    }
+
+    @Test
+    func islandListHidesCompletedSessionsIdleForMoreThanOneHour() {
+        let now = Date()
+        let model = AppModel()
+
+        var recentCompleted = listSession(
+            id: "recent-completed",
+            phase: .completed,
+            updatedAt: now.addingTimeInterval(-3_599)
+        )
+        recentCompleted.isProcessAlive = false
+
+        var oldCompleted = listSession(
+            id: "old-completed",
+            phase: .completed,
+            updatedAt: now.addingTimeInterval(-3_601)
+        )
+        oldCompleted.isProcessAlive = true
+
+        model.state = SessionState(sessions: [oldCompleted, recentCompleted])
+
+        #expect(model.islandListSessions.map(\.id) == ["recent-completed"])
+        #expect(model.recentSessions.map(\.id) == ["old-completed"])
+    }
+
+    @Test
+    func realtimeVoiceChatsAreAbsentFromOpenAndRecentSessions() {
+        let now = Date()
+        let model = AppModel()
+
+        var voiceSession = listSession(
+            id: "realtime-voice-chat",
+            phase: .running,
+            updatedAt: now
+        )
+        voiceSession.title = "realtime-voice-chat-7"
+        voiceSession.isProcessAlive = true
+
+        let ordinarySession = listSession(
+            id: "ordinary",
+            phase: .completed,
+            updatedAt: now
+        )
+
+        model.state = SessionState(sessions: [voiceSession, ordinarySession])
+
+        #expect(model.allSessions.map(\.id).contains("realtime-voice-chat"))
+        #expect(model.surfacedSessions.map(\.id) == ["ordinary"])
+        #expect(model.recentSessions.isEmpty)
+    }
+
+    @Test
+    func completedSessionDoesNotHopOutWhenAttachmentStateChanges() {
+        let now = Date()
+        let model = AppModel()
+        var session = listSession(id: "completed", phase: .completed, updatedAt: now.addingTimeInterval(-600))
+        session.isProcessAlive = true
+
+        model.state = SessionState(sessions: [session])
+        #expect(model.islandListSessions.map(\.id) == ["completed"])
+
+        session.isProcessAlive = false
+        session.attachmentState = .stale
+        session.isSessionEnded = true
+        model.state = SessionState(sessions: [session])
+
+        #expect(model.islandListSessions.map(\.id) == ["completed"])
     }
 
     @Test
     func islandListDeduplicatesSessionsSharingTheSameLiveGhosttyTerminal() {
-        let now = Date(timeIntervalSince1970: 2_000)
+        let now = Date()
         let model = AppModel()
 
         var runningLive = AgentSession(
@@ -165,7 +237,7 @@ struct AppModelSessionListTests {
 
     @Test
     func islandListKeepsDistinctCodexAppThreadsInTheSameWorkspace() {
-        let now = Date(timeIntervalSince1970: 2_000)
+        let now = Date()
         let model = AppModel()
 
         var firstThread = AgentSession(
@@ -343,12 +415,237 @@ struct AppModelSessionListTests {
         model.islandSessionGroup = .state
         model.completedStaleThreshold = .never
 
-        var oldDone = listSession(id: "old-done", phase: .completed, updatedAt: now.addingTimeInterval(-86_400))
+        var oldDone = listSession(id: "old-done", phase: .completed, updatedAt: now.addingTimeInterval(-1_800))
         oldDone.isProcessAlive = true
         model.state = SessionState(sessions: [oldDone])
 
         #expect(model.islandSessionSections.map(\.id) == ["state-done"])
         #expect(model.islandSessionSections.first?.sessions.first?.id == "old-done")
+    }
+
+    @Test
+    func hiddenConversationPersistsAndStaysOutOfNormalIslandPresentation() {
+        let storage = makeHiddenSessionStorage()
+        defer {
+            storage.defaults.removePersistentDomain(forName: storage.suiteName)
+        }
+
+        var session = listSession(id: "hidden-running", phase: .running, updatedAt: .now)
+        session.isProcessAlive = true
+
+        let model = AppModel(hiddenSessionStore: storage.store)
+        model.state = SessionState(sessions: [session])
+        model.hideSession(session)
+
+        #expect(model.isSessionHidden(session))
+        #expect(model.surfacedSessions.isEmpty)
+        #expect(model.islandListSessions.isEmpty)
+        #expect(model.hiddenIslandSessions.map(\.id) == [session.id])
+        #expect(model.islandClosedActivePets.isEmpty)
+        #expect(model.islandClosedRightSlotContent() == nil)
+        #expect(!model.isHiddenSessionSectionExpanded)
+        #expect(model.islandRenderedSessions.isEmpty)
+
+        model.toggleHiddenSessionSection()
+        #expect(model.islandRenderedSessions.map(\.id) == [session.id])
+
+        let reloaded = AppModel(hiddenSessionStore: storage.store)
+        reloaded.state = SessionState(sessions: [session])
+        #expect(reloaded.isSessionHidden(session))
+        #expect(reloaded.hiddenIslandSessions.map(\.id) == [session.id])
+
+        reloaded.unhideSession(session)
+        #expect(!reloaded.isSessionHidden(session))
+        #expect(reloaded.surfacedSessions.map(\.id) == [session.id])
+    }
+
+    @Test
+    func hiddenConversationSuppressesCompletionButSurfacesApproval() {
+        let storage = makeHiddenSessionStorage()
+        defer {
+            storage.defaults.removePersistentDomain(forName: storage.suiteName)
+        }
+
+        let now = Date()
+        var session = listSession(id: "hidden-action", phase: .running, updatedAt: now)
+        session.isProcessAlive = true
+
+        let model = AppModel(
+            isNotificationSessionAlreadyFrontmost: { _ in false },
+            hiddenSessionStore: storage.store
+        )
+        model.suppressFrontmostNotifications = false
+        model.state = SessionState(sessions: [session])
+        model.hideSession(session)
+
+        let completion = AgentEvent.sessionCompleted(
+            SessionCompleted(
+                sessionID: session.id,
+                summary: "Hidden work finished.",
+                timestamp: now.addingTimeInterval(1)
+            )
+        )
+        model.applyTrackedEvent(completion, updateLastActionMessage: false, ingress: .bridge)
+
+        #expect(model.notchStatus == .closed)
+        #expect(model.hiddenIslandSessions.map(\.id) == [session.id])
+        #expect(!model.shouldExposeEventFromHiddenSession(
+            completion,
+            session: model.state.session(id: session.id)
+        ))
+
+        model.applyTrackedEvent(
+            .activityUpdated(
+                SessionActivityUpdated(
+                    sessionID: session.id,
+                    summary: "Working again.",
+                    phase: .running,
+                    timestamp: now.addingTimeInterval(2)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+        let approval = AgentEvent.permissionRequested(
+            PermissionRequested(
+                sessionID: session.id,
+                request: PermissionRequest(
+                    title: "Run command",
+                    summary: "Allow the hidden conversation to continue?",
+                    affectedPath: "/tmp/hidden-action"
+                ),
+                timestamp: now.addingTimeInterval(3)
+            )
+        )
+        model.applyTrackedEvent(approval, updateLastActionMessage: false, ingress: .bridge)
+
+        #expect(model.notchStatus == .opened)
+        #expect(model.notchOpenReason == .notification)
+        #expect(model.islandSurface == .sessionList(actionableSessionID: session.id))
+        #expect(model.surfacedSessions.map(\.id) == [session.id])
+        #expect(model.hiddenIslandSessions.isEmpty)
+        #expect(model.shouldExposeEventFromHiddenSession(
+            approval,
+            session: model.state.session(id: session.id)
+        ))
+
+        model.applyTrackedEvent(
+            .actionableStateResolved(
+                ActionableStateResolved(
+                    sessionID: session.id,
+                    summary: "Approval resolved.",
+                    timestamp: now.addingTimeInterval(4)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        #expect(model.surfacedSessions.isEmpty)
+        #expect(model.hiddenIslandSessions.map(\.id) == [session.id])
+    }
+
+    @Test
+    func hiddenApprovalSurvivesCodexIdleUpdateAndUnhide() {
+        let storage = makeHiddenSessionStorage()
+        defer {
+            storage.defaults.removePersistentDomain(forName: storage.suiteName)
+        }
+
+        let now = Date(timeIntervalSince1970: 4_000)
+        var session = listSession(id: "hidden-codex-approval", phase: .running, updatedAt: now)
+        session.isProcessAlive = true
+
+        let model = AppModel(
+            isNotificationSessionAlreadyFrontmost: { _ in false },
+            hiddenSessionStore: storage.store
+        )
+        model.suppressFrontmostNotifications = false
+        model.state = SessionState(sessions: [session])
+        model.hideSession(session)
+
+        let request = PermissionRequest(
+            title: "Apply code patch",
+            summary: "Codex wants to update AppModel.swift.",
+            detail: "*** Begin Patch\n*** Update File: AppModel.swift",
+            affectedPath: "AppModel.swift"
+        )
+        model.applyTrackedEvent(
+            .permissionRequested(
+                PermissionRequested(
+                    sessionID: session.id,
+                    request: request,
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        // Codex Desktop may report idle/turn-completed while its blocking
+        // hook is still awaiting Open Island's approval response.
+        model.applyTrackedEvent(
+            .activityUpdated(
+                SessionActivityUpdated(
+                    sessionID: session.id,
+                    summary: "Turn completed.",
+                    phase: .completed,
+                    timestamp: now.addingTimeInterval(2)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        let pending = model.state.session(id: session.id)
+        #expect(model.isSessionHidden(pending!))
+        #expect(pending?.phase == .waitingForApproval)
+        #expect(pending?.permissionRequest == request)
+        #expect(model.surfacedSessions.map(\.id) == [session.id])
+        #expect(model.hiddenIslandSessions.isEmpty)
+        #expect(model.notchStatus == .opened)
+        #expect(model.islandSurface == .sessionList(actionableSessionID: session.id))
+
+        model.unhideSession(pending!)
+
+        #expect(!model.isSessionHidden(model.state.session(id: session.id)!))
+        #expect(model.activeIslandCardSession?.permissionRequest == request)
+        #expect(model.islandSurface == .sessionList(actionableSessionID: session.id))
+    }
+
+    @Test
+    func hiddenConversationDoesNotSurfaceQuestionNotifications() {
+        let storage = makeHiddenSessionStorage()
+        defer {
+            storage.defaults.removePersistentDomain(forName: storage.suiteName)
+        }
+
+        var session = listSession(id: "hidden-question", phase: .running, updatedAt: .now)
+        session.isProcessAlive = true
+
+        let model = AppModel(hiddenSessionStore: storage.store)
+        model.suppressFrontmostNotifications = false
+        model.state = SessionState(sessions: [session])
+        model.hideSession(session)
+
+        model.applyTrackedEvent(
+            .questionAsked(
+                QuestionAsked(
+                    sessionID: session.id,
+                    prompt: QuestionPrompt(
+                        title: "Choose an option",
+                        options: ["A", "B"]
+                    ),
+                    timestamp: .now
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        #expect(model.notchStatus == .closed)
+        #expect(model.surfacedSessions.isEmpty)
+        #expect(model.hiddenIslandSessions.map(\.id) == [session.id])
     }
 
     @Test
@@ -370,13 +667,18 @@ struct AppModelSessionListTests {
     @Test
     func islandAppearancePreferencesPersistPerDisplayProfile() {
         let model = AppModel()
+        #expect(model.appearancePreferences(for: .notch).closedPresentation == .ghost)
+        #expect(model.appearancePreferences(for: .topBar).closedPresentation == .alwaysVisible)
+
         model.updateAppearancePreferences(for: .notch) {
+            $0.closedPresentation = .minimal
             $0.usageDisplay = .hidden
             $0.sessionGroup = .state
             $0.sessionStateIndicator = .bar
             $0.completedStaleThreshold = .twoMinutes
         }
         model.updateAppearancePreferences(for: .topBar) {
+            $0.closedPresentation = .activityOnly
             $0.usageDisplay = .compact
             $0.sessionGroup = .project
             $0.sessionStateIndicator = .tint
@@ -384,12 +686,14 @@ struct AppModelSessionListTests {
         }
 
         model.overlayPlacementDiagnostics = placementDiagnostics(mode: .notch)
+        #expect(model.islandClosedPresentation == .minimal)
         #expect(model.islandUsageDisplay == .hidden)
         #expect(model.islandSessionGroup == .state)
         #expect(model.islandSessionStateIndicator == .bar)
         #expect(model.completedStaleThreshold == .twoMinutes)
 
         model.overlayPlacementDiagnostics = placementDiagnostics(mode: .topBar)
+        #expect(model.islandClosedPresentation == .activityOnly)
         #expect(model.islandUsageDisplay == .compact)
         #expect(model.islandSessionGroup == .project)
         #expect(model.islandSessionStateIndicator == .tint)
@@ -397,10 +701,12 @@ struct AppModelSessionListTests {
 
         let reloaded = AppModel()
         reloaded.overlayPlacementDiagnostics = placementDiagnostics(mode: .notch)
+        #expect(reloaded.islandClosedPresentation == .minimal)
         #expect(reloaded.islandUsageDisplay == .hidden)
         #expect(reloaded.islandSessionGroup == .state)
         #expect(reloaded.islandSessionStateIndicator == .bar)
         reloaded.overlayPlacementDiagnostics = placementDiagnostics(mode: .topBar)
+        #expect(reloaded.islandClosedPresentation == .activityOnly)
         #expect(reloaded.islandUsageDisplay == .compact)
         #expect(reloaded.islandSessionGroup == .project)
         #expect(reloaded.islandSessionStateIndicator == .tint)
@@ -562,6 +868,45 @@ struct AppModelSessionListTests {
         #expect(model.notchStatus == .closed)
         #expect(model.notchOpenReason == nil)
         #expect(model.islandSurface == .sessionList())
+    }
+
+    @Test
+    func staleRolloutCompletionDoesNotReplaceNewerRunningState() {
+        let older = Date(timeIntervalSince1970: 2_000)
+        let newer = older.addingTimeInterval(5)
+        let model = AppModel()
+        model.suppressFrontmostNotifications = false
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "current-session",
+                    title: "Codex · open-island",
+                    tool: .codex,
+                    origin: .live,
+                    attachmentState: .attached,
+                    phase: .running,
+                    summary: "Working on the next turn.",
+                    updatedAt: newer
+                ),
+            ]
+        )
+
+        model.applyTrackedEvent(
+            .sessionCompleted(
+                SessionCompleted(
+                    sessionID: "current-session",
+                    summary: "An older turn finished.",
+                    timestamp: older
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .rollout
+        )
+
+        #expect(model.state.session(id: "current-session")?.phase == .running)
+        #expect(model.state.session(id: "current-session")?.summary == "Working on the next turn.")
+        #expect(model.notchStatus == .closed)
+        #expect(model.notchOpenReason == nil)
     }
 
     @Test
@@ -883,6 +1228,178 @@ struct AppModelSessionListTests {
     }
 
     @Test
+    func mergeDiscoveredSessionPreservesFirstClassLiveTitle() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let model = AppModel()
+        model.state = SessionState(sessions: [
+            AgentSession(
+                id: "codex-session",
+                title: "Investigate approval notifications",
+                tool: .codex,
+                attachmentState: .attached,
+                phase: .running,
+                summary: "Working",
+                updatedAt: now,
+                jumpTarget: JumpTarget(
+                    terminalApp: "Codex.app",
+                    workspaceName: "open-island",
+                    paneTitle: "Investigate approval notifications"
+                )
+            ),
+        ])
+
+        let merged = model.discovery.mergeDiscoveredSessions([
+            AgentSession(
+                id: "codex-session",
+                title: "Codex · open-island",
+                tool: .codex,
+                attachmentState: .stale,
+                phase: .running,
+                summary: "Recovered",
+                updatedAt: now.addingTimeInterval(1),
+                jumpTarget: JumpTarget(
+                    terminalApp: "Codex.app",
+                    workspaceName: "open-island",
+                    paneTitle: "Codex · open-island"
+                )
+            ),
+        ])
+
+        #expect(merged.first?.title == "Investigate approval notifications")
+        #expect(merged.first?.spotlightHeadlineText == "open-island · Investigate approval notifications")
+    }
+
+    @Test
+    func codexSessionIndexNamesUpdateExistingCodexSessionsOnly() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let state = SessionState(sessions: [
+            AgentSession(
+                id: "codex-session",
+                title: "Old Codex name",
+                tool: .codex,
+                phase: .running,
+                summary: "Working",
+                updatedAt: now,
+                jumpTarget: JumpTarget(
+                    terminalApp: "Codex.app",
+                    workspaceName: "open-island",
+                    paneTitle: "Old Codex name"
+                )
+            ),
+            AgentSession(
+                id: "claude-session",
+                title: "Claude name",
+                tool: .claudeCode,
+                phase: .running,
+                summary: "Working",
+                updatedAt: now
+            ),
+        ])
+
+        let result = SessionDiscoveryCoordinator.applyingCodexSessionNames(
+            [
+                "codex-session": "Renamed Codex thread",
+                "claude-session": "Incorrect cross-provider name",
+            ],
+            to: state
+        )
+
+        #expect(result.updatedCount == 1)
+        #expect(result.state.session(id: "codex-session")?.title == "Renamed Codex thread")
+        #expect(result.state.session(id: "codex-session")?.jumpTarget?.paneTitle == "Renamed Codex thread")
+        #expect(result.state.session(id: "claude-session")?.title == "Claude name")
+    }
+
+    @Test
+    func mergeDiscoveredSessionDoesNotResolvePendingApproval() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let request = PermissionRequest(
+            title: "Run command",
+            summary: "Allow the build command?",
+            affectedPath: "/tmp/open-island"
+        )
+        let model = AppModel()
+        model.state = SessionState(sessions: [
+            AgentSession(
+                id: "codex-session",
+                title: "Approval reliability",
+                tool: .codex,
+                attachmentState: .attached,
+                phase: .waitingForApproval,
+                summary: request.summary,
+                updatedAt: now,
+                permissionRequest: request
+            ),
+        ])
+
+        let merged = model.discovery.mergeDiscoveredSessions([
+            AgentSession(
+                id: "codex-session",
+                title: "Codex · open-island",
+                tool: .codex,
+                attachmentState: .stale,
+                phase: .completed,
+                summary: "Recovered completion",
+                updatedAt: now.addingTimeInterval(1)
+            ),
+        ])
+
+        #expect(merged.first?.phase == .waitingForApproval)
+        #expect(merged.first?.permissionRequest == request)
+        #expect(merged.first?.summary == request.summary)
+    }
+
+    @Test
+    func mergeDiscoveredCodexSessionReplacesRootWorkspaceWithRolloutWorkspace() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let model = AppModel()
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "codex-thread",
+                    title: "Codex · open-island",
+                    tool: .codex,
+                    origin: .live,
+                    attachmentState: .attached,
+                    phase: .running,
+                    summary: "Working",
+                    updatedAt: now,
+                    jumpTarget: JumpTarget(
+                        terminalApp: "Codex.app",
+                        workspaceName: "/",
+                        paneTitle: "Codex",
+                        workingDirectory: "/",
+                        codexThreadID: "codex-thread"
+                    )
+                ),
+            ]
+        )
+
+        let merged = model.discovery.mergeDiscoveredSessions([
+            AgentSession(
+                id: "codex-thread",
+                title: "Codex · open-island",
+                tool: .codex,
+                origin: .live,
+                attachmentState: .stale,
+                phase: .running,
+                summary: "Working",
+                updatedAt: now,
+                jumpTarget: JumpTarget(
+                    terminalApp: "Codex.app",
+                    workspaceName: "open-island",
+                    paneTitle: "Codex · open-island",
+                    workingDirectory: "/tmp/open-island",
+                    codexThreadID: "codex-thread"
+                )
+            ),
+        ])
+
+        #expect(merged.first?.jumpTarget?.workspaceName == "open-island")
+        #expect(merged.first?.jumpTarget?.workingDirectory == "/tmp/open-island")
+    }
+
+    @Test
     func mergedWithSyntheticClaudeSessionsAddsGhosttyClaudeProcessWhenNoTrackedSessionExists() {
         let now = Date(timeIntervalSince1970: 2_000)
         let model = AppModel()
@@ -1179,7 +1696,6 @@ struct AppModelSessionListTests {
     @MainActor
     func notificationMeasuredHeightClearedWhenSameSessionCardContentChanges() {
         let model = AppModel()
-        model.isSoundMuted = true
 
         var session = AgentSession(
             id: "same-session",
@@ -1223,7 +1739,6 @@ struct AppModelSessionListTests {
     @MainActor
     func hoveredNotificationCardIsNotReplacedByAnotherNotification() {
         let model = AppModel()
-        model.isSoundMuted = true
 
         var currentSession = AgentSession(
             id: "current-session",
@@ -1382,6 +1897,21 @@ struct AppModelSessionListTests {
                 workingDirectory: "/tmp/\(id)",
                 terminalSessionID: "ghostty-\(id)"
             )
+        )
+    }
+
+    private func makeHiddenSessionStorage() -> (
+        store: HiddenSessionStore,
+        defaults: UserDefaults,
+        suiteName: String
+    ) {
+        let suiteName = "AppModelSessionListTests.Hidden.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return (
+            HiddenSessionStore(defaults: defaults),
+            defaults,
+            suiteName
         )
     }
 

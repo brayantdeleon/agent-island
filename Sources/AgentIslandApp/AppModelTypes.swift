@@ -54,6 +54,7 @@ enum IslandAppearanceDisplayProfile: String, CaseIterable, Identifiable, Sendabl
 }
 
 struct IslandAppearancePreferences: Equatable, Sendable {
+    var closedPresentation: IslandClosedPresentation = .ghost
     var rightSlot: IslandRightSlot = .count
     var centerLabel: IslandCenterLabel = .agentAction
     var usageDisplay: IslandUsageDisplay = .compact
@@ -61,6 +62,43 @@ struct IslandAppearancePreferences: Equatable, Sendable {
     var sessionGroup: IslandSessionGroup = .none
     var sessionSort: IslandSessionSort = .attention
     var completedStaleThreshold: IslandCompletedStaleThreshold = .fiveMinutes
+}
+
+enum IslandClosedPresentation: String, CaseIterable, Identifiable, Sendable {
+    case ghost
+    case activityOnly
+    case minimal
+    case menuBarOnly
+    case alwaysVisible
+    case hidden
+
+    var id: String { rawValue }
+
+    var allowsHoverOpen: Bool {
+        self != .hidden
+    }
+
+    var usesPhysicalNotchHoverTarget: Bool {
+        switch self {
+        case .ghost, .minimal, .hidden:
+            true
+        case .activityOnly, .menuBarOnly, .alwaysVisible:
+            false
+        }
+    }
+
+    func showsClosedSurface(hasActivity: Bool, menuBarVisible: Bool) -> Bool {
+        switch self {
+        case .ghost, .hidden:
+            false
+        case .activityOnly:
+            hasActivity
+        case .minimal, .alwaysVisible:
+            true
+        case .menuBarOnly:
+            menuBarVisible
+        }
+    }
 }
 
 enum IslandUsageDisplay: String, CaseIterable, Identifiable, Sendable {

@@ -932,6 +932,32 @@ public extension ClaudeHookPayload {
         return "\(agent) needs permission to continue."
     }
 
+    var permissionRequestDetail: String? {
+        if case let .object(object) = toolInput {
+            let keyPriority = [
+                "command",
+                "description",
+                "patch",
+                "content",
+                "file_path",
+                "path",
+                "notebook_path",
+                "target_file",
+                "prompt",
+            ]
+            for key in keyPriority {
+                if let value = stringValue(for: object[key])?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !value.isEmpty {
+                    return value
+                }
+            }
+        }
+
+        return stringValue(for: toolInput)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var permissionAffectedPath: String {
         if let explicitPath = extractedPathValue, !explicitPath.isEmpty {
             return explicitPath

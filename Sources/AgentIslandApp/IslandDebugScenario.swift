@@ -399,7 +399,14 @@ private enum DebugSessionFactory {
             codexMetadata: CodexSessionMetadata(
                 initialUserPrompt: "这次我可能确实需要一些 mock 手段，让我能验收这些 Card 的 UI。",
                 lastUserPrompt: "可以把 DEV 完全重构成一个 debug 页面。",
-                lastAssistantMessage: "Plan 文件已写好。你的 hooks 触发情况如何？"
+                lastAssistantMessage: """
+Plan 文件已写好。内联公式 \\(E = mc^2\\) 和展示公式都应该正确排版：
+
+$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$
+
+::git-push{cwd="/Users/example/open-island" branch="fix/example"}
+::git-create-pr{cwd="/Users/example/open-island" branch="fix/example" url="https://example.com/pull/1" isDraft=false}
+"""
             )
         )
     }

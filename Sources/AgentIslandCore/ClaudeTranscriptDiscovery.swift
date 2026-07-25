@@ -84,6 +84,7 @@ public final class ClaudeTranscriptDiscovery: @unchecked Sendable {
         var initialUserPrompt: String?
         var lastUserPrompt: String?
         var lastAssistantMessage: String?
+        var customTitle: String?
         var model: String?
         var currentTool: String?
         var currentToolInputPreview: String?
@@ -111,6 +112,14 @@ public final class ClaudeTranscriptDiscovery: @unchecked Sendable {
             let topLevelType = object["type"] as? String
             let message = object["message"] as? [String: Any]
             let role = message?["role"] as? String
+
+            if topLevelType == "custom-title",
+               let value = object["customTitle"] as? String {
+                let title = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !title.isEmpty {
+                    customTitle = title
+                }
+            }
 
             if role == "user" {
                 if let prompt = self.promptText(from: message?["content"]) {
@@ -196,7 +205,7 @@ public final class ClaudeTranscriptDiscovery: @unchecked Sendable {
 
         return AgentSession(
             id: sessionID,
-            title: "Claude · \(workspaceName)",
+            title: customTitle ?? "Claude · \(workspaceName)",
             tool: .claudeCode,
             origin: .live,
             attachmentState: .stale,

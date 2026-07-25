@@ -6,7 +6,6 @@
 /* Settings - Tab Labels */
 "settings.tab.general" = "General";
 "settings.tab.display" = "Display";
-"settings.tab.sound" = "Sound";
 "settings.tab.shortcuts" = "Shortcuts";
 "settings.tab.lab" = "Lab";
 "settings.tab.about" = "About";
@@ -65,6 +64,20 @@
 "settings.appearance.centerLabel.sessionName" = "Session name";
 "settings.appearance.centerLabel.off" = "Off";
 "settings.appearance.notchPart.title" = "Notch";
+"settings.appearance.closedPresentation.title" = "01 · Closed island";
+"settings.appearance.closedPresentation.note" = "Choose what remains visible while closed. Closed islands never intercept clicks.";
+"settings.appearance.closedPresentation.ghost" = "Ghost";
+"settings.appearance.closedPresentation.ghost.note" = "Invisible; opens after a deliberate notch hover.";
+"settings.appearance.closedPresentation.activityOnly" = "Activity only";
+"settings.appearance.closedPresentation.activityOnly.note" = "Visible only while an agent is active or waiting.";
+"settings.appearance.closedPresentation.minimal" = "Minimal";
+"settings.appearance.closedPresentation.minimal.note" = "Shows only a small passive activity line.";
+"settings.appearance.closedPresentation.menuBarOnly" = "Menu bar only";
+"settings.appearance.closedPresentation.menuBarOnly.note" = "Visible only while the system menu bar is visible.";
+"settings.appearance.closedPresentation.alwaysVisible" = "Always visible";
+"settings.appearance.closedPresentation.alwaysVisible.note" = "Keeps the complete mini island on screen.";
+"settings.appearance.closedPresentation.hidden" = "Hidden";
+"settings.appearance.closedPresentation.hidden.note" = "No closed view and no hover-to-open target.";
 "settings.appearance.sessionListPart.title" = "Session list";
 "settings.appearance.sessionPreview" = "Preview";
 "settings.appearance.profile.title" = "Display profile";
@@ -122,9 +135,6 @@
 "settings.display.layoutMode" = "Layout Mode";
 
 /* Settings - Sound */
-"settings.sound.notifications" = "Notification Sounds";
-"settings.sound.mute" = "Mute";
-"settings.sound.selectSound" = "Select Sound";
 
 /* Settings - Setup */
 "settings.tab.setup" = "Setup";
@@ -196,6 +206,9 @@
 "island.section.inProgress" = "In progress";
 "island.section.justDone" = "Just done";
 "island.section.idle" = "Idle";
+"island.section.hidden" = "Hidden";
+"island.session.hide" = "Hide Conversation";
+"island.session.unhide" = "Unhide Conversation";
 "island.showAll" = "Show all %lld sessions";
 "island.collapseList" = "Collapse list";
 "island.usageWaiting" = "Usage waiting";

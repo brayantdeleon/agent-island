@@ -101,7 +101,10 @@ final class CodexAppServerCoordinator {
                 // Skip threads already tracked — re-emitting sessionStarted
                 // rebuilds the AgentSession and would wipe richer state
                 // already accumulated from hooks or rediscovery.
-                if isSessionTracked?(thread.id) == true { continue }
+                if isSessionTracked?(thread.id) == true {
+                    emitSessionTitleUpdated(threadId: thread.id, name: thread.name)
+                    continue
+                }
                 emitSessionStarted(from: thread)
                 created += 1
             }
@@ -115,25 +118,32 @@ final class CodexAppServerCoordinator {
 
     // MARK: - Notification handling
 
-    private func handleNotification(_ notification: CodexAppServerNotification) {
+    /// Internal so tests can pin how observer-only app-server signals map into
+    /// actionable Open Island state.
+    func handleNotification(_ notification: CodexAppServerNotification) {
         switch notification {
         case .threadStarted(let thread):
             guard !thread.ephemeral else { return }
-            guard isSessionTracked?(thread.id) != true else { return }
+            guard isSessionTracked?(thread.id) != true else {
+                emitSessionTitleUpdated(threadId: thread.id, name: thread.name)
+                return
+            }
             emitSessionStarted(from: thread)
 
         case .threadStatusChanged(let threadId, let status):
             switch status.type {
             case .active:
                 if status.isWaitingOnApproval {
-                    onEvent?(.permissionRequested(
-                        PermissionRequested(
+                    // This coordinator owns a separate app-server subprocess,
+                    // not the stdio connection used by Codex Desktop. Its
+                    // status can tell us that Desktop is waiting, but it does
+                    // not carry a routable approval request. Only the blocking
+                    // PermissionRequest hook may create an actionable card.
+                    onEvent?(.activityUpdated(
+                        SessionActivityUpdated(
                             sessionID: threadId,
-                            request: PermissionRequest(
-                                title: "Approval Required",
-                                summary: "Codex is waiting for approval.",
-                                affectedPath: ""
-                            ),
+                            summary: "Codex is waiting for approval in Codex.",
+                            phase: .running,
                             timestamp: .now
                         )
                     ))
@@ -195,12 +205,8 @@ final class CodexAppServerCoordinator {
                 )
             ))
 
-        case .threadNameUpdated:
-            // Title updates don't have a dedicated AgentEvent and we can't
-            // safely overwrite phase/summary here (would clobber running or
-            // waiting-for-approval state).  Skip for now — the title is
-            // populated at sessionStarted time which is usually enough.
-            break
+        case .threadNameUpdated(let threadId, let name):
+            emitSessionTitleUpdated(threadId: threadId, name: name)
 
         case .turnStarted(let threadId, _):
             onEvent?(.activityUpdated(
@@ -274,5 +280,14 @@ final class CodexAppServerCoordinator {
                 )
             )
         ))
+    }
+
+    private func emitSessionTitleUpdated(threadId: String, name: String?) {
+        guard let name = name?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else {
+            return
+        }
+
+        onEvent?(.sessionTitleUpdated(SessionTitleUpdated(sessionID: threadId, title: name)))
     }
 }

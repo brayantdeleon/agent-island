@@ -123,6 +123,7 @@ struct AppearanceSettingsPane: View {
     private var notchPersonalizationPart: some View {
         VStack(alignment: .leading, spacing: 18) {
             partHeader(title: lang.t("settings.appearance.notchPart.title"))
+            closedPresentationSection
             previewSection
             rightSlotSection
             centerLabelSection
@@ -173,18 +174,109 @@ struct AppearanceSettingsPane: View {
             }
 
             TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                closedPresentationPreview(now: context.date)
+            }
+        }
+        .frame(height: pillHeight)
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    @ViewBuilder
+    private func closedPresentationPreview(now: Date) -> some View {
+        let presentation = editingPreferences.closedPresentation
+        let hasActivity = previewMode != .idle
+
+        if presentation.showsClosedSurface(hasActivity: hasActivity, menuBarVisible: true) {
+            if presentation == .minimal {
+                Capsule(style: .continuous)
+                    .fill(previewMode == .waiting ? IslandDesignPalette.Status.waitingAggregate : V6Palette.paper.opacity(0.65))
+                    .frame(width: 38, height: 3)
+                    .frame(height: 32, alignment: .bottom)
+                    .padding(.bottom, 2)
+            } else {
                 IslandPreviewPill(
                     mode: previewMode,
                     label: previewLabel,
                     rightSlot: previewRightContent,
                     layout: previewLayout,
-                    physicalNotchWidth: physicalNotchW,
-                    now: context.date
+                    physicalNotchWidth: 180,
+                    now: now
                 )
             }
         }
-        .frame(height: pillHeight)
-        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    // MARK: - 01 · Closed presentation
+
+    @ViewBuilder
+    private var closedPresentationSection: some View {
+        sectionHeader(
+            title: lang.t("settings.appearance.closedPresentation.title"),
+            note: lang.t("settings.appearance.closedPresentation.note")
+        )
+
+        LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3),
+            spacing: 12
+        ) {
+            ForEach(IslandClosedPresentation.allCases) { option in
+                closedPresentationCard(option)
+            }
+        }
+    }
+
+    private func closedPresentationCard(_ option: IslandClosedPresentation) -> some View {
+        let selected = editingPreferences.closedPresentation == option
+        return Button {
+            model.updateAppearancePreferences(for: editingProfile) { $0.closedPresentation = option }
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: closedPresentationIcon(option))
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(lang.t("settings.appearance.closedPresentation.\(option.rawValue)"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(V6Palette.paper.opacity(selected ? 0.95 : 0.72))
+
+                Text(lang.t("settings.appearance.closedPresentation.\(option.rawValue).note"))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(V6Palette.paper.opacity(0.42))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, minHeight: 28, alignment: .topLeading)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.white.opacity(selected ? 0.07 : 0.02))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(
+                        selected ? V6Palette.paper.opacity(0.9) : Color.white.opacity(0.08),
+                        lineWidth: selected ? 1.5 : 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func closedPresentationIcon(_ option: IslandClosedPresentation) -> String {
+        switch option {
+        case .ghost: "cursorarrow.motionlines"
+        case .activityOnly: "bolt.fill"
+        case .minimal: "minus"
+        case .menuBarOnly: "menubar.rectangle"
+        case .alwaysVisible: "eye.fill"
+        case .hidden: "eye.slash.fill"
+        }
     }
 
     private var previewControls: some View {

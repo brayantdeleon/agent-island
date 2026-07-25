@@ -15,7 +15,6 @@ extension Notification.Name {
 @MainActor
 @Observable
 final class AppModel {
-    private static let soundMutedDefaultsKey = "overlay.sound.muted"
     private static let showDockIconDefaultsKey = "app.showDockIcon"
     private static let hapticFeedbackEnabledDefaultsKey = "app.hapticFeedbackEnabled"
     private static let islandRightSlotDefaultsKey = "appearance.island.v6.rightSlot"
@@ -33,7 +32,10 @@ final class AppModel {
     private static let liveSessionStalenessWindow: TimeInterval = 15 * 60
     private static let jumpOverlayDismissLeadTime: Duration = .milliseconds(20)
     private static let agentsGridObservedSequenceLimit = 512
-    static let hoverOpenDelay: TimeInterval = 0.15
+    /// The pointer must remain continuously inside the closed island before a
+    /// passive hover may open it. This keeps ordinary menu-bar navigation from
+    /// expanding the island while preserving immediate click-to-open behavior.
+    static let hoverOpenDelay: TimeInterval = 1.0
 
     struct AcceptanceStep: Identifiable {
         let id: String
@@ -51,7 +53,25 @@ final class AppModel {
             bridgeServer.updateStateSnapshot(state)
         }
     }
-    @ObservationIgnored private var _cachedSessionBuckets: (primary: [AgentSession], overflow: [AgentSession])?
+    @ObservationIgnored private var _cachedSessionBuckets: SessionBucketCache?
+
+    @ObservationIgnored
+    private let hiddenSessionStore: HiddenSessionStore
+
+    private var hiddenSessionIdentifiers: Set<HiddenSessionIdentifier> = []
+
+    var isHiddenSessionSectionExpanded = false {
+        didSet {
+            guard isHiddenSessionSectionExpanded != oldValue else { return }
+            refreshOverlayPlacementIfVisible()
+        }
+    }
+
+    private struct SessionBucketCache {
+        let primary: [AgentSession]
+        let overflow: [AgentSession]
+        let validThrough: Date?
+    }
 
     /// Monotonic ticket assigned the first time a session ID shows up in the
     /// closed-island's right-slot surfaced set. Drives the grid's display
@@ -287,24 +307,6 @@ final class AppModel {
     }
     @ObservationIgnored
     private var isApplyingLaunchAtLogin = false
-    var isSoundMuted = false {
-        didSet {
-            guard isSoundMuted != oldValue else {
-                return
-            }
-
-            UserDefaults.standard.set(isSoundMuted, forKey: Self.soundMutedDefaultsKey)
-            lastActionMessage = isSoundMuted
-                ? "Island sound notifications muted."
-                : "Island sound notifications enabled."
-        }
-    }
-    var selectedSoundName: String = NotificationSoundService.defaultSoundName {
-        didSet {
-            guard selectedSoundName != oldValue else { return }
-            NotificationSoundService.selectedSoundName = selectedSoundName
-        }
-    }
     var overlayDisplaySelectionID: String {
         get { overlay.overlayDisplaySelectionID }
         set { overlay.overlayDisplaySelectionID = newValue }
@@ -345,6 +347,11 @@ final class AppModel {
     var islandRightSlot: IslandRightSlot {
         get { appearancePreferences(for: activeAppearanceProfile).rightSlot }
         set { updateAppearancePreferences(for: activeAppearanceProfile) { $0.rightSlot = newValue } }
+    }
+
+    var islandClosedPresentation: IslandClosedPresentation {
+        get { appearancePreferences(for: activeAppearanceProfile).closedPresentation }
+        set { updateAppearancePreferences(for: activeAppearanceProfile) { $0.closedPresentation = newValue } }
     }
 
     var islandCenterLabel: IslandCenterLabel {
@@ -419,6 +426,7 @@ final class AppModel {
         for profile: IslandAppearanceDisplayProfile
     ) {
         let defaults = UserDefaults.standard
+        defaults.set(preferences.closedPresentation.rawValue, forKey: Self.appearanceDefaultsKey(profile, "closedPresentation"))
         defaults.set(preferences.rightSlot.rawValue, forKey: Self.appearanceDefaultsKey(profile, "rightSlot"))
         defaults.set(preferences.centerLabel.rawValue, forKey: Self.appearanceDefaultsKey(profile, "centerLabel"))
         defaults.set(preferences.usageDisplay.rawValue, forKey: Self.appearanceDefaultsKey(profile, "usageDisplay"))
@@ -543,6 +551,9 @@ final class AppModel {
     private static func loadAppearancePreferences(for profile: IslandAppearanceDisplayProfile) -> IslandAppearancePreferences {
         let defaults = UserDefaults.standard
         return IslandAppearancePreferences(
+            closedPresentation: IslandClosedPresentation(
+                rawValue: defaults.string(forKey: appearanceDefaultsKey(profile, "closedPresentation")) ?? ""
+            ) ?? (profile == .notch ? .ghost : .alwaysVisible),
             rightSlot: IslandRightSlot(
                 rawValue: defaults.string(forKey: appearanceDefaultsKey(profile, "rightSlot"))
                     ?? defaults.string(forKey: islandRightSlotDefaultsKey)
@@ -586,18 +597,19 @@ final class AppModel {
         },
         isNotificationSessionAlreadyFrontmost: @escaping @Sendable (AgentSession) async -> Bool = { session in
             await ForegroundTerminalSessionProbe().matches(session: session)
-        }
+        },
+        hiddenSessionStore: HiddenSessionStore = .standard
     ) {
         self.terminalJumpAction = terminalJumpAction
         self.isNotificationSessionAlreadyFrontmost = isNotificationSessionAlreadyFrontmost
+        self.hiddenSessionStore = hiddenSessionStore
+        self.hiddenSessionIdentifiers = hiddenSessionStore.load()
         UserDefaults.standard.register(defaults: [
             Self.showDockIconDefaultsKey: true,
             Self.hapticFeedbackEnabledDefaultsKey: false,
             Self.completionReplyEnabledDefaultsKey: false,
             Self.suppressFrontmostNotificationsDefaultsKey: true,
         ])
-        isSoundMuted = UserDefaults.standard.bool(forKey: Self.soundMutedDefaultsKey)
-        selectedSoundName = NotificationSoundService.selectedSoundName
         showDockIcon = UserDefaults.standard.bool(forKey: Self.showDockIconDefaultsKey)
         hapticFeedbackEnabled = UserDefaults.standard.bool(forKey: Self.hapticFeedbackEnabledDefaultsKey)
         suppressFrontmostNotifications = UserDefaults.standard.bool(forKey: Self.suppressFrontmostNotificationsDefaultsKey)
@@ -628,9 +640,6 @@ final class AppModel {
         }
         overlay.activeIslandCardSessionAccessor = { [weak self] in
             self?.activeIslandCardSession
-        }
-        overlay.isSoundMutedAccessor = { [weak self] in
-            self?.isSoundMuted ?? false
         }
         overlay.ignoresPointerExitAccessor = { [weak self] in
             self?.ignoresPointerExitDuringHarness ?? false
@@ -727,15 +736,30 @@ final class AppModel {
     }
 
     var surfacedSessions: [AgentSession] {
-        sessionBuckets.primary
+        sessionBuckets.primary.filter(shouldSurfaceSession)
     }
 
     var recentSessions: [AgentSession] {
-        sessionBuckets.overflow
+        sessionBuckets.overflow.filter(shouldSurfaceSession)
+    }
+
+    var hiddenIslandSessions: [AgentSession] {
+        sortIslandSessions(
+            state.sessions.filter { session in
+                isSessionHidden(session)
+                    && session.phase != .waitingForApproval
+                    && !session.isSubagentSession
+                    && !session.isRealtimeVoiceChatSession
+            }
+        )
     }
 
     var islandListSessions: [AgentSession] {
         islandSessionSections.flatMap(\.sessions)
+    }
+
+    var islandRenderedSessions: [AgentSession] {
+        islandListSessions + (isHiddenSessionSectionExpanded ? hiddenIslandSessions : [])
     }
 
     var islandSessionSections: [IslandSessionSection] {
@@ -799,6 +823,50 @@ final class AppModel {
         }
     }
 
+    private func shouldSurfaceSession(_ session: AgentSession) -> Bool {
+        !isSessionHidden(session) || session.phase == .waitingForApproval
+    }
+
+    func isSessionHidden(_ session: AgentSession) -> Bool {
+        hiddenSessionIdentifiers.contains(HiddenSessionIdentifier(session: session))
+    }
+
+    func hideSession(_ session: AgentSession) {
+        let identifier = HiddenSessionIdentifier(session: session)
+        let hiddenSectionWasEmpty = hiddenIslandSessions.isEmpty
+        guard hiddenSessionIdentifiers.insert(identifier).inserted else { return }
+
+        if hiddenSectionWasEmpty {
+            isHiddenSessionSectionExpanded = false
+        }
+        hiddenSessionStore.save(hiddenSessionIdentifiers)
+        _cachedSessionBuckets = nil
+        if session.phase != .waitingForApproval {
+            dismissNotificationSurfaceIfPresent(for: session.id)
+        }
+        synchronizeSelection()
+        refreshOverlayPlacementIfVisible()
+        lastActionMessage = "Hidden conversation: \(session.title)"
+    }
+
+    func unhideSession(_ session: AgentSession) {
+        let identifier = HiddenSessionIdentifier(session: session)
+        guard hiddenSessionIdentifiers.remove(identifier) != nil else { return }
+
+        hiddenSessionStore.save(hiddenSessionIdentifiers)
+        _cachedSessionBuckets = nil
+        if hiddenIslandSessions.isEmpty {
+            isHiddenSessionSectionExpanded = false
+        }
+        synchronizeSelection()
+        refreshOverlayPlacementIfVisible()
+        lastActionMessage = "Unhidden conversation: \(session.title)"
+    }
+
+    func toggleHiddenSessionSection() {
+        isHiddenSessionSectionExpanded.toggle()
+    }
+
     private func stateGroupedSections(for sessions: [AgentSession]) -> [IslandSessionSection] {
         let definitions: [(id: String, title: String, include: (AgentSession) -> Bool)] = [
             ("approval", "island.section.needsApproval", { $0.phase == .waitingForApproval }),
@@ -846,6 +914,28 @@ final class AppModel {
         if sessions.contains(where: { $0.phase.requiresAttention }) { return .waiting }
         if sessions.contains(where: { $0.phase == .running })       { return .running }
         return .idle
+    }
+
+    var hasClosedIslandActivity: Bool {
+        surfacedSessions.contains { session in
+            session.phase == .running || session.phase.requiresAttention
+        }
+    }
+
+    /// At most one mascot per provider, regardless of how many tasks that
+    /// provider is running. Keep the stable Codex-then-Claude order when both
+    /// are active so the leading slot never reshuffles.
+    var islandClosedActivePets: [IslandLeadingPet] {
+        let runningTools = Set(
+            surfacedSessions
+                .filter { $0.phase == .running }
+                .map(\.tool)
+        )
+
+        return [
+            runningTools.contains(.codex) ? .codex : nil,
+            runningTools.contains(.claudeCode) ? .claude : nil,
+        ].compactMap { $0 }
     }
 
     /// The spotlight session powering the center label (if any). Attention
@@ -968,7 +1058,13 @@ final class AppModel {
     }
 
     var focusedSession: AgentSession? {
-        state.session(id: selectedSessionID) ?? surfacedSessions.first ?? state.activeActionableSession ?? state.sessions.first
+        if let selectedSessionID,
+           let selectedSession = state.session(id: selectedSessionID),
+           shouldSurfaceSession(selectedSession) {
+            return selectedSession
+        }
+
+        return surfacedSessions.first
     }
 
     var activeIslandCardSession: AgentSession? {
@@ -1279,8 +1375,12 @@ final class AppModel {
         NotificationCenter.default.post(name: .agentIslandSelectSetupTab, object: nil)
     }
 
-    func toggleSoundMuted() {
-        isSoundMuted.toggle()
+    var isSessionRefreshInProgress: Bool {
+        discovery.isManualRefreshInProgress
+    }
+
+    func refreshSessionsManually() {
+        discovery.refreshCodexAppSessions()
     }
 
     func approveFocusedPermission(_ approved: Bool) {
@@ -1498,6 +1598,18 @@ final class AppModel {
             return
         }
 
+        // Rollout file notifications may arrive after the app-server has
+        // already reported newer activity for the same thread. Applying that
+        // stale completion would briefly open a finished card before the
+        // current running state closes it again.
+        if ingress == .rollout,
+           case let .sessionCompleted(payload) = event,
+           let current = state.session(id: payload.sessionID),
+           current.phase != .completed,
+           current.updatedAt > payload.timestamp {
+            return
+        }
+
         state.apply(event)
         reconcileIslandSurfaceAfterStateChange()
         if ingress == .bridge {
@@ -1517,6 +1629,7 @@ final class AppModel {
             let eventSessionID: String? = {
                 switch event {
                 case let .sessionStarted(p): return p.sessionID
+                case let .sessionTitleUpdated(p): return p.sessionID
                 case let .activityUpdated(p): return p.sessionID
                 case let .permissionRequested(p): return p.sessionID
                 case let .questionAsked(p): return p.sessionID
@@ -1531,7 +1644,9 @@ final class AppModel {
                 }
             }()
             let session = eventSessionID.flatMap { state.session(id: $0) }
-            relay.notifyEvent(event, session: session)
+            if shouldExposeEventFromHiddenSession(event, session: session) {
+                relay.notifyEvent(event, session: session)
+            }
         }
 
         if updateLastActionMessage {
@@ -1591,15 +1706,27 @@ final class AppModel {
         }
 
         return (ingress == .bridge || !isResolvingInitialLiveSessions)
+            && (!isSessionHidden(session) || session.phase == .waitingForApproval)
             && (notchStatus == .closed || notchOpenReason == .notification)
             && !overlay.shouldPreserveCurrentNotificationSurface(against: surface)
             && surface.matchesCurrentState(of: session)
     }
 
+    func shouldExposeEventFromHiddenSession(
+        _ event: AgentEvent,
+        session: AgentSession?
+    ) -> Bool {
+        guard let session, isSessionHidden(session) else { return true }
+        if case .permissionRequested = event {
+            return true
+        }
+        return false
+    }
+
     private func synchronizeSelection() {
         let surfacedIDs = Set(surfacedSessions.map(\.id))
 
-        if let activeAction = state.activeActionableSession {
+        if let activeAction = surfacedSessions.first(where: { $0.phase.requiresAttention }) {
             selectedSessionID = activeAction.id
             return
         }
@@ -1607,7 +1734,7 @@ final class AppModel {
         guard let selectedSessionID,
               surfacedIDs.contains(selectedSessionID),
               state.session(id: selectedSessionID) != nil else {
-            self.selectedSessionID = surfacedSessions.first?.id ?? state.sessions.first?.id
+            self.selectedSessionID = surfacedSessions.first?.id
             return
         }
     }
@@ -1664,16 +1791,25 @@ final class AppModel {
 
 
     private var sessionBuckets: (primary: [AgentSession], overflow: [AgentSession]) {
-        if let cached = _cachedSessionBuckets {
-            return cached
+        let now = Date.now
+        if let cached = _cachedSessionBuckets,
+           cached.validThrough.map({ now <= $0 }) ?? true {
+            return (cached.primary, cached.overflow)
         }
-        let result = computeSessionBuckets()
-        _cachedSessionBuckets = result
+        let result = computeSessionBuckets(at: now)
+        let validThrough = result.primary
+            .filter { $0.phase == .completed }
+            .map { $0.islandActivityDate.addingTimeInterval(AgentSession.islandCompletedVisibilityWindow) }
+            .min()
+        _cachedSessionBuckets = SessionBucketCache(
+            primary: result.primary,
+            overflow: result.overflow,
+            validThrough: validThrough
+        )
         return result
     }
 
-    private func computeSessionBuckets() -> (primary: [AgentSession], overflow: [AgentSession]) {
-        let now = Date.now
+    private func computeSessionBuckets(at now: Date) -> (primary: [AgentSession], overflow: [AgentSession]) {
         let rankedSessions = state.sessions.sorted { lhs, rhs in
             let lhsScore = displayPriority(for: lhs, now: now)
             let rhsScore = displayPriority(for: rhs, now: now)
@@ -1692,7 +1828,7 @@ final class AppModel {
         var primary: [AgentSession] = []
         var claimedLiveAttachmentKeys: Set<String> = []
 
-        for session in rankedSessions where session.isVisibleInIsland {
+        for session in rankedSessions where session.isVisibleInIslandSessionList(at: now) {
             guard !session.isSubagentSession else { continue }
 
             if let liveAttachmentKey = monitoring.liveAttachmentKey(for: session) {
@@ -1705,7 +1841,11 @@ final class AppModel {
         }
 
         let primaryIDs = Set(primary.map(\.id))
-        let overflow = rankedSessions.filter { !primaryIDs.contains($0.id) && !$0.isSubagentSession }
+        let overflow = rankedSessions.filter {
+            !primaryIDs.contains($0.id)
+                && !$0.isSubagentSession
+                && !$0.isRealtimeVoiceChatSession
+        }
         return (primary, overflow)
     }
 
@@ -1768,6 +1908,8 @@ final class AppModel {
         switch event {
         case let .sessionStarted(payload):
             return "Session started: \(payload.title)"
+        case let .sessionTitleUpdated(payload):
+            return "Session renamed: \(payload.title)"
         case let .activityUpdated(payload):
             return payload.summary
         case let .permissionRequested(payload):

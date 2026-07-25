@@ -17,6 +17,7 @@ enum IslandSessionPresence: Equatable {
 extension AgentSession {
     private static let collapsedDetailAgeThreshold: TimeInterval = 20 * 60
     private static let islandActivityThreshold: TimeInterval = 20 * 60
+    static let islandCompletedVisibilityWindow: TimeInterval = 60 * 60
     static let staleCompletedDisplayThreshold: TimeInterval = 5 * 60
 
     /// Whether this session represents a subagent (worktree agent) that should
@@ -34,6 +35,20 @@ extension AgentSession {
 
     var islandActivityDate: Date {
         updatedAt
+    }
+
+    /// Completed conversations remain in the expanded island for one hour,
+    /// independent of process/attachment reconciliation. Non-completed rows
+    /// retain the stricter live visibility rules so restored stale sessions do
+    /// not appear to be actively running.
+    func isVisibleInIslandSessionList(at referenceDate: Date) -> Bool {
+        guard !isRealtimeVoiceChatSession else {
+            return false
+        }
+        guard phase == .completed else {
+            return isVisibleInIsland
+        }
+        return referenceDate.timeIntervalSince(islandActivityDate) <= Self.islandCompletedVisibilityWindow
     }
 
     var spotlightPrimaryText: String {
@@ -110,8 +125,28 @@ extension AgentSession {
         return "\(jumpTarget.terminalApp) · \(jumpTarget.workspaceName)"
     }
 
-    var spotlightTerminalBadge: String? {
-        jumpTarget?.terminalApp
+    var spotlightRuntimeSurfaceBadge: String? {
+        guard let terminalApp = jumpTarget?.terminalApp.trimmedForSurface,
+              !terminalApp.isEmpty else {
+            return nil
+        }
+
+        switch terminalApp {
+        case "Codex.app", "Claude.app":
+            return "app"
+        default:
+            return "terminal"
+        }
+    }
+
+    var spotlightActiveTitleColorHex: String? {
+        guard phase == .running else { return nil }
+        switch tool {
+        case .codex, .claudeCode:
+            return tool.brandColorHex
+        default:
+            return nil
+        }
     }
 
     var spotlightWorkspaceName: String {
@@ -174,17 +209,40 @@ extension AgentSession {
             headline += " (\(branch))"
         }
 
-        guard let prompt = spotlightHeadlinePromptText else {
+        guard let sessionName = spotlightHeadlineSessionName else {
             return headline
         }
 
-        return "\(headline) · \(prompt)"
+        return "\(headline) · \(sessionName)"
     }
 
-    var spotlightHeadlinePromptText: String? {
-        // Headline shows the initial prompt (session topic), not the latest.
-        // The latest prompt is shown separately in the "You:" line.
-        initialPromptText ?? latestPromptText
+    /// Notifications use the same project-plus-session identity as the
+    /// expanded session list. The provider may still omit a session name
+    /// when it has not published a first-class title.
+    var notificationHeadlineText: String {
+        spotlightHeadlineText
+    }
+
+    var spotlightHeadlineSessionName: String? {
+        switch tool {
+        case .codex, .claudeCode:
+            let sessionName = title.trimmedForSurface
+            guard !sessionName.isEmpty,
+                  sessionName.caseInsensitiveCompare(spotlightWorkspaceName) != .orderedSame else {
+                return nil
+            }
+
+            let genericTitle = "\(tool == .codex ? "Codex" : "Claude") · \(spotlightWorkspaceName)"
+            guard sessionName.caseInsensitiveCompare(genericTitle) != .orderedSame else {
+                return nil
+            }
+
+            return sessionName
+        default:
+            // Preserve the established prompt-based headline for providers
+            // that do not expose a first-class session name.
+            return initialPromptText ?? latestPromptText
+        }
     }
 
     var spotlightPromptText: String? {
@@ -288,6 +346,14 @@ extension AgentSession {
 
     var spotlightShowsDetailLines: Bool {
         spotlightShowsDetailLines(at: .now)
+    }
+
+    func defaultsToExpandedNotificationDetails(isActionable: Bool) -> Bool {
+        phase == .completed || (isActionable && phase.requiresAttention)
+    }
+
+    var supportsPersistentPermissionApproval: Bool {
+        tool == .claudeCode && permissionRequest?.toolName?.isEmpty == false
     }
 
     func spotlightShowsDetailLines(at referenceDate: Date) -> Bool {

@@ -114,6 +114,34 @@ struct ClaudeUsageTests {
     }
 
     @Test
+    func claudeUsageLoaderReadsLatestClaudeDesktopPlanUsageSample() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("open-island-claude-desktop-usage-\(UUID().uuidString)", isDirectory: true)
+        let historyURL = rootURL.appendingPathComponent("plan-usage-history.json")
+
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try """
+        {
+          "version": 2,
+          "samples": [
+            {"t": 1760000000000, "u": {"fh": 12, "cw": 3}},
+            {"t": 1760000300000, "u": {"fh": 18, "cw": 3}}
+          ]
+        }
+        """.write(to: historyURL, atomically: true, encoding: .utf8)
+
+        let snapshot = try ClaudeUsageLoader.load(
+            from: [],
+            desktopPlanUsageHistoryURL: historyURL
+        )
+
+        #expect(snapshot?.fiveHour?.roundedUsedPercentage == 18)
+        #expect(snapshot?.sevenDay == nil)
+        #expect(snapshot?.cachedAt == Date(timeIntervalSince1970: 1_760_000_300))
+    }
+
+    @Test
     func claudeStatusLineInstallationManagerInstallsManagedScriptWithoutOverwritingCustomCommand() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agent-island-claude-status-\(UUID().uuidString)", isDirectory: true)

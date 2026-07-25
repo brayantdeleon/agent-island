@@ -4,6 +4,66 @@ import Testing
 
 struct OverlayPanelControllerTests {
     @Test
+    func closedPresentationVisibilityModesRemainDistinct() {
+        #expect(!IslandClosedPresentation.ghost.showsClosedSurface(hasActivity: true, menuBarVisible: true))
+        #expect(!IslandClosedPresentation.activityOnly.showsClosedSurface(hasActivity: false, menuBarVisible: true))
+        #expect(IslandClosedPresentation.activityOnly.showsClosedSurface(hasActivity: true, menuBarVisible: false))
+        #expect(!IslandClosedPresentation.menuBarOnly.showsClosedSurface(hasActivity: true, menuBarVisible: false))
+        #expect(IslandClosedPresentation.menuBarOnly.showsClosedSurface(hasActivity: false, menuBarVisible: true))
+        #expect(IslandClosedPresentation.minimal.showsClosedSurface(hasActivity: false, menuBarVisible: false))
+        #expect(IslandClosedPresentation.alwaysVisible.showsClosedSurface(hasActivity: false, menuBarVisible: false))
+        #expect(!IslandClosedPresentation.hidden.showsClosedSurface(hasActivity: true, menuBarVisible: true))
+        #expect(!IslandClosedPresentation.hidden.allowsHoverOpen)
+    }
+
+    @Test @MainActor
+    func closedIslandHoverUsesBalancedDwell() {
+        #expect(AppModel.hoverOpenDelay == 1.0)
+    }
+
+    @Test @MainActor
+    func hoverDwellDoesNotFireBeforeDelay() {
+        var scheduledDelay: TimeInterval?
+        var scheduledWorkItem: DispatchWorkItem?
+        let timer = HoverDwellTimer { delay, workItem in
+            scheduledDelay = delay
+            scheduledWorkItem = workItem
+        }
+        var fired = false
+
+        timer.schedule(after: 1.0) {
+            fired = true
+        }
+
+        #expect(scheduledDelay == 1.0)
+        #expect(!fired)
+        #expect(timer.isPending)
+
+        scheduledWorkItem?.perform()
+
+        #expect(fired)
+        #expect(!timer.isPending)
+    }
+
+    @Test @MainActor
+    func leavingHoverRegionCancelsPendingDwell() {
+        var scheduledWorkItem: DispatchWorkItem?
+        let timer = HoverDwellTimer { _, workItem in
+            scheduledWorkItem = workItem
+        }
+        var fired = false
+
+        timer.schedule(after: 1.0) {
+            fired = true
+        }
+        timer.cancel()
+        scheduledWorkItem?.perform()
+
+        #expect(!fired)
+        #expect(!timer.isPending)
+    }
+
+    @Test
     func closedSurfaceRectCentersOnNotch() {
         let notchRect = NSRect(x: 200, y: 900, width: 200, height: 38)
         let closedWidth: CGFloat = 320

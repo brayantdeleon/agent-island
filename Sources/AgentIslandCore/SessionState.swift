@@ -85,16 +85,28 @@ public struct SessionState: Equatable, Sendable {
             session.processNotSeenCount = 0
             upsert(session)
 
+        case let .sessionTitleUpdated(payload):
+            guard var session = sessionsByID[payload.sessionID] else {
+                return
+            }
+
+            let title = payload.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else {
+                return
+            }
+
+            session.title = title
+            session.jumpTarget?.paneTitle = title
+            upsert(session)
+
         case let .activityUpdated(payload):
             guard var session = sessionsByID[payload.sessionID] else {
                 return
             }
 
-            let keepsPendingApproval = payload.phase == .running
-                && session.phase == .waitingForApproval
+            let keepsPendingApproval = session.phase == .waitingForApproval
                 && session.permissionRequest != nil
-            let keepsPendingQuestion = payload.phase == .running
-                && session.phase == .waitingForAnswer
+            let keepsPendingQuestion = session.phase == .waitingForAnswer
                 && session.questionPrompt != nil
             let preservesActionableState = keepsPendingApproval || keepsPendingQuestion
 
@@ -421,9 +433,6 @@ public struct SessionState: Equatable, Sendable {
         return changed
     }
 
-    /// Remove sessions that are no longer visible in the island.
-    /// Returns `true` if any sessions were removed.
-    @discardableResult
     /// Manually mark a session as completed and ended.
     /// Intended for remote sessions whose SSH tunnel dropped without a
     /// SessionEnd hook.
@@ -435,10 +444,25 @@ public struct SessionState: Equatable, Sendable {
         upsert(session)
     }
 
-    public mutating func removeInvisibleSessions() -> Bool {
+    /// Remove sessions that are no longer visible in the island.
+    /// Returns `true` if any sessions were removed.
+    @discardableResult
+    public mutating func removeInvisibleSessions(
+        retainingCompletedSince completedCutoff: Date? = nil
+    ) -> Bool {
         let before = sessionsByID.count
         sessionsByID = sessionsByID.filter { _, session in
-            session.isVisibleInIsland
+            if session.isVisibleInIsland {
+                return true
+            }
+
+            guard let completedCutoff,
+                  session.phase == .completed,
+                  !session.isRealtimeVoiceChatSession else {
+                return false
+            }
+
+            return session.updatedAt >= completedCutoff
         }
         return sessionsByID.count != before
     }

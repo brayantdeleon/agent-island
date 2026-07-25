@@ -68,16 +68,19 @@ public enum CodexHookJSONValue: Equatable, Codable, Sendable {
 public struct CodexHookToolInput: Equatable, Codable, Sendable {
     public var command: String?
     public var description: String?
+    public var patch: String?
     public var rawValue: CodexHookJSONValue?
 
     private enum CodingKeys: String, CodingKey {
         case command
         case description
+        case patch
     }
 
-    public init(command: String? = nil, description: String? = nil) {
+    public init(command: String? = nil, description: String? = nil, patch: String? = nil) {
         self.command = command
         self.description = description
+        self.patch = patch
         rawValue = nil
     }
 
@@ -88,11 +91,19 @@ public struct CodexHookToolInput: Equatable, Codable, Sendable {
         guard case let .object(object) = rawValue else {
             command = nil
             description = nil
+            patch = rawValue.stringScalar
             return
         }
 
         command = object["command"]?.stringScalar
+            ?? object["cmd"]?.stringScalar
         description = object["description"]?.stringScalar
+            ?? object["justification"]?.stringScalar
+            ?? object["reason"]?.stringScalar
+        patch = object["patch"]?.stringScalar
+            ?? object["input"]?.stringScalar
+            ?? object["unified_diff"]?.stringScalar
+            ?? object["diff"]?.stringScalar
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -104,6 +115,7 @@ public struct CodexHookToolInput: Equatable, Codable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(command, forKey: .command)
         try container.encodeIfPresent(description, forKey: .description)
+        try container.encodeIfPresent(patch, forKey: .patch)
     }
 }
 
@@ -446,7 +458,7 @@ public extension CodexHookPayload {
             return "Run Bash command"
         }
 
-        if toolName == "apply_patch" {
+        if isApplyPatchToolName(toolName) {
             return "Apply code patch"
         }
 
@@ -462,6 +474,13 @@ public extension CodexHookPayload {
             return "Codex wants to run: \(commandPreview)"
         }
 
+        if let patchText, !patchText.isEmpty {
+            if let path = firstAffectedPatchPath {
+                return "Codex wants to update \(path)."
+            }
+            return "Codex wants to apply a code patch."
+        }
+
         if let toolName, !toolName.isEmpty {
             return "Codex wants to use \(toolName)."
         }
@@ -469,8 +488,48 @@ public extension CodexHookPayload {
         return "Codex is requesting permission."
     }
 
+    var permissionRequestDetail: String? {
+        let description = toolInput?.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let command = commandText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let patch = patchText?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let description, !description.isEmpty,
+           let command, !command.isEmpty,
+           description != command {
+            return "\(description)\n\nCommand:\n\(command)"
+        }
+
+        if let description, !description.isEmpty,
+           let patch, !patch.isEmpty,
+           description != patch {
+            return "\(description)\n\nPatch:\n\(patch)"
+        }
+
+        if let description, !description.isEmpty {
+            return description
+        }
+
+        if let command, !command.isEmpty {
+            return command
+        }
+
+        if let patch, !patch.isEmpty {
+            return patch
+        }
+
+        if let rawValue = toolInput?.rawValue {
+            return stringValue(for: rawValue)
+        }
+
+        return nil
+    }
+
     var permissionRequestAffectedPath: String {
-        commandText ?? toolInput?.description ?? toolName ?? "Permission request"
+        commandText
+            ?? firstAffectedPatchPath
+            ?? toolInput?.description
+            ?? toolName
+            ?? "Permission request"
     }
 
     var promptPreview: String? {
@@ -491,7 +550,35 @@ public extension CodexHookPayload {
 
     private func isBashToolName(_ toolName: String) -> Bool {
         let normalized = toolName.lowercased()
-        return normalized == "bash" || normalized == "shell"
+        return normalized == "bash"
+            || normalized == "shell"
+            || normalized == "exec_command"
+            || normalized == "unified_exec"
+    }
+
+    private func isApplyPatchToolName(_ toolName: String) -> Bool {
+        let normalized = toolName.lowercased()
+        return normalized == "apply_patch" || normalized == "edit" || normalized == "write"
+    }
+
+    private var patchText: String? {
+        toolInput?.patch
+    }
+
+    private var firstAffectedPatchPath: String? {
+        guard let patchText else { return nil }
+
+        let prefixes = ["*** Update File: ", "*** Add File: ", "*** Delete File: "]
+        for line in patchText.split(separator: "\n", omittingEmptySubsequences: false) {
+            let text = String(line)
+            if let prefix = prefixes.first(where: { text.hasPrefix($0) }) {
+                let path = text.dropFirst(prefix.count).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !path.isEmpty {
+                    return path
+                }
+            }
+        }
+        return nil
     }
 
     private func clipped(_ value: String?, limit: Int = 110) -> String? {

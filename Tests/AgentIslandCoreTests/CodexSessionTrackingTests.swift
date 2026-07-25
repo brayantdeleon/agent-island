@@ -791,6 +791,10 @@ struct CodexSessionTrackingTests {
                     "content": [
                         [
                             "type": "input_text",
+                            "text": "<recommended_plugins>\n- Example plugin\n</recommended_plugins>",
+                        ],
+                        [
+                            "type": "input_text",
                             "text": "# AGENTS.md instructions for /tmp/repo\n\n<INSTRUCTIONS>\nRepository guide\n</INSTRUCTIONS>",
                         ],
                         [
@@ -1116,6 +1120,7 @@ struct CodexSessionTrackingTests {
         let staleDirectoryURL = rootURL.appendingPathComponent("2026/03/30", isDirectory: true)
         let recentRolloutURL = recentDirectoryURL.appendingPathComponent("rollout-recent.jsonl")
         let staleRolloutURL = staleDirectoryURL.appendingPathComponent("rollout-stale.jsonl")
+        let sessionIndexURL = rootURL.appendingPathComponent("session_index.jsonl")
         let now = Date(timeIntervalSince1970: 1_743_555_200)
 
         try FileManager.default.createDirectory(at: recentDirectoryURL, withIntermediateDirectories: true)
@@ -1167,11 +1172,15 @@ struct CodexSessionTrackingTests {
 
         try recentLines.joined(separator: "\n").appending("\n").write(to: recentRolloutURL, atomically: true, encoding: .utf8)
         try staleLines.joined(separator: "\n").appending("\n").write(to: staleRolloutURL, atomically: true, encoding: .utf8)
+        try """
+        {"id":"codex-session-1","thread_name":"Rollout discovery cleanup","updated_at":"2026-04-02T04:03:46Z"}
+        """.appending("\n").write(to: sessionIndexURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: recentRolloutURL.path)
         try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-172_800)], ofItemAtPath: staleRolloutURL.path)
 
         let discovery = CodexRolloutDiscovery(
             rootURL: rootURL,
+            sessionIndexURL: sessionIndexURL,
             fileManager: .default,
             maxAge: 86_400,
             maxFiles: 10
@@ -1181,7 +1190,7 @@ struct CodexSessionTrackingTests {
 
         #expect(records.count == 1)
         #expect(records.first?.sessionID == "codex-session-1")
-        #expect(records.first?.title == "Codex · agent-island")
+        #expect(records.first?.title == "Rollout discovery cleanup")
         #expect(records.first?.summary == "Inspecting the local rollout files.")
         #expect(records.first?.phase == .running)
         #expect(
@@ -1195,6 +1204,11 @@ struct CodexSessionTrackingTests {
         #expect(records.first?.codexMetadata?.currentCommandPreview == nil)
         #expect(records.first?.origin == .live)
         #expect(records.first?.attachmentState == .stale)
+        #expect(records.first?.jumpTarget?.terminalApp == "Codex.app")
+        #expect(records.first?.jumpTarget?.workspaceName == "agent-island")
+        #expect(records.first?.jumpTarget?.paneTitle == "Rollout discovery cleanup")
+        #expect(records.first?.jumpTarget?.workingDirectory == "/Users/wangruobing/Personal/agent-island")
+        #expect(records.first?.jumpTarget?.codexThreadID == "codex-session-1")
     }
 
     @Test

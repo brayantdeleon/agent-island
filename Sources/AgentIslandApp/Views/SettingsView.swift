@@ -8,7 +8,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case setup
     case display
-    case sound
     case appearance
     case watch
     case shortcuts
@@ -23,7 +22,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .setup:      lang.t("settings.tab.setup")
         case .appearance: lang.t("settings.tab.appearance")
         case .display:    lang.t("settings.tab.display")
-        case .sound:      lang.t("settings.tab.sound")
         case .watch:      "Watch"
         case .shortcuts:  lang.t("settings.tab.shortcuts")
         case .lab:        lang.t("settings.tab.lab")
@@ -37,7 +35,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .setup:      "arrow.down.circle.fill"
         case .appearance: "paintbrush.fill"
         case .display:    "textformat.size"
-        case .sound:      "speaker.wave.2.fill"
         case .watch:      "applewatch"
         case .shortcuts:  "keyboard.fill"
         case .lab:        "flask.fill"
@@ -51,7 +48,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .setup:      .orange
         case .appearance: .purple
         case .display:    .blue
-        case .sound:      .green
         case .watch:      .cyan
         case .shortcuts:  .gray
         case .lab:        .pink
@@ -61,7 +57,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
     var section: SettingsSection {
         switch self {
-        case .general, .setup, .display, .sound, .appearance, .watch: .system
+        case .general, .setup, .display, .appearance, .watch: .system
         case .shortcuts, .lab:                                        .advanced
         case .about:                                                  .app
         }
@@ -144,8 +140,6 @@ struct SettingsView: View {
                 AppearanceSettingsPane(model: model)
             case .display:
                 DisplaySettingsPane(model: model)
-            case .sound:
-                SoundSettingsPane(model: model)
             case .watch:
                 WatchSettingsPane(model: model)
             case .shortcuts:
@@ -261,53 +255,6 @@ struct DisplaySettingsPane: View {
         }
         .formStyle(.grouped)
         .navigationTitle(lang.t("settings.tab.display"))
-    }
-}
-
-// MARK: - Sound
-
-struct SoundSettingsPane: View {
-    var model: AppModel
-
-    private var lang: LanguageManager { model.lang }
-
-    private var availableSounds: [String] {
-        NotificationSoundService.availableSounds()
-    }
-
-    var body: some View {
-        Form {
-            Section(lang.t("settings.sound.notifications")) {
-                Toggle(lang.t("settings.sound.mute"), isOn: Binding(
-                    get: { model.isSoundMuted },
-                    set: { _ in model.toggleSoundMuted() }
-                ))
-            }
-
-            Section(lang.t("settings.sound.selectSound")) {
-                List(availableSounds, id: \.self) { name in
-                    Button {
-                        model.selectedSoundName = name
-                        NotificationSoundService.play(name)
-                    } label: {
-                        HStack {
-                            Text(name)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            if name == model.selectedSoundName {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.blue)
-                                    .fontWeight(.semibold)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .navigationTitle(lang.t("settings.tab.sound"))
     }
 }
 

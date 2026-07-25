@@ -473,9 +473,12 @@ public final class BridgeServer: @unchecked Sendable {
 
     private func handleCodexHook(_ payload: CodexHookPayload, from clientID: UUID) {
         // Filter out Codex.app internal invocations (e.g. conversation title
-        // generation).  These fire hooks but have no transcript file — they're
-        // ephemeral API calls, not user-facing sessions.
+        // generation). These fire hooks but have no transcript file — they're
+        // ephemeral API calls, not user-facing sessions. Synchronous approval
+        // hooks are the exception: transcript_path is optional in Codex's hook
+        // protocol, and dropping one would strand a real Desktop approval.
         if payload.terminalApp == "Codex.app",
+           !payload.hookEventName.requiresSynchronousResponse,
            (payload.transcriptPath ?? "").isEmpty {
             send(.response(.acknowledged), to: clientID)
             return
@@ -529,6 +532,7 @@ public final class BridgeServer: @unchecked Sendable {
                     request: PermissionRequest(
                         title: "Run Bash command",
                         summary: "Codex wants to run a shell command.",
+                        detail: payload.commandText ?? command,
                         affectedPath: payload.commandText ?? command,
                         primaryActionTitle: "Allow",
                         secondaryActionTitle: "Deny"
@@ -556,6 +560,7 @@ public final class BridgeServer: @unchecked Sendable {
                         request: PermissionRequest(
                             title: payload.permissionRequestTitle,
                             summary: payload.permissionRequestSummary,
+                            detail: payload.permissionRequestDetail,
                             affectedPath: payload.permissionRequestAffectedPath,
                             primaryActionTitle: "Allow",
                             secondaryActionTitle: "Deny",
@@ -742,6 +747,7 @@ public final class BridgeServer: @unchecked Sendable {
                             request: PermissionRequest(
                                 title: payload.permissionRequestTitle,
                                 summary: payload.permissionRequestSummary,
+                                detail: payload.permissionRequestDetail,
                                 affectedPath: payload.permissionAffectedPath,
                                 primaryActionTitle: "Allow Once",
                                 secondaryActionTitle: "Deny",
@@ -2671,6 +2677,17 @@ public final class BridgeServer: @unchecked Sendable {
         }
 
         client.readSource.cancel()
+    }
+}
+
+private extension CodexHookEventName {
+    var requiresSynchronousResponse: Bool {
+        switch self {
+        case .preToolUse, .permissionRequest:
+            true
+        case .sessionStart, .postToolUse, .userPromptSubmit, .stop:
+            false
+        }
     }
 }
 

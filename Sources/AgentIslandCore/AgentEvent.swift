@@ -68,6 +68,16 @@ public struct SessionActivityUpdated: Equatable, Codable, Sendable {
     }
 }
 
+public struct SessionTitleUpdated: Equatable, Codable, Sendable {
+    public var sessionID: String
+    public var title: String
+
+    public init(sessionID: String, title: String) {
+        self.sessionID = sessionID
+        self.title = title
+    }
+}
+
 public struct PermissionRequested: Equatable, Codable, Sendable {
     public var sessionID: String
     public var request: PermissionRequest
@@ -240,6 +250,7 @@ public struct ActionableStateResolved: Equatable, Codable, Sendable {
 
 public enum AgentEvent: Equatable, Codable, Sendable {
     case sessionStarted(SessionStarted)
+    case sessionTitleUpdated(SessionTitleUpdated)
     case activityUpdated(SessionActivityUpdated)
     case permissionRequested(PermissionRequested)
     case questionAsked(QuestionAsked)
@@ -255,6 +266,7 @@ public enum AgentEvent: Equatable, Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case type
         case sessionStarted
+        case sessionTitleUpdated
         case activityUpdated
         case permissionRequested
         case questionAsked
@@ -270,6 +282,7 @@ public enum AgentEvent: Equatable, Codable, Sendable {
 
     private enum EventType: String, Codable {
         case sessionStarted
+        case sessionTitleUpdated
         case activityUpdated
         case permissionRequested
         case questionAsked
@@ -290,6 +303,10 @@ public enum AgentEvent: Equatable, Codable, Sendable {
         switch type {
         case .sessionStarted:
             self = .sessionStarted(try container.decode(SessionStarted.self, forKey: .sessionStarted))
+        case .sessionTitleUpdated:
+            self = .sessionTitleUpdated(
+                try container.decode(SessionTitleUpdated.self, forKey: .sessionTitleUpdated)
+            )
         case .activityUpdated:
             self = .activityUpdated(try container.decode(SessionActivityUpdated.self, forKey: .activityUpdated))
         case .permissionRequested:
@@ -332,6 +349,9 @@ public enum AgentEvent: Equatable, Codable, Sendable {
         case let .sessionStarted(payload):
             try container.encode(EventType.sessionStarted, forKey: .type)
             try container.encode(payload, forKey: .sessionStarted)
+        case let .sessionTitleUpdated(payload):
+            try container.encode(EventType.sessionTitleUpdated, forKey: .type)
+            try container.encode(payload, forKey: .sessionTitleUpdated)
         case let .activityUpdated(payload):
             try container.encode(EventType.activityUpdated, forKey: .type)
             try container.encode(payload, forKey: .activityUpdated)

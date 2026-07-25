@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 @preconcurrency import MarkdownUI
 import AgentIslandCore
@@ -232,11 +233,6 @@ struct IslandPanelView: View {
                 isHovering = hovering
             }
         }
-        .onTapGesture {
-            if model.notchStatus != .opened {
-                model.notchOpen(reason: .click)
-            }
-        }
     }
 
     private func syncOpenedSurfaceMount(with status: NotchStatus, immediate: Bool = false) {
@@ -271,19 +267,46 @@ struct IslandPanelView: View {
     /// TimelineView internally for bar animation.
     @ViewBuilder
     private func v6ClosedSurface() -> some View {
+        if model.islandClosedPresentation == .menuBarOnly {
+            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                closedPresentationSurface(menuBarVisible: NSMenu.menuBarVisible())
+            }
+        } else {
+            closedPresentationSurface(menuBarVisible: true)
+        }
+    }
+
+    @ViewBuilder
+    private func closedPresentationSurface(menuBarVisible: Bool) -> some View {
+        let presentation = model.islandClosedPresentation
         let layout: V6ClosedLayout = isExternalDisplayPlacement ? .external : .macbook
         let physicalNotchWidth: CGFloat = targetOverlayScreen?.notchSize.width ?? 180
-        V6ClosedPill(
-            mode: model.islandClosedMode,
-            label: layout == .external ? model.islandClosedLabel() : nil,
-            rightSlot: model.islandClosedRightSlotContent(),
-            layout: layout,
-            height: closedNotchHeight,
-            physicalNotchWidth: layout == .macbook ? physicalNotchWidth : 0,
-            minWidth: 70
-        )
-        .scaleEffect(isPopping ? 1.04 : 1, anchor: .top)
-        .animation(popAnimation, value: isPopping)
+
+        if presentation.showsClosedSurface(
+            hasActivity: model.hasClosedIslandActivity,
+            menuBarVisible: menuBarVisible
+        ) {
+            if presentation == .minimal {
+                Capsule(style: .continuous)
+                    .fill(model.islandClosedMode == .waiting ? IslandDesignPalette.Status.waitingAggregate : V6Palette.paper.opacity(0.65))
+                    .frame(width: 38, height: 3)
+                    .frame(height: closedNotchHeight, alignment: .bottom)
+                    .padding(.bottom, 2)
+            } else {
+                V6ClosedPill(
+                    mode: model.islandClosedMode,
+                    label: layout == .external ? model.islandClosedLabel() : nil,
+                    rightSlot: model.islandClosedRightSlotContent(),
+                    layout: layout,
+                    activePets: model.islandClosedActivePets,
+                    height: closedNotchHeight,
+                    physicalNotchWidth: layout == .macbook ? physicalNotchWidth : 0,
+                    minWidth: 70
+                )
+                .scaleEffect(isPopping ? 1.04 : 1, anchor: .top)
+                .animation(popAnimation, value: isPopping)
+            }
+        }
     }
 
     // MARK: - Opened surface
@@ -377,11 +400,13 @@ struct IslandPanelView: View {
     private var openedHeaderButtons: some View {
         HStack(spacing: Self.headerControlSpacing) {
             headerIconButton(
-                systemName: model.isSoundMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                tint: model.isSoundMuted ? .orange.opacity(0.92) : .white.opacity(0.62)
+                systemName: "arrow.clockwise",
+                tint: .white.opacity(0.62),
+                accessibilityLabel: "Refresh sessions"
             ) {
-                model.toggleSoundMuted()
+                model.refreshSessionsManually()
             }
+            .disabled(model.isSessionRefreshInProgress)
 
             headerIconButton(systemName: "gearshape.fill", tint: .white.opacity(0.62)) {
                 model.showSettings()
@@ -591,16 +616,21 @@ struct IslandPanelView: View {
                     onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
                     onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                         ? { model.replyToSession(session, text: $0) } : nil,
-                    onJump: { model.jumpToSession(session) }
+                    onJump: { model.jumpToSession(session) },
+                    onHide: model.isSessionHidden(session)
+                        ? nil : { model.hideSession(session) },
+                    onUnhide: model.isSessionHidden(session)
+                        ? { model.unhideSession(session) } : nil
                 )
                 .id(notificationCardIdentity(for: session))
 
-                if model.allSessions.count > 1 {
+                let visibleSessionCount = model.islandListSessions.count
+                if visibleSessionCount > 1 {
                     Button {
                         let isCompletion = session.phase == .completed
                         model.expandNotificationToSessionList(clearExpansion: isCompletion)
                     } label: {
-                        Text(model.lang.t("island.showAll", model.allSessions.count))
+                        Text(model.lang.t("island.showAll", visibleSessionCount))
                             .font(.system(size: 10.5, weight: .medium))
                             .foregroundStyle(.white.opacity(0.36))
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -633,11 +663,17 @@ struct IslandPanelView: View {
                                 onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                                     ? { model.replyToSession(session, text: $0) } : nil,
                                 onJump: { model.jumpToSession(session) },
-                                onDismiss: session.isRemote ? { model.dismissSession(session.id) } : nil
+                                onDismiss: session.isRemote ? { model.dismissSession(session.id) } : nil,
+                                onHide: model.isSessionHidden(session)
+                                    ? nil : { model.hideSession(session) },
+                                onUnhide: model.isSessionHidden(session)
+                                    ? { model.unhideSession(session) } : nil
                             )
                         }
                     }
                 }
+
+                hiddenSessionsSection(referenceDate: referenceDate)
             }
 
             if !isNotificationMode {
@@ -683,9 +719,72 @@ struct IslandPanelView: View {
                         onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                             ? { model.replyToSession(session, text: $0) } : nil,
                         onJump: { model.jumpToSession(session) },
-                        onDismiss: session.isRemote ? { model.dismissSession(session.id) } : nil
+                        onDismiss: session.isRemote ? { model.dismissSession(session.id) } : nil,
+                        onHide: model.isSessionHidden(session)
+                            ? nil : { model.hideSession(session) },
+                        onUnhide: model.isSessionHidden(session)
+                            ? { model.unhideSession(session) } : nil
                     )
                 }
+            }
+        }
+
+        hiddenSessionsSection(referenceDate: referenceDate)
+    }
+
+    @ViewBuilder
+    private func hiddenSessionsSection(referenceDate: Date) -> some View {
+        let sessions = model.hiddenIslandSessions
+        if !sessions.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                Button {
+                    model.toggleHiddenSessionSection()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "eye.slash.fill")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .frame(width: 10)
+                        Text(lang.t("island.section.hidden").uppercased())
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                            .tracking(0.4)
+                        Text("\(sessions.count)")
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(V6Palette.paper.opacity(0.4))
+                        Spacer(minLength: 0)
+                        Image(systemName: model.isHiddenSessionSectionExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .foregroundStyle(V6Palette.paper.opacity(0.62))
+                    .padding(.leading, sessionListSideInset)
+                    .padding(.trailing, sessionListSideInset)
+                    .padding(.top, 10)
+                    .padding(.bottom, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if model.isHiddenSessionSectionExpanded {
+                    ForEach(sessions) { session in
+                        IslandSessionRow(
+                            session: session,
+                            referenceDate: referenceDate,
+                            stateIndicator: model.islandSessionStateIndicator,
+                            completedStaleThreshold: model.completedStaleThreshold.seconds,
+                            useDrawingGroup: model.notchStatus == .opened,
+                            isInteractive: model.notchStatus == .opened,
+                            sideInset: sessionListSideInset,
+                            lang: model.lang,
+                            onJump: { model.jumpToSession(session) },
+                            onUnhide: { model.unhideSession(session) }
+                        )
+                    }
+                }
+            }
+            .background(Color.white.opacity(0.008))
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(.white.opacity(0.055))
+                    .frame(height: 1)
             }
         }
     }
@@ -849,10 +948,7 @@ struct IslandPanelView: View {
         let providers = openedUsageProviders
 
         if providers.isEmpty == false {
-            ViewThatFits(in: .horizontal) {
-                compactUsageSummaryView(providers, usesShortTitles: false)
-                compactUsageSummaryView(providers, usesShortTitles: true)
-            }
+            compactUsageSummaryView(providers)
         } else {
             Color.clear
         }
@@ -864,43 +960,6 @@ struct IslandPanelView: View {
         }
 
         var providers: [UsageProviderPresentation] = []
-
-        if let snapshot = model.claudeUsageSnapshot,
-           snapshot.isEmpty == false {
-            var windows: [UsageWindowPresentation] = []
-
-            if let fiveHour = snapshot.fiveHour {
-                windows.append(
-                    UsageWindowPresentation(
-                        id: "claude-5h",
-                        label: "5h",
-                        usedPercentage: fiveHour.usedPercentage,
-                        resetsAt: fiveHour.resetsAt
-                    )
-                )
-            }
-
-            if let sevenDay = snapshot.sevenDay {
-                windows.append(
-                    UsageWindowPresentation(
-                        id: "claude-7d",
-                        label: "7d",
-                        usedPercentage: sevenDay.usedPercentage,
-                        resetsAt: sevenDay.resetsAt
-                    )
-                )
-            }
-
-            if windows.isEmpty == false {
-                providers.append(
-                    UsageProviderPresentation(
-                        id: "claude",
-                        title: "Claude",
-                        windows: windows
-                    )
-                )
-            }
-        }
 
         if model.showCodexUsage,
            let snapshot = model.codexUsageSnapshot,
@@ -925,10 +984,15 @@ struct IslandPanelView: View {
             }
         }
 
+        let claudeFiveHour = model.claudeUsageSnapshot?.fiveHour
+        if model.claudeUsageInstalled || claudeFiveHour != nil {
+            providers.append(.claudeFiveHour(claudeFiveHour))
+        }
+
         return providers
     }
 
-    private func splitUsageProviders(
+    func splitUsageProviders(
         _ providers: [UsageProviderPresentation]
     ) -> (left: [UsageProviderPresentation], right: [UsageProviderPresentation]) {
         switch providers.count {
@@ -937,7 +1001,10 @@ struct IslandPanelView: View {
         case 1:
             return ([providers[0]], [])
         case 2:
-            return ([providers[0]], [providers[1]])
+            // Pet-based chips are compact enough to remain together in the
+            // left auxiliary area. Keeping both here prevents the second
+            // provider from disappearing when the right notch lane collapses.
+            return (providers, [])
         default:
             let splitIndex = Int(ceil(Double(providers.count) / 2.0))
             return (
@@ -956,10 +1023,7 @@ struct IslandPanelView: View {
             Color.clear
                 .frame(maxWidth: .infinity)
         } else {
-            ViewThatFits(in: .horizontal) {
-                compactUsageSummaryView(providers, usesShortTitles: false)
-                compactUsageSummaryView(providers, usesShortTitles: true)
-            }
+            compactUsageSummaryView(providers)
             .frame(maxWidth: .infinity, alignment: alignment)
         }
     }
@@ -1017,32 +1081,31 @@ struct IslandPanelView: View {
         )
     }
 
-    private func compactUsageSummaryView(
-        _ providers: [UsageProviderPresentation],
-        usesShortTitles: Bool
-    ) -> some View {
+    private func compactUsageSummaryView(_ providers: [UsageProviderPresentation]) -> some View {
         HStack(spacing: 7) {
             ForEach(providers) { provider in
-                compactUsageChip(provider, usesShortTitle: usesShortTitles)
+                compactUsageChip(provider)
             }
         }
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    private func compactUsageChip(_ provider: UsageProviderPresentation, usesShortTitle: Bool) -> some View {
+    private func compactUsageChip(_ provider: UsageProviderPresentation) -> some View {
         HStack(spacing: 5) {
-            Text(usesShortTitle ? provider.shortTitle : provider.title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.74))
+            UsageProviderPetIcon(providerID: provider.id, providerName: provider.title)
+                .frame(width: 18, height: 17)
 
             Text(provider.peakWindowLabel)
                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.42))
 
-            Text("\(provider.peakUsagePercentage)%")
+            Text(provider.peakUsageText)
                 .font(.system(size: 11.5, weight: .bold, design: .monospaced))
-                .foregroundStyle(usageColor(for: provider.peakUsedPercentage))
+                .foregroundStyle(
+                    provider.peakUsedPercentage.map { usageColor(for: $0) }
+                        ?? .white.opacity(0.34)
+                )
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -1056,7 +1119,11 @@ struct IslandPanelView: View {
 
     private func usageHelpText(for provider: UsageProviderPresentation) -> String {
         provider.windows.map { window in
-            var parts = ["\(window.label) \(window.roundedUsedPercentage)%"]
+            guard let roundedUsedPercentage = window.roundedUsedPercentage else {
+                return "\(window.label) usage unavailable — run a Claude Code turn to refresh"
+            }
+
+            var parts = ["\(window.label) \(roundedUsedPercentage)% used"]
             if let resetsAt = window.resetsAt,
                let remaining = remainingDurationString(until: resetsAt) {
                 parts.append(remaining)
@@ -1110,49 +1177,107 @@ struct IslandPanelView: View {
     }
 }
 
-private struct UsageProviderPresentation: Identifiable {
+struct UsageProviderPresentation: Identifiable {
     let id: String
     let title: String
     let windows: [UsageWindowPresentation]
 
     var peakWindow: UsageWindowPresentation? {
-        windows.max { lhs, rhs in
-            lhs.usedPercentage < rhs.usedPercentage
-        }
+        windows
+            .filter { $0.usedPercentage != nil }
+            .max { lhs, rhs in
+                (lhs.usedPercentage ?? 0) < (rhs.usedPercentage ?? 0)
+            } ?? windows.first
     }
 
     var peakWindowLabel: String {
         peakWindow?.label ?? ""
     }
 
-    var peakUsedPercentage: Double {
-        peakWindow?.usedPercentage ?? 0
+    var peakUsedPercentage: Double? {
+        peakWindow?.usedPercentage
     }
 
-    var peakUsagePercentage: Int {
-        peakWindow?.roundedUsedPercentage ?? 0
+    var peakUsageText: String {
+        guard let percentage = peakWindow?.roundedUsedPercentage else { return "—" }
+        return "\(percentage)%"
     }
 
-    var shortTitle: String {
-        switch id {
-        case "claude":
-            "Cl"
-        case "codex":
-            "Cx"
-        default:
-            String(title.prefix(2))
-        }
+    static func claudeFiveHour(_ window: ClaudeUsageWindow?) -> Self {
+        Self(
+            id: "claude",
+            title: "Claude",
+            windows: [
+                UsageWindowPresentation(
+                    id: "claude-5h",
+                    label: "5h",
+                    usedPercentage: window?.usedPercentage,
+                    resetsAt: window?.resetsAt
+                )
+            ]
+        )
     }
 }
 
-private struct UsageWindowPresentation: Identifiable {
+struct UsageWindowPresentation: Identifiable {
     let id: String
     let label: String
-    let usedPercentage: Double
+    let usedPercentage: Double?
     let resetsAt: Date?
 
-    var roundedUsedPercentage: Int {
-        Int(usedPercentage.rounded())
+    var roundedUsedPercentage: Int? {
+        usedPercentage.map { Int($0.rounded()) }
+    }
+}
+
+private struct UsageProviderPetIcon: View {
+    let providerID: String
+    let providerName: String
+
+    private static let codexImage = PetdexPetLoader.selectedRunningFrames().first
+    private static let clawdImage: CGImage? = {
+        guard
+            let url = Bundle.appResources.url(forResource: "clawd-menubar", withExtension: "png"),
+            let image = NSImage(contentsOf: url)
+        else {
+            return nil
+        }
+        return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }()
+
+    @ViewBuilder
+    var body: some View {
+        Group {
+            switch providerID {
+            case "codex":
+                if let image = Self.codexImage {
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .interpolation(.none)
+                        .scaledToFit()
+                        .scaleEffect(1.25)
+                } else {
+                    Text("Cx")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                }
+            case "claude":
+                if let image = Self.clawdImage {
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .interpolation(.none)
+                        .scaledToFit()
+                } else {
+                    Text("Cl")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                }
+            default:
+                Text(String(providerName.prefix(2)))
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+            }
+        }
+        .foregroundStyle(.white.opacity(0.74))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(providerName)
     }
 }
 
@@ -1194,6 +1319,8 @@ private struct IslandSessionRow: View {
     var onReply: ((String) -> Void)?
     let onJump: () -> Void
     var onDismiss: (() -> Void)?
+    var onHide: (() -> Void)?
+    var onUnhide: (() -> Void)?
 
     @State private var isHighlighted = false
     @State private var detailOverride: Bool?
@@ -1209,7 +1336,9 @@ private struct IslandSessionRow: View {
             at: referenceDate,
             threshold: completedStaleThreshold
         )
-        let defaultShowsDetail = !isStaleCompleted && (rawPresence != .inactive || isActionable)
+        let defaultShowsDetail = !isStaleCompleted
+            && presentation == .notification
+            && session.defaultsToExpandedNotificationDetails(isActionable: isActionable)
         let showsDetail = detailOverride ?? defaultShowsDetail
         let presence = isStaleCompleted
             ? .inactive
@@ -1257,6 +1386,22 @@ private struct IslandSessionRow: View {
                 detailOverride = nil
             }
         }
+        .contextMenu {
+            if let onHide {
+                Button {
+                    onHide()
+                } label: {
+                    Label(lang.t("island.session.hide"), systemImage: "eye.slash")
+                }
+            }
+            if let onUnhide {
+                Button {
+                    onUnhide()
+                } label: {
+                    Label(lang.t("island.session.unhide"), systemImage: "eye")
+                }
+            }
+        }
     }
 
     private func rowSummary(presence: IslandSessionPresence, showsDetail: Bool) -> some View {
@@ -1290,8 +1435,8 @@ private struct IslandSessionRow: View {
                 if session.isRemote {
                     sideBadge("SSH")
                 }
-                if let terminalBadge = session.spotlightTerminalBadge {
-                    sideBadge(terminalBadge)
+                if let runtimeSurfaceBadge = session.spotlightRuntimeSurfaceBadge {
+                    sideBadge(runtimeSurfaceBadge)
                 }
                 Text(session.spotlightAgeBadge)
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
@@ -1427,22 +1572,9 @@ private struct IslandSessionRow: View {
     }
 
     private var summaryHeadlineText: String {
-        if presentation == .notification, session.phase == .completed {
-            return notificationWorkspaceHeadlineText
-        }
-
-        return session.spotlightHeadlineText
-    }
-
-    private var notificationWorkspaceHeadlineText: String {
-        let workspace = session.spotlightWorkspaceName.trimmedForNotificationCard
-        let title = workspace.isEmpty ? session.tool.displayName : workspace
-        guard let branch = session.spotlightWorktreeBranch?.trimmedForNotificationCard,
-              !branch.isEmpty else {
-            return title
-        }
-
-        return "\(title) (\(branch))"
+        presentation == .notification
+            ? session.notificationHeadlineText
+            : session.spotlightHeadlineText
     }
 
     private var notificationCompletedPromptLineText: String? {
@@ -1544,6 +1676,10 @@ private struct IslandSessionRow: View {
 
     private func titleColor(for presence: IslandSessionPresence) -> Color {
         if stateIndicator == .tint && presence != .inactive {
+            if let colorHex = session.spotlightActiveTitleColorHex,
+               let providerColor = Color(hex: colorHex) {
+                return providerColor
+            }
             return statusTint(for: presence)
         }
 
@@ -1637,24 +1773,17 @@ private struct IslandSessionRow: View {
                 .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(V6Palette.paper.opacity(0.86))
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(commandPreviewText)
+            AutoHeightScrollView(maxHeight: 220) {
+                Text(verbatim: permissionMessageText)
                     .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(V6Palette.paper.opacity(0.78))
+                    .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-
-                if let path = session.permissionRequest?.affectedPath.trimmedForNotificationCard,
-                   !path.isEmpty {
-                    Text(path)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(V6Palette.paper.opacity(0.42))
-                        .lineLimit(1)
-                }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(Color.white.opacity(0.045))
@@ -1664,8 +1793,9 @@ private struct IslandSessionRow: View {
                 Button(session.permissionRequest?.secondaryActionTitle ?? lang.t("approval.deny")) { onApprove?(.deny) }
                     .buttonStyle(IslandActionButtonStyle(kind: .secondary, expands: true))
                 Button(session.permissionRequest?.primaryActionTitle ?? lang.t("approval.allowOnce")) { onApprove?(.allowOnce) }
-                    .buttonStyle(IslandActionButtonStyle(kind: .warning, expands: true))
-                if let toolName = session.permissionRequest?.toolName {
+                    .buttonStyle(IslandActionButtonStyle(kind: .success, expands: true))
+                if session.supportsPersistentPermissionApproval,
+                   let toolName = session.permissionRequest?.toolName {
                     Button(lang.t("approval.alwaysAllow", toolName)) {
                         let rule = ClaudePermissionRuleValue(toolName: toolName)
                         let update = ClaudePermissionUpdate.addRules(
@@ -1675,7 +1805,11 @@ private struct IslandSessionRow: View {
                         )
                         onApprove?(.allowWithUpdates([update]))
                     }
-                    .buttonStyle(IslandActionButtonStyle(kind: .primary, expands: true))
+                    .buttonStyle(IslandActionButtonStyle(
+                        kind: .primary,
+                        expands: true,
+                        labelLineLimit: nil
+                    ))
                 }
             }
         }
@@ -1697,8 +1831,7 @@ private struct IslandSessionRow: View {
         VStack(alignment: .leading, spacing: 0) {
             if !completionMessageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AutoHeightScrollView(maxHeight: 160) {
-                    Markdown(completionMessageText)
-                        .markdownTheme(.completionCard)
+                    CompletionMessageView(text: completionMessageText)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
@@ -1788,11 +1921,19 @@ private struct IslandSessionRow: View {
     // MARK: - Actionable helpers
 
     private var completionMessageText: String {
-        if let text = session.completionAssistantMessageText?.trimmedForNotificationCard, !text.isEmpty {
-            return text
+        if let source = session.completionAssistantMessageText {
+            let text = CompletionMessageSanitizer.textForDisplay(source).trimmedForNotificationCard
+            if !text.isEmpty {
+                return text
+            }
         }
-        let summary = session.summary.trimmedForNotificationCard
-        return summary == SessionPhase.completed.displayName ? "" : summary
+        let summary = CompletionMessageSanitizer.textForDisplay(
+            session.summary
+        ).trimmedForNotificationCard
+        if summary == SessionPhase.completed.displayName {
+            return ""
+        }
+        return summary
     }
 
     private var commandLabel: String {
@@ -1807,10 +1948,20 @@ private struct IslandSessionRow: View {
         }
     }
 
-    private var commandPreviewText: String {
+    private var permissionMessageText: String {
+        if let detail = session.permissionRequest?.detail?.trimmedForNotificationCard,
+           !detail.isEmpty {
+            return detail
+        }
+
+        if let affectedPath = session.permissionRequest?.affectedPath.trimmedForNotificationCard,
+           !affectedPath.isEmpty {
+            return affectedPath
+        }
+
         let preview = session.currentCommandPreviewText?.trimmedForNotificationCard
         if let preview, !preview.isEmpty {
-            return "$ \(preview)"
+            return preview
         }
         return session.permissionRequest?.summary.trimmedForNotificationCard ?? session.summary.trimmedForNotificationCard
     }
@@ -2540,11 +2691,12 @@ private struct IslandActionButtonStyle: ButtonStyle {
     enum Kind {
         case primary
         case secondary
-        case warning
+        case success
     }
 
     let kind: Kind
     var expands = false
+    var labelLineLimit: Int? = 1
 
     @Environment(\.isEnabled) private var isEnabled
 
@@ -2552,7 +2704,10 @@ private struct IslandActionButtonStyle: ButtonStyle {
         configuration.label
             .font(.system(size: 11.8, weight: .semibold))
             .foregroundStyle(foregroundColor)
-            .lineLimit(1)
+            .lineLimit(labelLineLimit)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: labelLineLimit != 1)
+            .frame(minHeight: labelLineLimit == 1 ? nil : 30)
             .frame(maxWidth: expands ? .infinity : nil)
             .padding(.horizontal, 13)
             .padding(.vertical, 8)
@@ -2572,8 +2727,8 @@ private struct IslandActionButtonStyle: ButtonStyle {
         switch kind {
         case .primary:
             return .black.opacity(0.88)
-        case .warning:
-            return .white
+        case .success:
+            return .black.opacity(0.82)
         case .secondary:
             return V6Palette.paper.opacity(0.78)
         }
@@ -2587,8 +2742,8 @@ private struct IslandActionButtonStyle: ButtonStyle {
         switch kind {
         case .primary:
             return V6Palette.paper.opacity(0.86)
-        case .warning:
-            return Color(red: 0.85, green: 0.55, blue: 0.15).opacity(0.42)
+        case .success:
+            return Color(red: 0.66, green: 0.91, blue: 0.70).opacity(0.7)
         case .secondary:
             return .white.opacity(0.07)
         }
@@ -2603,8 +2758,8 @@ private struct IslandActionButtonStyle: ButtonStyle {
         switch kind {
         case .primary:
             return V6Palette.paper.opacity(pressedFactor)
-        case .warning:
-            return Color(red: 0.85, green: 0.55, blue: 0.15).opacity(pressedFactor)
+        case .success:
+            return Color(red: 0.66, green: 0.91, blue: 0.70).opacity(pressedFactor)
         case .secondary:
             return Color.white.opacity(isPressed ? 0.11 : 0.065)
         }

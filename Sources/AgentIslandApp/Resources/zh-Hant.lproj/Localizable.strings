@@ -6,7 +6,6 @@
 /* Settings - Tab Labels */
 "settings.tab.general" = "一般";
 "settings.tab.display" = "顯示";
-"settings.tab.sound" = "聲音";
 "settings.tab.shortcuts" = "快捷鍵";
 "settings.tab.lab" = "實驗室";
 "settings.tab.about" = "關於";
@@ -65,6 +64,20 @@
 "settings.appearance.centerLabel.sessionName" = "會話名";
 "settings.appearance.centerLabel.off" = "關閉";
 "settings.appearance.notchPart.title" = "凹槽";
+"settings.appearance.closedPresentation.title" = "01 · 收合狀態";
+"settings.appearance.closedPresentation.note" = "選擇收合時顯示的內容。收合狀態不會攔截點擊。";
+"settings.appearance.closedPresentation.ghost" = "幽靈模式";
+"settings.appearance.closedPresentation.ghost.note" = "完全透明；在凹槽處停留後展開。";
+"settings.appearance.closedPresentation.activityOnly" = "僅活動時";
+"settings.appearance.closedPresentation.activityOnly.note" = "僅在代理執行或等待時顯示。";
+"settings.appearance.closedPresentation.minimal" = "極簡指示";
+"settings.appearance.closedPresentation.minimal.note" = "只顯示一條小型被動狀態線。";
+"settings.appearance.closedPresentation.menuBarOnly" = "僅選單列";
+"settings.appearance.closedPresentation.menuBarOnly.note" = "僅在系統選單列可見時顯示。";
+"settings.appearance.closedPresentation.alwaysVisible" = "永遠顯示";
+"settings.appearance.closedPresentation.alwaysVisible.note" = "保持完整迷你 Island 顯示。";
+"settings.appearance.closedPresentation.hidden" = "完全隱藏";
+"settings.appearance.closedPresentation.hidden.note" = "無收合視圖，也不支援懸停展開。";
 "settings.appearance.sessionListPart.title" = "會話列表";
 "settings.appearance.sessionPreview" = "預覽";
 "settings.appearance.profile.title" = "顯示器配置";
@@ -122,9 +135,6 @@
 "settings.display.layoutMode" = "版面模式";
 
 /* Settings - Sound */
-"settings.sound.notifications" = "通知音效";
-"settings.sound.mute" = "靜音";
-"settings.sound.selectSound" = "選擇音效";
 
 /* Settings - Setup */
 "settings.tab.setup" = "安裝引導";
@@ -196,6 +206,9 @@
 "island.section.inProgress" = "進行中";
 "island.section.justDone" = "剛完成";
 "island.section.idle" = "閒置";
+"island.section.hidden" = "已隱藏";
+"island.session.hide" = "隱藏會話";
+"island.session.unhide" = "取消隱藏會話";
 "island.showAll" = "顯示全部 %lld 個工作階段";
 "island.collapseList" = "收起清單";
 "island.usageWaiting" = "等待用量資料";

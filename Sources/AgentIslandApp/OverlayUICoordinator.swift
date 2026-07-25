@@ -37,9 +37,6 @@ final class OverlayUICoordinator {
     var activeIslandCardSessionAccessor: (() -> AgentSession?)?
 
     @ObservationIgnored
-    var isSoundMutedAccessor: (() -> Bool)?
-
-    @ObservationIgnored
     var ignoresPointerExitAccessor: (() -> Bool)?
 
     @ObservationIgnored
@@ -73,10 +70,6 @@ final class OverlayUICoordinator {
 
     private var activeIslandCardSession: AgentSession? {
         activeIslandCardSessionAccessor?()
-    }
-
-    private var isSoundMuted: Bool {
-        isSoundMutedAccessor?() ?? false
     }
 
     private var ignoresPointerExitDuringHarness: Bool {
@@ -356,7 +349,6 @@ final class OverlayUICoordinator {
         }
 
         appModel?.measuredNotificationContentHeight = 0
-        NotificationSoundService.playNotification(isMuted: isSoundMuted)
         notchOpen(reason: .notification, surface: surface)
     }
 

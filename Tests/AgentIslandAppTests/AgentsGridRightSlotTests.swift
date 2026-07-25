@@ -81,7 +81,7 @@ struct AgentsGridRightSlotTests {
         let model = AppModel()
         model.islandRightSlot = .agents
 
-        let now = Date(timeIntervalSince1970: 300_000)
+        let now = Date()
         let sessionA = makeSession(id: "A", firstSeenAt: now,                       updatedAt: now)
         let sessionB = makeSession(id: "B", firstSeenAt: now.addingTimeInterval(10), updatedAt: now.addingTimeInterval(10))
         let sessionC = makeSession(id: "C", firstSeenAt: now.addingTimeInterval(20), updatedAt: now.addingTimeInterval(20))
@@ -142,7 +142,7 @@ struct AgentsGridRightSlotTests {
     func cellStateReflectsSessionPhase() {
         let model = AppModel()
         model.islandRightSlot = .agents
-        let now = Date(timeIntervalSince1970: 300_000)
+        let now = Date()
 
         let running  = makeSession(id: "r", firstSeenAt: now,                         updatedAt: now, phase: .running)
         let waitingA = makeSession(

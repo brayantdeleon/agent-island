@@ -5,6 +5,42 @@ import Testing
 
 /// Regression coverage for core session lifecycle and visibility behavior.
 struct SessionStateTests {
+    @Test
+    func sessionTitleUpdatePreservesActivityAndUpdatesJumpLabel() {
+        let updatedAt = Date(timeIntervalSince1970: 900)
+        let session = AgentSession(
+            id: "codex-thread",
+            title: "Codex · demo",
+            tool: .codex,
+            phase: .waitingForApproval,
+            summary: "Waiting for approval",
+            updatedAt: updatedAt,
+            permissionRequest: PermissionRequest(
+                title: "Run tests",
+                summary: "Waiting for approval",
+                affectedPath: "/tmp/demo"
+            ),
+            jumpTarget: JumpTarget(
+                terminalApp: "Codex.app",
+                workspaceName: "demo",
+                paneTitle: "Codex · demo"
+            )
+        )
+        var state = SessionState(sessions: [session])
+
+        state.apply(.sessionTitleUpdated(SessionTitleUpdated(
+            sessionID: "codex-thread",
+            title: "Approval experience polish"
+        )))
+
+        let renamed = state.session(id: "codex-thread")
+        #expect(renamed?.title == "Approval experience polish")
+        #expect(renamed?.jumpTarget?.paneTitle == "Approval experience polish")
+        #expect(renamed?.phase == .waitingForApproval)
+        #expect(renamed?.permissionRequest != nil)
+        #expect(renamed?.updatedAt == updatedAt)
+    }
+
     /// Completed Codex CLI sessions outside Codex.app should age out even while Codex.app is running.
     @Test
     func completedCodexCLISessionEndsEvenWhenCodexAppIsRunning() {
@@ -139,6 +175,55 @@ struct SessionStateTests {
     }
 
     @Test
+    func invisibleCleanupRetainsOnlyRecentCompletedSessionsWhenRequested() {
+        let now = Date(timeIntervalSince1970: 10_000)
+
+        var recentCompleted = AgentSession(
+            id: "recent-completed",
+            title: "Recent",
+            tool: .codex,
+            phase: .completed,
+            summary: "Finished recently",
+            updatedAt: now.addingTimeInterval(-300)
+        )
+        recentCompleted.isSessionEnded = true
+        recentCompleted.isProcessAlive = false
+
+        var oldCompleted = AgentSession(
+            id: "old-completed",
+            title: "Old",
+            tool: .codex,
+            phase: .completed,
+            summary: "Finished long ago",
+            updatedAt: now.addingTimeInterval(-3_601)
+        )
+        oldCompleted.isSessionEnded = true
+        oldCompleted.isProcessAlive = false
+
+        var invisibleRunning = AgentSession(
+            id: "invisible-running",
+            title: "Missing process",
+            tool: .codex,
+            phase: .running,
+            summary: "No longer running",
+            updatedAt: now
+        )
+        invisibleRunning.isSessionEnded = true
+        invisibleRunning.isProcessAlive = false
+
+        var state = SessionState(
+            sessions: [recentCompleted, oldCompleted, invisibleRunning]
+        )
+
+        let changed = state.removeInvisibleSessions(
+            retainingCompletedSince: now.addingTimeInterval(-3_600)
+        )
+
+        #expect(changed)
+        #expect(state.sessions.map(\.id) == ["recent-completed"])
+    }
+
+    @Test
     func resolvesUserActionsAndKeepsSessionsSortedByRecency() {
         let startedAt = Date(timeIntervalSince1970: 2_000)
         var state = SessionState(
@@ -231,6 +316,46 @@ struct SessionStateTests {
         #expect(state.session(id: "claude-question")?.phase == .waitingForAnswer)
         #expect(state.session(id: "claude-question")?.summary == "Which environment?")
         #expect(state.session(id: "claude-question")?.questionPrompt?.title == "Which environment?")
+    }
+
+    @Test
+    func keepsApprovalStateWhileIncidentalCompletedUpdatesArrive() {
+        let startedAt = Date(timeIntervalSince1970: 3_000)
+        let request = PermissionRequest(
+            title: "Apply code patch",
+            summary: "Codex wants to update SessionState.swift.",
+            detail: "*** Begin Patch\n*** Update File: SessionState.swift",
+            affectedPath: "SessionState.swift"
+        )
+        var state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "codex-approval",
+                    title: "Codex · repo",
+                    tool: .codex,
+                    attachmentState: .attached,
+                    phase: .waitingForApproval,
+                    summary: request.summary,
+                    updatedAt: startedAt,
+                    permissionRequest: request
+                )
+            ]
+        )
+
+        state.apply(
+            .activityUpdated(
+                SessionActivityUpdated(
+                    sessionID: "codex-approval",
+                    summary: "Turn completed.",
+                    phase: .completed,
+                    timestamp: startedAt.addingTimeInterval(1)
+                )
+            )
+        )
+
+        #expect(state.session(id: "codex-approval")?.phase == .waitingForApproval)
+        #expect(state.session(id: "codex-approval")?.summary == request.summary)
+        #expect(state.session(id: "codex-approval")?.permissionRequest == request)
     }
 
     @Test
@@ -656,6 +781,87 @@ struct SessionStateTests {
 
         #expect(activityEvent.activityUpdate?.summary == "Permission approved. Codex continued the tool.")
         #expect(response == .codexHookDirective(.permissionRequest(.allow)))
+    }
+
+    @Test
+    func codexDesktopPermissionRequestWithoutTranscriptRemainsActionable() async throws {
+        let socketURL = BridgeSocketLocation.uniqueTestURL()
+        let server = BridgeServer(socketURL: socketURL)
+        try server.start()
+        defer { server.stop() }
+
+        let observer = LocalBridgeClient(socketURL: socketURL)
+        let stream = try observer.connect()
+        defer { observer.disconnect() }
+        try await observer.send(.registerClient(role: .observer))
+
+        let payload = CodexHookPayload(
+            cwd: "/tmp/desktop-worktree",
+            hookEventName: .permissionRequest,
+            model: "gpt-5-codex",
+            permissionMode: .default,
+            sessionID: "codex-desktop-permission",
+            terminalApp: "Codex.app",
+            transcriptPath: nil,
+            turnID: "turn-desktop-1",
+            toolName: "Bash",
+            toolUseID: "tool-desktop-1",
+            toolInput: CodexHookToolInput(
+                command: "whois example.com",
+                description: "Run a network command outside the sandbox"
+            )
+        )
+
+        async let responseTask = sendOnGCDThread(.processCodexHook(payload), socketURL: socketURL)
+
+        var iterator = stream.makeAsyncIterator()
+        let startedEvent = try await nextEvent(from: &iterator)
+        let permissionEvent = try await nextEvent(from: &iterator)
+
+        #expect(startedEvent.isSessionStarted)
+        guard case let .permissionRequested(permission) = permissionEvent else {
+            Issue.record("Expected a Codex Desktop permission request")
+            return
+        }
+        #expect(permission.request.affectedPath == "whois example.com")
+
+        try await observer.send(
+            .resolvePermission(sessionID: payload.sessionID, resolution: .allowOnce())
+        )
+
+        let activityEvent = try await nextEvent(from: &iterator)
+        let response = try await responseTask
+
+        #expect(activityEvent.activityUpdate?.summary == "Permission approved. Codex continued the tool.")
+        #expect(response == .codexHookDirective(.permissionRequest(.allow)))
+    }
+
+    @Test
+    func codexDesktopExecApprovalUsesReadableCurrentFieldNames() throws {
+        let input = try JSONDecoder().decode(
+            CodexHookToolInput.self,
+            from: Data(#"{"cmd":"open -na '/Applications/Test.app'","justification":"Allow opening the test app?","sandbox_permissions":"require_escalated"}"#.utf8)
+        )
+        let payload = CodexHookPayload(
+            cwd: "/tmp/worktree",
+            hookEventName: .permissionRequest,
+            model: "gpt-5-codex",
+            permissionMode: .default,
+            sessionID: "desktop-current-fields",
+            terminalApp: "Codex.app",
+            transcriptPath: nil,
+            toolName: "exec_command",
+            toolInput: input
+        )
+
+        #expect(input.command == "open -na '/Applications/Test.app'")
+        #expect(input.description == "Allow opening the test app?")
+        #expect(payload.permissionRequestTitle == "Run Bash command")
+        #expect(payload.permissionRequestSummary == "Allow opening the test app?")
+        #expect(
+            payload.permissionRequestDetail
+                == "Allow opening the test app?\n\nCommand:\nopen -na '/Applications/Test.app'"
+        )
     }
 
     @Test

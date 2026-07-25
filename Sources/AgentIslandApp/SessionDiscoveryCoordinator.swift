@@ -58,6 +58,12 @@ final class SessionDiscoveryCoordinator {
     private let codexRolloutDiscovery = CodexRolloutDiscovery()
 
     @ObservationIgnored
+    private var codexSessionIndexWatcher: CodexSessionIndexWatcher?
+
+    @ObservationIgnored
+    private var codexSessionNameRefreshTask: Task<Void, Never>?
+
+    @ObservationIgnored
     private let claudeTranscriptDiscovery = ClaudeTranscriptDiscovery()
 
     @ObservationIgnored
@@ -217,19 +223,41 @@ final class SessionDiscoveryCoordinator {
     private func merge(discovered: AgentSession, into existing: AgentSession) -> AgentSession {
         var merged = existing
         let discoveredIsNewer = discovered.updatedAt >= existing.updatedAt
+        let preservesPendingApproval = existing.phase == .waitingForApproval
+            && existing.permissionRequest != nil
+        let preservesPendingQuestion = existing.phase == .waitingForAnswer
+            && existing.questionPrompt != nil
+        let preservesActionableState = preservesPendingApproval || preservesPendingQuestion
 
         if discoveredIsNewer {
-            merged.title = discovered.title
-            merged.phase = discovered.phase
-            merged.summary = discovered.summary
             merged.updatedAt = discovered.updatedAt
-            merged.permissionRequest = discovered.permissionRequest
-            merged.questionPrompt = discovered.questionPrompt
+
+            // Transcript/rollout discovery often has only a generic
+            // "Provider · project" fallback. Do not let that erase a
+            // first-class title supplied by the live app or session index.
+            if discovered.spotlightHeadlineSessionName != nil
+                || existing.spotlightHeadlineSessionName == nil {
+                merged.title = discovered.title
+            }
+
+            // A file snapshot can race a live approval/question event. Keep
+            // the blocking state until the user or provider explicitly
+            // resolves it instead of collapsing the actionable notification.
+            if !preservesActionableState {
+                merged.phase = discovered.phase
+                merged.summary = discovered.summary
+                merged.permissionRequest = discovered.permissionRequest
+                merged.questionPrompt = discovered.questionPrompt
+            }
         }
 
         merged.origin = existing.origin ?? discovered.origin
         merged.attachmentState = mergeAttachmentState(existing.attachmentState, discovered.attachmentState)
-        merged.jumpTarget = existing.jumpTarget ?? discovered.jumpTarget
+        merged.jumpTarget = mergeJumpTarget(
+            existing: existing.jumpTarget,
+            discovered: discovered.jumpTarget,
+            tool: discovered.tool
+        )
         merged.codexMetadata = mergeCodexMetadata(existing.codexMetadata, discovered.codexMetadata)
         merged.claudeMetadata = mergeClaudeMetadata(existing.claudeMetadata, discovered.claudeMetadata)
         merged.openCodeMetadata = mergeOpenCodeMetadata(existing.openCodeMetadata, discovered.openCodeMetadata)
@@ -240,6 +268,36 @@ final class SessionDiscoveryCoordinator {
         merged.isCodexAppSession = existing.isCodexAppSession || discovered.isCodexAppSession
 
         return merged
+    }
+
+    private func mergeJumpTarget(
+        existing: JumpTarget?,
+        discovered: JumpTarget?,
+        tool: AgentTool
+    ) -> JumpTarget? {
+        guard let existing else { return discovered }
+        guard let discovered else { return existing }
+
+        let existingWorkingDirectory = existing.workingDirectory?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let discoveredWorkingDirectory = discovered.workingDirectory?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let existingHasUsefulWorkspace = existingWorkingDirectory.map {
+            !$0.isEmpty && $0 != "/"
+        } ?? false
+        let discoveredHasUsefulWorkspace = discoveredWorkingDirectory.map {
+            !$0.isEmpty && $0 != "/"
+        } ?? false
+
+        if tool == .codex,
+           existing.terminalApp == "Codex.app",
+           discovered.terminalApp == "Codex.app",
+           !existingHasUsefulWorkspace,
+           discoveredHasUsefulWorkspace {
+            return discovered
+        }
+
+        return existing
     }
 
     private func mergeOpenCodeMetadata(
@@ -361,18 +419,19 @@ final class SessionDiscoveryCoordinator {
     }
 
     @ObservationIgnored
-    private var lastCodexAppRescanDate: Date = .distantPast
-
-    @ObservationIgnored
     private var lastCodexAppReconcileDate: Date = .distantPast
+
+    private(set) var isManualRefreshInProgress = false
 
     // MARK: - Rollout tracking
 
-    /// Periodic Codex.app maintenance: reconcile archived/stalled sessions and
-    /// re-scan rollouts. Throttled internally; safe to call from the 2s monitor loop.
+    /// Periodic Codex.app maintenance only reconciles tracked sessions. Full
+    /// rollout discovery is intentionally user-driven because repeatedly
+    /// rebuilding the discovered set can re-add sessions just removed by
+    /// lifecycle reconciliation.
     func maintainCodexAppSessionsIfNeeded() {
+        startCodexSessionIndexWatcherIfNeeded()
         reconcileStalledCodexAppSessionsIfNeeded()
-        rediscoverCodexAppSessionsIfNeeded()
     }
 
     func refreshCodexRolloutTracking() {
@@ -410,28 +469,36 @@ final class SessionDiscoveryCoordinator {
         }
     }
 
-    // MARK: - Codex.app periodic re-discovery
+    // MARK: - Codex.app manual re-discovery
 
-    /// Re-scan `~/.codex/sessions/` for rollout files not yet tracked.
-    /// Called periodically when Codex.app is running as a fallback when
-    /// the app-server connection is unavailable.  Throttled to at most
-    /// once per 10 seconds.
-    func rediscoverCodexAppSessionsIfNeeded() {
-        let now = Date.now
-        guard now.timeIntervalSince(lastCodexAppRescanDate) >= 10 else { return }
-        lastCodexAppRescanDate = now
-
+    /// Explicitly re-scan `~/.codex/sessions/` for untracked rollouts. The
+    /// app-server and session-index watcher remain responsible for live
+    /// activity and title changes between manual refreshes.
+    func refreshCodexAppSessions() {
+        guard !isManualRefreshInProgress else { return }
+        isManualRefreshInProgress = true
         let discovery = codexRolloutDiscovery
         Task.detached(priority: .utility) { [weak self] in
             let discovered = discovery.discoverRecentSessions()
-            guard !discovered.isEmpty else { return }
+            let sessionNamesByID = discovery.discoverSessionNamesByID()
             await MainActor.run { [weak self] in
-                self?.applyCodexAppRediscovery(discovered)
+                guard let self else { return }
+                self.isManualRefreshInProgress = false
+                self.applyCodexAppRediscovery(
+                    discovered,
+                    sessionNamesByID: sessionNamesByID
+                )
+                self.onStatusMessage?("Session list refreshed.")
             }
         }
     }
 
-    private func applyCodexAppRediscovery(_ records: [CodexTrackedSessionRecord]) {
+    private func applyCodexAppRediscovery(
+        _ records: [CodexTrackedSessionRecord],
+        sessionNamesByID: [String: String]
+    ) {
+        applyCodexSessionNames(sessionNamesByID)
+
         let existingIDs = Set(state.sessions.filter { $0.tool == .codex }.map(\.id))
         let existingPaths = Set(state.sessions.compactMap(\.codexMetadata?.transcriptPath))
 
@@ -468,6 +535,68 @@ final class SessionDiscoveryCoordinator {
         refreshCodexRolloutTracking()
         scheduleCodexSessionPersistence()
         onStatusMessage?("Discovered \(newRecords.count) new Codex.app session(s) via rollout re-scan.")
+    }
+
+    private func startCodexSessionIndexWatcherIfNeeded() {
+        guard codexSessionIndexWatcher == nil else { return }
+
+        let watcher = CodexSessionIndexWatcher(
+            sessionIndexURL: CodexRolloutDiscovery.defaultSessionIndexURL
+        ) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.refreshCodexSessionNamesFromIndex()
+            }
+        }
+        codexSessionIndexWatcher = watcher
+        watcher.start()
+    }
+
+    private func refreshCodexSessionNamesFromIndex() {
+        codexSessionNameRefreshTask?.cancel()
+
+        let discovery = codexRolloutDiscovery
+        codexSessionNameRefreshTask = Task.detached(priority: .utility) { [weak self] in
+            let sessionNamesByID = discovery.discoverSessionNamesByID()
+            guard !Task.isCancelled else { return }
+
+            _ = await MainActor.run { [weak self] in
+                self?.applyCodexSessionNames(sessionNamesByID)
+            }
+        }
+    }
+
+    @discardableResult
+    func applyCodexSessionNames(_ sessionNamesByID: [String: String]) -> Int {
+        let result = Self.applyingCodexSessionNames(sessionNamesByID, to: state)
+        guard result.updatedCount > 0 else { return 0 }
+
+        state = result.state
+        scheduleCodexSessionPersistence()
+        onStatusMessage?(
+            "Updated \(result.updatedCount) Codex thread name\(result.updatedCount == 1 ? "" : "s")."
+        )
+        return result.updatedCount
+    }
+
+    static func applyingCodexSessionNames(
+        _ sessionNamesByID: [String: String],
+        to state: SessionState
+    ) -> (state: SessionState, updatedCount: Int) {
+        var updatedState = state
+        var updatedCount = 0
+
+        for session in state.sessions where session.tool == .codex {
+            guard let rawName = sessionNamesByID[session.id] else { continue }
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name != session.title else { continue }
+
+            updatedState.apply(.sessionTitleUpdated(
+                SessionTitleUpdated(sessionID: session.id, title: name)
+            ))
+            updatedCount += 1
+        }
+
+        return (updatedState, updatedCount)
     }
 
     // MARK: - Persistence scheduling

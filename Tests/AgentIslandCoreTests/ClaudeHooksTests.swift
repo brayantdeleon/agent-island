@@ -92,6 +92,7 @@ struct ClaudeHooksTests {
         try FileManager.default.createDirectory(at: workspaceDirectory, withIntermediateDirectories: true)
         let transcript = """
         {"cwd":"/tmp/demo-repo","sessionId":"session-123","type":"user","message":{"role":"user","content":"Fix the flaky auth tests."},"timestamp":"2026-04-03T03:20:00Z"}
+        {"type":"custom-title","customTitle":"Authentication test cleanup","sessionId":"session-123"}
         {"cwd":"/tmp/demo-repo","sessionId":"session-123","type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"I’m checking the auth test setup now."},{"type":"tool_use","id":"toolu_1","name":"Glob","input":{"pattern":"**/*auth*.test.ts"}}]},"timestamp":"2026-04-03T03:20:02Z"}
         {"cwd":"/tmp/demo-repo","sessionId":"session-123","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"auth.test.ts"}]},"timestamp":"2026-04-03T03:20:04Z"}
         {"cwd":"/tmp/demo-repo","sessionId":"session-123","type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"Found the failing auth test file."}]},"timestamp":"2026-04-03T03:20:06Z"}
@@ -106,7 +107,7 @@ struct ClaudeHooksTests {
         let session = try #require(sessions.first)
         #expect(session.id == "session-123")
         #expect(session.tool == .claudeCode)
-        #expect(session.title == "Claude · demo-repo")
+        #expect(session.title == "Authentication test cleanup")
         #expect(session.summary == "Found the failing auth test file.")
         #expect(session.claudeMetadata?.initialUserPrompt == "Fix the flaky auth tests.")
         #expect(session.claudeMetadata?.lastAssistantMessage == "Found the failing auth test file.")
@@ -690,6 +691,21 @@ struct ClaudeHooksTests {
         #expect(options.map(\.label) == ["Production", "Staging", "Other"])
         #expect(options.last?.allowsFreeform == true)
         #expect(options.dropLast().allSatisfy { !$0.allowsFreeform })
+    }
+
+    @Test
+    func claudePermissionDetailPreservesFullMultilineCommand() {
+        let command = "for file in one two three; do\n  echo \"$file\"\ndone\n" + String(repeating: "echo full-output\n", count: 20)
+        let payload = ClaudeHookPayload(
+            cwd: "/tmp",
+            hookEventName: .permissionRequest,
+            sessionID: "s1",
+            toolName: "Bash",
+            toolInput: .object(["command": .string(command)])
+        )
+
+        #expect(payload.permissionRequestDetail == command.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect((payload.toolInputPreview?.count ?? 0) < command.count)
     }
 
     @Test

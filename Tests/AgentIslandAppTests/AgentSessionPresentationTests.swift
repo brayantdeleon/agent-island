@@ -5,6 +5,149 @@ import AgentIslandCore
 
 struct AgentSessionPresentationTests {
     @Test
+    func completedSessionVisibilityIncludesExactlyOneHourButNotMore() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let exactlyOneHour = AgentSession(
+            id: "one-hour",
+            title: "Codex · one-hour",
+            tool: .codex,
+            attachmentState: .stale,
+            phase: .completed,
+            summary: "Done",
+            updatedAt: now.addingTimeInterval(-3_600)
+        )
+        var moreThanOneHour = AgentSession(
+            id: "over-one-hour",
+            title: "Codex · over-one-hour",
+            tool: .codex,
+            attachmentState: .attached,
+            phase: .completed,
+            summary: "Done",
+            updatedAt: now.addingTimeInterval(-3_600.001)
+        )
+        moreThanOneHour.isProcessAlive = true
+
+        #expect(exactlyOneHour.isVisibleInIslandSessionList(at: now))
+        #expect(!moreThanOneHour.isVisibleInIslandSessionList(at: now))
+    }
+
+    @Test
+    func staleRunningSessionStillRequiresLiveVisibility() {
+        let session = AgentSession(
+            id: "stale-running",
+            title: "Codex · stale",
+            tool: .codex,
+            attachmentState: .stale,
+            phase: .running,
+            summary: "Recovered",
+            updatedAt: .now
+        )
+
+        #expect(!session.isVisibleInIslandSessionList(at: .now))
+    }
+
+    @Test
+    func realtimeVoiceChatsAreExcludedOnlyForTheNumberedNamingConvention() {
+        var voiceSession = AgentSession(
+            id: "voice",
+            title: "Codex voice helper",
+            tool: .codex,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "Listening",
+            updatedAt: .now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Codex.app",
+                workspaceName: "realtime-voice-chat-42",
+                paneTitle: "Voice chat",
+                workingDirectory: "/tmp/realtime-voice-chat-42"
+            )
+        )
+        voiceSession.isProcessAlive = true
+
+        var similarlyNamedSession = voiceSession
+        similarlyNamedSession.id = "ordinary"
+        similarlyNamedSession.jumpTarget?.workspaceName = "realtime-voice-chat-42-notes"
+
+        var titledVoiceSession = voiceSession
+        titledVoiceSession.id = "titled-voice"
+        titledVoiceSession.title = "Codex · realtime-voice-chat-8"
+        titledVoiceSession.jumpTarget = nil
+
+        #expect(voiceSession.isRealtimeVoiceChatSession)
+        #expect(!voiceSession.isVisibleInIsland)
+        #expect(!voiceSession.isVisibleInIslandSessionList(at: .now))
+        #expect(titledVoiceSession.isRealtimeVoiceChatSession)
+        #expect(!similarlyNamedSession.isRealtimeVoiceChatSession)
+        #expect(similarlyNamedSession.isVisibleInIslandSessionList(at: .now))
+    }
+
+    @Test
+    func completedAndRequiredActionNotificationsStartExpanded() {
+        let running = AgentSession(
+            id: "running",
+            title: "Running task",
+            tool: .codex,
+            phase: .running,
+            summary: "Thinking",
+            updatedAt: .now
+        )
+        let completed = AgentSession(
+            id: "completed",
+            title: "Completed task",
+            tool: .codex,
+            phase: .completed,
+            summary: "Done",
+            updatedAt: .now
+        )
+        let approval = AgentSession(
+            id: "approval",
+            title: "Approval task",
+            tool: .codex,
+            phase: .waitingForApproval,
+            summary: "Needs approval",
+            updatedAt: .now
+        )
+
+        #expect(!running.defaultsToExpandedNotificationDetails(isActionable: false))
+        #expect(!running.defaultsToExpandedNotificationDetails(isActionable: true))
+        #expect(completed.defaultsToExpandedNotificationDetails(isActionable: true))
+        #expect(!approval.defaultsToExpandedNotificationDetails(isActionable: false))
+        #expect(approval.defaultsToExpandedNotificationDetails(isActionable: true))
+    }
+
+    @Test
+    func persistentPermissionApprovalIsOnlyOfferedForClaudeRules() {
+        let request = PermissionRequest(
+            title: "Run tool",
+            summary: "Run tool",
+            affectedPath: "tool",
+            toolName: "Bash"
+        )
+        let codex = AgentSession(
+            id: "codex-approval",
+            title: "Codex approval",
+            tool: .codex,
+            phase: .waitingForApproval,
+            summary: "Approval needed",
+            updatedAt: .now,
+            permissionRequest: request
+        )
+        let claude = AgentSession(
+            id: "claude-approval",
+            title: "Claude approval",
+            tool: .claudeCode,
+            phase: .waitingForApproval,
+            summary: "Approval needed",
+            updatedAt: .now,
+            permissionRequest: request
+        )
+
+        #expect(!codex.supportsPersistentPermissionApproval)
+        #expect(claude.supportsPersistentPermissionApproval)
+    }
+
+    @Test
     func attachedCompletedSessionStaysActiveWhileRecent() {
         let referenceDate = Date(timeIntervalSince1970: 10_000)
         let session = AgentSession(
@@ -184,10 +327,10 @@ struct AgentSessionPresentationTests {
     }
 
     @Test
-    func liveHeadlineUsesLatestPromptForAttachedSession() {
+    func liveHeadlineUsesProjectAndCodexSessionName() {
         let session = AgentSession(
             id: "session-1",
-            title: "Codex · worktree",
+            title: "Improve island hover behavior",
             tool: .codex,
             origin: .live,
             attachmentState: .attached,
@@ -208,30 +351,35 @@ struct AgentSessionPresentationTests {
             )
         )
 
-        // Headline uses initial prompt (session topic), prompt line uses latest
-        #expect(session.spotlightHeadlineText == "worktree · Start by fixing the island hover behavior.")
+        #expect(session.spotlightHeadlineText == "worktree · Improve island hover behavior")
         #expect(session.spotlightPromptLineText == "You: Now make the overlay height fit the content.")
     }
 
     @Test
-    func detachedSessionHeadlineShowsInitialPrompt() {
+    func detachedSessionHeadlineUsesClaudeSessionName() {
         let session = AgentSession(
             id: "session-1",
-            title: "Codex · worktree",
-            tool: .codex,
+            title: "Island hover cleanup",
+            tool: .claudeCode,
             origin: .live,
             attachmentState: .detached,
             phase: .completed,
             summary: "Done",
             updatedAt: Date.now.addingTimeInterval(-30),
-            codexMetadata: CodexSessionMetadata(
+            jumpTarget: JumpTarget(
+                terminalApp: "Claude.app",
+                workspaceName: "worktree",
+                paneTitle: "Island hover cleanup",
+                workingDirectory: "/tmp/worktree"
+            ),
+            claudeMetadata: ClaudeSessionMetadata(
                 initialUserPrompt: "Start by fixing the island hover behavior.",
                 lastUserPrompt: "Now make the overlay height fit the content.",
                 lastAssistantMessage: "Updating the layout logic."
             )
         )
 
-        #expect(session.spotlightHeadlineText == "worktree · Start by fixing the island hover behavior.")
+        #expect(session.spotlightHeadlineText == "worktree · Island hover cleanup")
         #expect(session.spotlightPromptLineText == "You: Now make the overlay height fit the content.")
     }
 
@@ -240,7 +388,7 @@ struct AgentSessionPresentationTests {
         let now = Date.now
         let session = AgentSession(
             id: "session-1",
-            title: "Codex · worktree",
+            title: "README release notes",
             tool: .codex,
             origin: .live,
             attachmentState: .attached,
@@ -261,9 +409,32 @@ struct AgentSessionPresentationTests {
             )
         )
 
-        #expect(session.spotlightHeadlineText == "worktree · Commit the README change.")
+        #expect(session.spotlightHeadlineText == "worktree · README release notes")
+        #expect(session.notificationHeadlineText == "worktree · README release notes")
         #expect(session.spotlightPromptLineText == "You: Also confirm the worktree status.")
         #expect(session.notificationHeaderPromptLineText == nil)
+    }
+
+    @Test
+    func genericProviderTitleDoesNotDuplicateProjectOrFallBackToPrompt() {
+        let session = AgentSession(
+            id: "session-1",
+            title: "Codex · worktree",
+            tool: .codex,
+            phase: .running,
+            summary: "Working",
+            updatedAt: .now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Codex.app",
+                workspaceName: "worktree",
+                paneTitle: "Codex · worktree"
+            ),
+            codexMetadata: CodexSessionMetadata(
+                initialUserPrompt: "This prompt should not become the title."
+            )
+        )
+
+        #expect(session.spotlightHeadlineText == "worktree")
     }
 
     @Test
@@ -332,5 +503,64 @@ struct AgentSessionPresentationTests {
         #expect(session.spotlightStatusLabel == "Live · Search")
         #expect(session.spotlightSecondaryText == "Running Search")
         #expect(session.displayCurrentToolName == "Search")
+    }
+
+    @Test
+    func runtimeSurfaceBadgeDistinguishesAppsFromTerminals() {
+        let appSession = AgentSession(
+            id: "app-session",
+            title: "Claude Code · app",
+            tool: .claudeCode,
+            phase: .running,
+            summary: "Working",
+            updatedAt: .now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Claude.app",
+                workspaceName: "app",
+                paneTitle: "Claude"
+            )
+        )
+        let terminalSession = AgentSession(
+            id: "terminal-session",
+            title: "Codex · terminal",
+            tool: .codex,
+            phase: .running,
+            summary: "Working",
+            updatedAt: .now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Ghostty",
+                workspaceName: "terminal",
+                paneTitle: "codex"
+            )
+        )
+
+        #expect(appSession.spotlightRuntimeSurfaceBadge == "app")
+        #expect(terminalSession.spotlightRuntimeSurfaceBadge == "terminal")
+    }
+
+    @Test
+    func runningCodexAndClaudeSessionsUseProviderTitleColors() {
+        var codex = AgentSession(
+            id: "codex",
+            title: "Codex",
+            tool: .codex,
+            phase: .running,
+            summary: "Working",
+            updatedAt: .now
+        )
+        let claude = AgentSession(
+            id: "claude",
+            title: "Claude Code",
+            tool: .claudeCode,
+            phase: .running,
+            summary: "Working",
+            updatedAt: .now
+        )
+
+        #expect(codex.spotlightActiveTitleColorHex == AgentTool.codex.brandColorHex)
+        #expect(claude.spotlightActiveTitleColorHex == AgentTool.claudeCode.brandColorHex)
+
+        codex.phase = .completed
+        #expect(codex.spotlightActiveTitleColorHex == nil)
     }
 }

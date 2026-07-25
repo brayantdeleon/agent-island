@@ -179,6 +179,7 @@ public struct PermissionRequest: Equatable, Identifiable, Codable, Sendable {
     public var id: UUID
     public var title: String
     public var summary: String
+    public var detail: String?
     public var affectedPath: String
     public var primaryActionTitle: String
     public var secondaryActionTitle: String
@@ -191,6 +192,7 @@ public struct PermissionRequest: Equatable, Identifiable, Codable, Sendable {
         id: UUID = UUID(),
         title: String,
         summary: String,
+        detail: String? = nil,
         affectedPath: String,
         primaryActionTitle: String = "Allow",
         secondaryActionTitle: String = "Deny",
@@ -202,6 +204,7 @@ public struct PermissionRequest: Equatable, Identifiable, Codable, Sendable {
         self.id = id
         self.title = title
         self.summary = summary
+        self.detail = detail
         self.affectedPath = affectedPath
         self.primaryActionTitle = primaryActionTitle
         self.secondaryActionTitle = secondaryActionTitle
@@ -503,6 +506,33 @@ public struct AgentSession: Equatable, Identifiable, Codable, Sendable {
 }
 
 public extension AgentSession {
+    /// Realtime voice chats are auxiliary Codex threads, not user-facing agent
+    /// sessions. Keep tracking them internally, but exclude them from island
+    /// visibility when their session or workspace name matches the generated
+    /// `realtime-voice-chat-N` convention.
+    var isRealtimeVoiceChatSession: Bool {
+        [title, jumpTarget?.workspaceName, jumpTarget?.paneTitle]
+            .compactMap { $0 }
+            .contains(where: Self.isRealtimeVoiceChatName)
+    }
+
+    private static func isRealtimeVoiceChatName(_ value: String) -> Bool {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let titleComponents = normalized.split(
+            separator: "·",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        )
+        let sessionName = titleComponents.count == 2
+            ? titleComponents[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            : normalized
+        let prefix = "realtime-voice-chat-"
+        guard sessionName.hasPrefix(prefix) else { return false }
+
+        let suffix = sessionName.dropFirst(prefix.count)
+        return !suffix.isEmpty && suffix.allSatisfy { $0.isASCII && $0.isNumber }
+    }
+
     var isDemoSession: Bool {
         origin == .demo
     }
@@ -523,6 +553,7 @@ public extension AgentSession {
     /// Hook-managed sessions (Claude Code via hooks) rely on hook lifecycle
     /// signals; non-hook sessions use process polling.
     var isVisibleInIsland: Bool {
+        if isRealtimeVoiceChatSession { return false }
         if isDemoSession { return true }
         if phase.requiresAttention { return true }
         // Codex.app sessions stay visible while the desktop app is running,

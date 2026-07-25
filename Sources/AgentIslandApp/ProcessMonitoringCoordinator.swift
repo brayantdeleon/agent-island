@@ -296,8 +296,14 @@ final class ProcessMonitoringCoordinator {
             _ = local.reconcileJumpTargets(resolverJumpTargets)
         }
 
-        // Phase 4: remove sessions that are no longer visible.
-        _ = local.removeInvisibleSessions()
+        // Phase 4: remove sessions that are no longer visible. Completed
+        // sessions remain in state for the same one-hour window used by the
+        // expanded list, even after their process or thread has ended.
+        _ = local.removeInvisibleSessions(
+            retainingCompletedSince: Date.now.addingTimeInterval(
+                -AgentSession.islandCompletedVisibilityWindow
+            )
+        )
 
         // Single state assignment — triggers didSet exactly once.
         // Compare against the original snapshot to catch all mutations
@@ -344,6 +350,8 @@ final class ProcessMonitoringCoordinator {
     private func sessionID(for event: AgentEvent) -> String? {
         switch event {
         case let .sessionStarted(payload):
+            payload.sessionID
+        case let .sessionTitleUpdated(payload):
             payload.sessionID
         case let .activityUpdated(payload):
             payload.sessionID

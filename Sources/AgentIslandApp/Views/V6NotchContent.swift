@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import AgentIslandCore
 
@@ -24,6 +25,155 @@ enum AgentGridCell: Equatable {
 enum IslandRightSlotContent: Equatable {
     case count(Int)              // "×N" badge
     case agents([AgentGridCell]) // balanced grid, one tile per session
+}
+
+/// One mascot per actively running provider in the closed island's leading
+/// slot. This is intentionally provider-level rather than session-level so
+/// parallel tasks do not multiply the number of pets.
+enum IslandLeadingPet: String, Equatable, Hashable {
+    case codex
+    case claude
+}
+
+// MARK: - Leading activity renderer
+
+/// Replaces the waveform while Codex or Claude is actively running.
+struct V6LeadingActivityView: View {
+    let mode: UnifiedBars.Mode
+    let pets: [IslandLeadingPet]
+
+    static let clawdFrameDuration: TimeInterval = 0.14
+    static let codexFrameDuration = clawdFrameDuration / 0.75
+    static let clawdHopOffsets: [CGFloat] = [1.75, 0.75, -0.75, -1.75, -0.75, 0.75]
+
+    static func intrinsicWidth(for pets: [IslandLeadingPet]) -> CGFloat {
+        pets.count > 1 ? 52 : 24
+    }
+
+    static func macbookLeadingExtension(for pets: [IslandLeadingPet]) -> CGFloat {
+        max(0, intrinsicWidth(for: pets) - 24)
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if pets.isEmpty {
+            UnifiedBars(mode: mode, size: 24)
+                .frame(width: 24, height: 24)
+        } else {
+            HStack(spacing: pets.count > 1 ? 4 : 0) {
+                ForEach(pets, id: \.self) { pet in
+                    MiniSessionPet(pet: pet)
+                        .frame(width: pets.count > 1 ? 24 : 20, height: 20)
+                }
+            }
+            .frame(width: Self.intrinsicWidth(for: pets), height: 24)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel)
+        }
+    }
+
+    private var accessibilityLabel: String {
+        switch pets {
+        case [.codex]:
+            return "Codex session running"
+        case [.claude]:
+            return "Clawd — Claude Code session running"
+        default:
+            return "Codex and Clawd — Claude Code sessions running"
+        }
+    }
+}
+
+private struct MiniSessionPet: View {
+    let pet: IslandLeadingPet
+
+    private static let installedCodexFrames = PetdexPetLoader.selectedRunningFrames()
+    private static let clawdImage: CGImage? = {
+        guard
+            let url = Bundle.appResources.url(forResource: "clawd-menubar", withExtension: "png"),
+            let image = NSImage(contentsOf: url)
+        else {
+            return nil
+        }
+
+        return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }()
+
+    @ViewBuilder
+    var body: some View {
+        let frameDuration = pet == .codex
+            ? V6LeadingActivityView.codexFrameDuration
+            : V6LeadingActivityView.clawdFrameDuration
+
+        TimelineView(.periodic(from: .now, by: frameDuration)) { context in
+            let frame = Int(context.date.timeIntervalSinceReferenceDate / frameDuration)
+            petFrame(frame: frame)
+        }
+    }
+
+    @ViewBuilder
+    private func petFrame(frame: Int) -> some View {
+        switch pet {
+        case .codex:
+            if !Self.installedCodexFrames.isEmpty {
+                let image = Self.installedCodexFrames[frame % Self.installedCodexFrames.count]
+                Image(decorative: image, scale: 1)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .scaleEffect(1.4)
+            } else {
+                Canvas(rendersAsynchronously: false) { context, size in
+                    drawCodexPet(in: context, size: size, frame: frame)
+                }
+            }
+        case .claude:
+            if let image = Self.clawdImage {
+                Image(decorative: image, scale: 1)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .offset(y: clawdHopOffset(frame: frame))
+            }
+        }
+    }
+
+    private func clawdHopOffset(frame: Int) -> CGFloat {
+        let offsets = V6LeadingActivityView.clawdHopOffsets
+        return offsets[frame % offsets.count]
+    }
+
+    private func drawCodexPet(in context: GraphicsContext, size: CGSize, frame: Int) {
+        let scale = min(size.width / 20, size.height / 20)
+        let x = (size.width - 20 * scale) / 2
+        let animationFrame = frame % 2
+        let bounce = CGFloat(animationFrame == 0 ? 1 : 0) * scale
+        let mint = Color(red: 0.34, green: 0.91, blue: 0.67)
+        let paper = V6Palette.paper
+        let ink = V6Palette.ink
+
+        func rect(_ px: CGFloat, _ py: CGFloat, _ width: CGFloat, _ height: CGFloat, radius: CGFloat = 0) -> Path {
+            Path(roundedRect: CGRect(
+                x: x + px * scale,
+                y: py * scale - bounce,
+                width: width * scale,
+                height: height * scale
+            ), cornerRadius: radius * scale)
+        }
+
+        // A tiny original Codex companion: antenna, ears, body, and terminal
+        // cursor chest mark. Its two-frame hop reads clearly at notch scale.
+        context.fill(rect(9, 1, 2, 3, radius: 1), with: .color(mint))
+        context.fill(rect(4, 4, 12, 11, radius: 4), with: .color(paper))
+        context.fill(rect(2.5, 5, 4, 5, radius: 2), with: .color(mint))
+        context.fill(rect(13.5, 5, 4, 5, radius: 2), with: .color(mint))
+        context.fill(rect(6, 8, 2, 2, radius: 1), with: .color(ink))
+        context.fill(rect(12, 8, 2, 2, radius: 1), with: .color(ink))
+        context.fill(rect(8, 12, 4, 1.5, radius: 0.75), with: .color(mint))
+        context.fill(rect(animationFrame == 0 ? 4 : 5, 15, 4, 2, radius: 1), with: .color(paper))
+        context.fill(rect(animationFrame == 0 ? 12 : 11, 15, 4, 2, radius: 1), with: .color(paper))
+    }
+
 }
 
 // MARK: - Right-slot renderers
@@ -213,6 +363,7 @@ struct V6ClosedPill: View {
     var label: String?          // suppressed automatically in MacBook layout
     var rightSlot: IslandRightSlotContent?
     var layout: V6ClosedLayout
+    var activePets: [IslandLeadingPet] = []
     var height: CGFloat = 32
 
     /// MacBook mode only — width of the physical notch cutout to wrap.
@@ -241,7 +392,7 @@ struct V6ClosedPill: View {
     // MARK: External (fluid)
 
     private var externalBody: some View {
-        let glyphW: CGFloat = 24
+        let glyphW = V6LeadingActivityView.intrinsicWidth(for: activePets)
         let labelW = label.map { V6CenterLabelView.intrinsicWidth(of: $0) } ?? 0
         let rightW = rightSlot.map { V6RightSlotView.intrinsicWidth(of: $0) } ?? 0
 
@@ -255,7 +406,7 @@ struct V6ClosedPill: View {
                 .fill(V6Palette.ink)
 
             HStack(spacing: 0) {
-                UnifiedBars(mode: mode, size: 24)
+                V6LeadingActivityView(mode: mode, pets: activePets)
                     .frame(width: glyphW, height: 24)
 
                 if let label {
@@ -280,6 +431,7 @@ struct V6ClosedPill: View {
                 AnyHashable(label ?? ""),
                 AnyHashable(rightSlot.map(RightSlotKey.init) ?? .none),
                 AnyHashable(mode),
+                AnyHashable(activePets),
             ])
         )
     }
@@ -288,15 +440,16 @@ struct V6ClosedPill: View {
 
     private var macbookBody: some View {
         let halfReserve: CGFloat = 44
-        let outer = halfReserve + physicalNotchWidth + halfReserve
+        let leadingExtension = V6LeadingActivityView.macbookLeadingExtension(for: activePets)
+        let outer = halfReserve + leadingExtension + physicalNotchWidth + halfReserve
 
         return ZStack {
             V6ClosedPillShape()
                 .fill(V6Palette.ink)
 
             HStack(spacing: 0) {
-                UnifiedBars(mode: mode, size: 24)
-                    .frame(width: 24, height: 24)
+                V6LeadingActivityView(mode: mode, pets: activePets)
+                    .frame(width: V6LeadingActivityView.intrinsicWidth(for: activePets), height: 24)
 
                 Spacer(minLength: 0)
 
@@ -307,6 +460,9 @@ struct V6ClosedPill: View {
             .padding(.horizontal, pad)
         }
         .frame(width: outer, height: height)
+        // The layout grows only toward the left so the hardware notch and
+        // right-side session count remain locked to their existing positions.
+        .offset(x: -leadingExtension / 2)
     }
 }
 
@@ -345,6 +501,7 @@ struct IslandPreviewPill: View {
             label: label,
             rightSlot: rightSlot,
             layout: layout,
+            activePets: mode == .running ? [.codex, .claude] : [],
             physicalNotchWidth: physicalNotchWidth
         )
         .frame(maxWidth: .infinity, alignment: .center)
