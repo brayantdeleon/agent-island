@@ -1253,6 +1253,75 @@ struct SessionStateTests {
     }
 
     @Test
+    func codexHookInstallerMigratesDuplicateOpenIslandGroups() throws {
+        let existing = """
+        {
+          "hooks": {
+            "PermissionRequest": [
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks'",
+                    "timeout": 3600
+                  }
+                ]
+              },
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "'/Users/test/Library/Application Support/AgentIsland/bin/AgentIslandHooks'",
+                    "timeout": 3600
+                  }
+                ]
+              }
+            ],
+            "Stop": [
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks'",
+                    "timeout": 45
+                  },
+                  {
+                    "type": "command",
+                    "command": "/usr/bin/true"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)
+
+        let replacement = "'/Users/test/Library/Application Support/AgentIsland/bin/AgentIslandHooks'"
+        let mutation = try CodexHookInstaller.installHooksJSON(
+            existingData: existing,
+            hookCommand: replacement
+        )
+
+        let root = try jsonObject(from: mutation.contents)
+        let hooks = root["hooks"] as? [String: Any]
+        let permissionGroups = hooks?["PermissionRequest"] as? [[String: Any]]
+        let permissionCommands = permissionGroups?
+            .compactMap { $0["hooks"] as? [[String: Any]] }
+            .flatMap { $0 }
+            .compactMap { $0["command"] as? String } ?? []
+        let stopGroups = hooks?["Stop"] as? [[String: Any]]
+        let stopCommands = stopGroups?
+            .compactMap { $0["hooks"] as? [[String: Any]] }
+            .flatMap { $0 }
+            .compactMap { $0["command"] as? String } ?? []
+
+        #expect(permissionCommands == [replacement])
+        #expect(stopCommands.filter { $0 == replacement }.count == 1)
+        #expect(stopCommands.contains("/usr/bin/true"))
+        #expect(!stopCommands.contains(where: { $0.contains("OpenIslandHooks") }))
+    }
+
+    @Test
     func codexHookInstallerUninstallRemovesOnlyManagedHooks() throws {
         let existing = """
         {

@@ -99,20 +99,23 @@ The app can block a command by writing this to stdout:
 
 The managed `PermissionRequest` hook has a 1-hour timeout so the user can approve or deny from the UI.
 
-The same managed hook covers Codex CLI and local Codex Desktop threads because
-both runtimes load the active `~/.codex` hook configuration. Codex Desktop's
-app-server status is observer-only in Open Island: it can report that a thread
+The same managed hook can cover Codex CLI and local Codex Desktop threads after
+Codex has loaded and trusted the active `~/.codex` hook configuration. Codex Desktop's
+app-server status is observer-only in Agent Island: it can report that a thread
 is waiting, but its separately launched app-server connection cannot answer the
 Desktop client's JSON-RPC approval request. Only a live blocking
-`PermissionRequest` hook creates approval buttons in Open Island.
+`PermissionRequest` hook creates approval buttons in Agent Island.
 
-Codex may omit `transcript_path` from a hook payload. Open Island still accepts
+Codex may omit `transcript_path` from a hook payload. Agent Island still accepts
 `PreToolUse` and `PermissionRequest` events from Codex Desktop in that case so a
 real approval cannot be mistaken for an internal title-generation invocation.
 
-After installing or changing the hook, review and trust it in Codex with
-`/hooks`. If the hook is unavailable or untrusted, Codex falls back to its own
-approval UI; the app-server status shown by Open Island is informational only.
+After installing or changing the hook, review and trust it with `/hooks` in
+Codex CLI, then restart Codex Desktop so its app-server loads the new hook
+definition. Existing Desktop processes do not pick up a hook installed after
+they started. If the hook is unavailable, untrusted, or unsupported for a
+specialized tool path, Codex falls back to its own approval UI; the app-server
+status shown by Agent Island is informational only.
 
 Allow:
 

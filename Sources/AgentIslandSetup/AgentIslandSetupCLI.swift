@@ -136,6 +136,8 @@ private struct SetupCommand {
         } else {
             print("config.toml already had Codex hooks enabled")
         }
+        print("Review and trust the installed hooks with /hooks in Codex CLI.")
+        print("Restart Codex Desktop after installing or changing hooks.")
     }
 
     private func uninstall() throws {
