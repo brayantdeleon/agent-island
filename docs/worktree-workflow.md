@@ -13,7 +13,8 @@ This repository should use Git worktrees as the default shape for development.
 
 ### 1. Integration worktree
 
-- Path: `/Users/wangruobing/Personal/agent-island`
+- Path: the worktree reported with branch `refs/heads/main` by
+  `git worktree list --porcelain`
 - Branch: `main`
 - Purpose: fetch, mirror `main` after PR merges, and verify
 
@@ -25,7 +26,8 @@ Rules:
 
 ### 2. Topic worktrees
 
-- Path pattern: `/Users/wangruobing/Personal/agent-island-<topic>`
+- Path pattern: a sibling such as `../agent-island-<topic>`, or a
+  task-specific writable temporary root
 - Branch pattern: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `investigate/<topic>`
 - Purpose: isolated implementation for one slice
 
@@ -44,15 +46,19 @@ From the integration worktree:
 
 ```bash
 git fetch origin
-git worktree add /Users/wangruobing/Personal/agent-island-<topic> -b <branch-name> origin/main
+git worktree add ../agent-island-<topic> -b <branch-name> origin/main
 ```
 
 Example:
 
 ```bash
 git fetch origin
-git worktree add /Users/wangruobing/Personal/agent-island-island-polish -b feat/island-polish origin/main
+git worktree add ../agent-island-island-polish -b feat/island-polish origin/main
 ```
+
+If the sibling directory is not writable, replace the path with an explicit
+task-specific path under a writable temporary root. Never create a topic
+worktree inside the integration checkout.
 
 ## Work inside the topic worktree
 
@@ -107,11 +113,11 @@ git pull --ff-only origin main
 After the topic branch is merged:
 
 ```bash
-git worktree remove /Users/wangruobing/Personal/agent-island-<topic>
+git worktree remove ../agent-island-<topic>
 git branch -d <branch-name>
 ```
 
-If the branch was pushed upstream:
+If the branch was pushed to `origin`:
 
 ```bash
 git push origin --delete <branch-name>
@@ -120,7 +126,7 @@ git push origin --delete <branch-name>
 ## Recommended Conventions
 
 - Keep topic names short and concrete: `codex-hooks-noise`, `island-geometry`, `claude-usage`.
-- Prefer sibling directories under `/Users/wangruobing/Personal/` so all worktrees stay easy to discover.
+- Prefer sibling directories next to the integration checkout so worktrees stay easy to discover; use a task-specific writable temporary root when a sibling is unavailable.
 - Do not leave long-lived unmerged worktrees drifting far away from `origin/main`.
 - If a worktree becomes exploratory rather than shippable, rename the branch into `investigate/<topic>` or close it.
 - When assigning work to multiple agents, split by file ownership or subsystem, not by vague goal.
