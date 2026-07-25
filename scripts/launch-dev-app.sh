@@ -13,7 +13,7 @@ done
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 brand_script="$repo_root/scripts/generate_brand_icons.py"
 brand_icon="$repo_root/Assets/Brand/AgentIsland.icns"
-bundle_dir="$HOME/Applications/Agent-Island Dev.app"
+bundle_dir="$HOME/Applications/Agent Island.app"
 plist_path="$bundle_dir/Contents/Info.plist"
 bundle_binary="$bundle_dir/Contents/MacOS/AgentIslandApp"
 
@@ -36,8 +36,8 @@ fi
 mkdir -p "$bundle_dir/Contents/MacOS" "$bundle_dir/Contents/Helpers" "$bundle_dir/Contents/Resources" "$bundle_dir/Contents/Frameworks"
 
 # Kill any running instance before copying so the binary isn't locked.
-osascript -e 'tell application "Agent-Island Dev" to quit' 2>/dev/null || true
-pkill -9 -f "Agent-Island Dev" 2>/dev/null || true
+osascript -e 'tell application "Agent Island" to quit' 2>/dev/null || true
+pkill -9 -f "Agent Island" 2>/dev/null || true
 sleep 2
 
 command cp "$app_binary" "$bundle_binary"
@@ -80,7 +80,7 @@ cat > "$plist_path" <<EOF
     <key>CFBundleIconFile</key>
     <string>AgentIsland</string>
     <key>CFBundleName</key>
-    <string>Agent-Island Dev</string>
+    <string>Agent Island</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -129,8 +129,8 @@ fi
 # identity locally with zero Apple Developer Program involvement.
 sign_identity="-"
 if security find-identity -p codesigning -v "$HOME/Library/Keychains/login.keychain-db" 2>/dev/null \
-       | grep -q '"Agent-Island Dev Local"'; then
-    sign_identity="Agent-Island Dev Local"
+       | grep -q '"Agent Island Local"'; then
+    sign_identity="Agent Island Local"
 else
     echo
     echo "⚠ Using ad-hoc signing. macOS TCC grants (Accessibility, Automation)"

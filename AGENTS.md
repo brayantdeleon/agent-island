@@ -78,9 +78,9 @@ See [docs/worktree-workflow.md](/Users/wangruobing/Personal/agent-island/docs/wo
 
 - Treat the repository executable product `AgentIslandApp` as the canonical OSS app runtime.
 - Treat `swift run AgentIslandApp` and the Xcode app target as the source-of-truth way to run the current branch's app code.
-- Treat `~/Applications/Agent-Island Dev.app` as a local development bundle wrapper around the repo-built `AgentIslandApp`, not as a separate product line.
-- Use `Agent-Island Dev.app` for manual OSS app verification when bundle semantics, LaunchServices, or installed-hook behavior matter.
-- When the user asks to launch or restart `Agent-Island Dev.app`, refresh the bundle from the current repo first with `zsh scripts/launch-dev-app.sh` instead of only running `open -na`. Opening the bundle alone can relaunch a stale binary.
+- Treat `~/Applications/Agent Island.app` as a local development bundle wrapper around the repo-built `AgentIslandApp`, not as a separate product line.
+- Use `Agent Island.app` for manual OSS app verification when bundle semantics, LaunchServices, or installed-hook behavior matter.
+- When the user asks to launch or restart `Agent Island.app`, refresh the bundle from the current repo first with `zsh scripts/launch-dev-app.sh` instead of only running `open -na`. Opening the bundle alone can relaunch a stale binary.
 - For work that touches Accessibility, Automation, precision jump, or other macOS TCC-sensitive behavior, run `zsh scripts/setup-dev-signing.sh` once before repeated manual verification so the dev bundle keeps a stable local signing identity.
 - Use `scripts/harness.sh smoke` or `scripts/smoke-dev-app.sh` only for deterministic harness runs; those commands intentionally launch the repo executable directly rather than the installed dev bundle.
 - Treat any in-app label such as `Agent-Island OSS` as UI copy only, not as evidence of a third app target.

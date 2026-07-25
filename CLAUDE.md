@@ -31,9 +31,9 @@ swift build -c release --product AgentIslandHooks
 
 For Xcode: open `Package.swift`.
 
-## Dev app (Agent-Island Dev.app)
+## Dev app (Agent Island.app)
 
-`~/Applications/Agent-Island Dev.app` is a wrapper around the repo build, not a separate product.
+`~/Applications/Agent Island.app` is a wrapper around the repo build, not a separate product.
 
 - **Launch**: `zsh scripts/launch-dev-app.sh` — never just `open -na`, the bundle goes stale.
 - **One-time signing**: `zsh scripts/setup-dev-signing.sh` — without this every rebuild changes cdhash and silently invalidates TCC grants (Accessibility, Automation). Required for any AX-touching feature (precision jump, keystroke/menu injection).
