@@ -6,7 +6,7 @@ _Started 2026-04-27 15:12 UTC_
 
 ## User
 
-现在我希望把v6和v7结合到一起 并且结合我们项目的真实情况https://github.com/Octane0411/open-vibe-island 给出一个最终版的更系统化的完整设计 需要包含所有可能的状态
+现在我希望把v6和v7结合到一起 并且结合我们项目的真实情况https://github.com/Octane0411/agent-island 给出一个最终版的更系统化的完整设计 需要包含所有可能的状态
 
 ## Assistant
 
@@ -18,7 +18,7 @@ _[tool: read_file]_
 
 _[tool: read_file]_
 
-I'll note the system reminder: I'll create original designs for Open Island (the user's own project), not recreate any branded UI from elsewhere.
+I'll note the system reminder: I'll create original designs for Agent-Island (the user's own project), not recreate any branded UI from elsewhere.
 
 Let me explore the components and the GitHub repo.
 
@@ -60,7 +60,7 @@ Good, I have enough now. Let me plan the v8 design.
 
 _[tool: snip]_
 
-Now let me write the v8 design. I'll create a comprehensive system grounded in the actual Open Island project (Claude Code + Codex agents; Terminal/Ghostty/cmux/Kaku/WezTerm full support; iTerm2/Warp partial; hook events; usage windows; MacBook notch + external).
+Now let me write the v8 design. I'll create a comprehensive system grounded in the actual Agent-Island project (Claude Code + Codex agents; Terminal/Ghostty/cmux/Kaku/WezTerm full support; iTerm2/Warp partial; hook events; usage windows; MacBook notch + external).
 
 I'll keep v8 in a single styles file extending v7's styles, and a single component file.
 
@@ -138,7 +138,7 @@ Same shape, four states:
 - **Notifications** — 5 kinds matching real hook events (2-way perm, 3-way perm, jump-with-pick, task-done with quick reply, hook-missing system warn)
 - **Control Center** — 5 tabs (hooks status from `~/.codex/config.toml` + `~/.claude/settings.json`, usage windows, terminal detection, settings, shortcuts)
 
-Grounded in the real codebase: `Sources/OpenIslandCore/Sessions/SessionState.swift`, the 7 detected terminals, both Claude Code and Codex agents. Edge cases covered: zero sessions, MacBook physical notch, external display, 8+ session scroll.
+Grounded in the real codebase: `Sources/AgentIslandCore/Sessions/SessionState.swift`, the 7 detected terminals, both Claude Code and Codex agents. Edge cases covered: zero sessions, MacBook physical notch, external display, 8+ session scroll.
 
 Tweaks: wallpaper / variant / density / device / logo tone. Live stage at section 01 lets you click between every state.
 

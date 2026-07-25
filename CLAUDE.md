@@ -2,21 +2,21 @@
 
 ## Project
 
-Open Island — native macOS companion for AI coding agents. Sits in the notch / top bar, monitors local sessions, surfaces permission and question events, and jumps back to the right terminal/IDE. Local-first, no server.
+Agent-Island — native macOS companion for AI coding agents. Sits in the notch / top bar, monitors local sessions, surfaces permission and question events, and jumps back to the right terminal/IDE. Local-first, no server.
 
 - **Target product** (closed-source baseline): https://vibeisland.app/
 - **OSS reference** (design ideas only, not a spec): https://github.com/farouqaldori/claude-island
 
 ## Architecture
 
-One Swift package (`OpenIsland`), four targets:
+One Swift package (`AgentIsland`), four targets:
 
-- **OpenIslandApp** — SwiftUI + AppKit shell. `AppModel` owns state.
-- **OpenIslandCore** — Models, bridge transport (Unix socket, NDJSON), hook installers, session discovery & registry.
-- **OpenIslandHooks** — CLI invoked by agent hooks. Forwards stdin payload → bridge.
-- **OpenIslandSetup** — Installer CLI for agent config files.
+- **AgentIslandApp** — SwiftUI + AppKit shell. `AppModel` owns state.
+- **AgentIslandCore** — Models, bridge transport (Unix socket, NDJSON), hook installers, session discovery & registry.
+- **AgentIslandHooks** — CLI invoked by agent hooks. Forwards stdin payload → bridge.
+- **AgentIslandSetup** — Installer CLI for agent config files.
 
-Data flow: `agent hook → OpenIslandHooks (stdin) → Unix socket → BridgeServer → AppModel → UI`. On launch: registry restore → JSONL transcript discovery → reconcile with active processes → live bridge.
+Data flow: `agent hook → AgentIslandHooks (stdin) → Unix socket → BridgeServer → AppModel → UI`. On launch: registry restore → JSONL transcript discovery → reconcile with active processes → live bridge.
 
 Requires macOS 14+, Swift 6.2.
 
@@ -25,15 +25,15 @@ Requires macOS 14+, Swift 6.2.
 ```bash
 swift build
 swift test
-swift run OpenIslandApp                            # canonical dev runtime
-swift build -c release --product OpenIslandHooks
+swift run AgentIslandApp                            # canonical dev runtime
+swift build -c release --product AgentIslandHooks
 ```
 
 For Xcode: open `Package.swift`.
 
-## Dev app (Open Island Dev.app)
+## Dev app (Agent-Island Dev.app)
 
-`~/Applications/Open Island Dev.app` is a wrapper around the repo build, not a separate product.
+`~/Applications/Agent-Island Dev.app` is a wrapper around the repo build, not a separate product.
 
 - **Launch**: `zsh scripts/launch-dev-app.sh` — never just `open -na`, the bundle goes stale.
 - **One-time signing**: `zsh scripts/setup-dev-signing.sh` — without this every rebuild changes cdhash and silently invalidates TCC grants (Accessibility, Automation). Required for any AX-touching feature (precision jump, keystroke/menu injection).
@@ -64,7 +64,7 @@ The project is past MVP and welcomes new ideas and creative directions, but the 
 - Triggered by pushing a `v*` tag to `main`. CI builds, signs, notarizes, publishes the DMG. Don't create the GitHub release manually — edit the draft CI produces.
 - Before tagging: `git fetch origin main` and review every merged PR since the last tag. Don't trust memory.
 - Bilingual required (English + 简体中文). Template: `.github/RELEASE_TEMPLATE.md`. Entry format: `- **Category**: English (#PR)\n  中文 (#PR)`. External contributors get `— Thanks @user` on the English line.
-- Title: `Open Island vX.Y.Z — Short English Title`. Installation section bilingual.
+- Title: `Agent-Island vX.Y.Z — Short English Title`. Installation section bilingual.
 
 ## Conventions
 
@@ -76,10 +76,10 @@ The project is past MVP and welcomes new ideas and creative directions, but the 
 
 ## Key files
 
-- `Sources/OpenIslandApp/AppModel.swift` — central state, session management, bridge lifecycle
-- `Sources/OpenIslandCore/SessionState.swift` — pure reducer
-- `Sources/OpenIslandCore/AgentEvent.swift` — event enum driving all transitions
-- `Sources/OpenIslandCore/BridgeTransport.swift` + `BridgeServer.swift` — socket protocol & dispatch
-- `Sources/OpenIslandCore/{Claude,Codex,Gemini,Kimi,Cursor}Hooks.swift` etc. — per-agent hook payload models
-- `Sources/OpenIslandHooks/main.swift` — hook CLI entry
+- `Sources/AgentIslandApp/AppModel.swift` — central state, session management, bridge lifecycle
+- `Sources/AgentIslandCore/SessionState.swift` — pure reducer
+- `Sources/AgentIslandCore/AgentEvent.swift` — event enum driving all transitions
+- `Sources/AgentIslandCore/BridgeTransport.swift` + `BridgeServer.swift` — socket protocol & dispatch
+- `Sources/AgentIslandCore/{Claude,Codex,Gemini,Kimi,Cursor}Hooks.swift` etc. — per-agent hook payload models
+- `Sources/AgentIslandHooks/main.swift` — hook CLI entry
 - `docs/product.md`, `docs/architecture.md`, `AGENTS.md` — design / working-agreement docs

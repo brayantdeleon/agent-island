@@ -268,7 +268,7 @@ function NotchExpanded({ direction, color, agent, speed }) {
   if (direction === 'C') {
     return (
       <div style={{ padding: 12, color: '#f4efe6', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, lineHeight: 1.5 }}>
-        <div style={{ color: '#d97742' }}>~/open-island $ sessions</div>
+        <div style={{ color: '#d97742' }}>~/agent-island $ sessions</div>
         <div style={{ color: '#8a7f6d' }}>──────────────────────────────</div>
         <div>● <b>claude-code</b>   <span style={{ color: '#8a7f6d' }}>running · 3.2k tok</span></div>
         <div>○ codex         <span style={{ color: '#8a7f6d' }}>idle</span></div>

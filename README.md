@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/images/readme-banner.svg" alt="Open Island - agents in your menu bar" width="760">
+  <img src="docs/images/readme-banner.svg" alt="Agent-Island - agents in your menu bar" width="760">
 </p>
 
-<h1 align="center">Open Island</h1>
+<h1 align="center">Agent-Island</h1>
 
 <p align="center">
   <strong>Why pay for a closed-source app just to monitor your coding agents?</strong>
@@ -13,34 +13,34 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Octane0411/open-vibe-island/releases/latest"><img src="https://img.shields.io/github/v/release/Octane0411/open-vibe-island?style=flat-square&label=release&color=blue" alt="Latest Release"></a>
-  <a href="https://github.com/Octane0411/open-vibe-island/stargazers"><img src="https://img.shields.io/github/stars/Octane0411/open-vibe-island?style=flat-square&color=yellow" alt="Stars"></a>
+  <a href="https://github.com/Octane0411/agent-island/releases/latest"><img src="https://img.shields.io/github/v/release/Octane0411/agent-island?style=flat-square&label=release&color=blue" alt="Latest Release"></a>
+  <a href="https://github.com/Octane0411/agent-island/stargazers"><img src="https://img.shields.io/github/stars/Octane0411/agent-island?style=flat-square&color=yellow" alt="Stars"></a>
   <a href="https://discord.gg/bPF2HpbCFb"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square&logo=discord" alt="Discord"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL%20v3-green?style=flat-square" alt="License: GPL v3"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Octane0411/open-vibe-island/releases">Download</a> ·
+  <a href="https://github.com/Octane0411/agent-island/releases">Download</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="docs/roadmap.md">Roadmap</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" alt="Open Island in action" width="720">
+  <img src="docs/images/demo.gif" alt="Agent-Island in action" width="720">
 </p>
 
 ---
 
-## What is Open Island?
+## What is Agent-Island?
 
-Open Island sits in your Mac's **notch** (or top bar) and gives you a real-time control surface for your AI coding agents — session status, permission approvals, and instant jump-back to the right terminal. All without leaving your flow.
+Agent-Island sits in your Mac's **notch** (or top bar) and gives you a real-time control surface for your AI coding agents — session status, permission approvals, and instant jump-back to the right terminal. All without leaving your flow.
 
 Think of it as an open-source [Vibe Island](https://vibeisland.app/) — **free, local-first, and you own every bit of it**.
 
 > *You don't need to pay for a product you can vibe, since you are a vibe coder.*
 
-## Why Open Island?
+## Why Agent-Island?
 
 - **Open source** — GPL v3, fork it, mod it, ship your own version
 - **Local-first** — No server, no telemetry, no account. Everything runs on your Mac
@@ -112,25 +112,25 @@ Think of it as an open-source [Vibe Island](https://vibeisland.app/) — **free,
 
 ### Option 1: Download
 
-Grab the latest DMG from [GitHub Releases](https://github.com/Octane0411/open-vibe-island/releases) — signed and notarized, ready to run.
+Grab the latest DMG from [GitHub Releases](https://github.com/Octane0411/agent-island/releases) — signed and notarized, ready to run.
 
 ### Option 2: Homebrew
 
 ```bash
-brew install --cask open-island
+brew install --cask agent-island
 ```
 
-Upgrade later with `brew upgrade --cask open-island`.
+Upgrade later with `brew upgrade --cask agent-island`.
 
 ### Option 3: Build from source
 
 ```bash
-git clone https://github.com/Octane0411/open-vibe-island.git
-cd open-vibe-island
+git clone https://github.com/Octane0411/agent-island.git
+cd agent-island
 open Package.swift   # Opens in Xcode — hit Run
 ```
 
-On first launch, Open Island auto-discovers your active agent sessions and starts the live bridge. Hook installation is managed from the **Settings** window inside the app.
+On first launch, Agent-Island auto-discovers your active agent sessions and starts the live bridge. Hook installation is managed from the **Settings** window inside the app.
 
 > **Requirements**: macOS 14+, Swift 6.2, Xcode
 
@@ -139,7 +139,7 @@ On first launch, Open Island auto-discovers your active agent sessions and start
 ```
 Agent (Claude Code / Codex / Cursor / ...)
   ↓ hook event
-OpenIslandHooks CLI (stdin → Unix socket)
+AgentIslandHooks CLI (stdin → Unix socket)
   ↓ JSON envelope
 BridgeServer (in-app)
   ↓ state update
@@ -148,7 +148,7 @@ Notch overlay UI ← you see it here
 Jump back → correct terminal / IDE
 ```
 
-Hooks **fail open** — if Open Island isn't running, your agents continue unaffected.
+Hooks **fail open** — if Agent-Island isn't running, your agents continue unaffected.
 
 <details>
 <summary>Architecture details</summary>
@@ -157,10 +157,10 @@ Four targets in one Swift package:
 
 | Target | Role |
 |---|---|
-| **OpenIslandApp** | SwiftUI + AppKit shell — menu bar, overlay panel, settings |
-| **OpenIslandCore** | Shared library — models, bridge transport (Unix socket IPC), hooks, session persistence |
-| **OpenIslandHooks** | Lightweight CLI invoked by agent hooks, forwards payloads via Unix socket |
-| **OpenIslandSetup** | Installer CLI for managing `~/.codex/config.toml` and hook entries |
+| **AgentIslandApp** | SwiftUI + AppKit shell — menu bar, overlay panel, settings |
+| **AgentIslandCore** | Shared library — models, bridge transport (Unix socket IPC), hooks, session persistence |
+| **AgentIslandHooks** | Lightweight CLI invoked by agent hooks, forwards payloads via Unix socket |
+| **AgentIslandSetup** | Installer CLI for managing `~/.codex/config.toml` and hook entries |
 
 See [docs/architecture.md](docs/architecture.md) for the full system design.
 
@@ -189,14 +189,14 @@ Copy this prompt into your agent (Claude Code, Codex, etc.) to auto-generate a w
 <summary>Click to expand</summary>
 
 ```
-I'm having an issue with Open Island (https://github.com/Octane0411/open-vibe-island).
+I'm having an issue with Agent-Island (https://github.com/Octane0411/agent-island).
 
 Please help me file a GitHub issue. Do the following:
 
 1. Collect my environment info:
    - Run `sw_vers` to get macOS version
    - Run `swift --version` to get Swift version
-   - Check if Open Island is running: `ps aux | grep -i "open.island\|OpenIslandApp" | grep -v grep`
+   - Check if Agent-Island is running: `ps aux | grep -i "agent.island\|AgentIslandApp" | grep -v grep`
    - Get the app version: `defaults read ~/Applications/Open\ Island\ Dev.app/Contents/Info.plist CFBundleShortVersionString 2>/dev/null || echo "unknown"`
    - Check which terminal I'm using
 
@@ -210,26 +210,26 @@ Please help me file a GitHub issue. Do the following:
    - Body with sections: **Environment**, **Description**, **Steps to Reproduce**, **Expected vs Actual Behavior**
    - Add label "bug" if applicable
 
-Repository: Octane0411/open-vibe-island
+Repository: Octane0411/agent-island
 ```
 
 </details>
 
 ## Star History
 
-<a href="https://star-history.com/#Octane0411/open-vibe-island&Date">
+<a href="https://star-history.com/#Octane0411/agent-island&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Octane0411/open-vibe-island&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Octane0411/open-vibe-island&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Octane0411/open-vibe-island&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Octane0411/agent-island&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Octane0411/agent-island&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Octane0411/agent-island&type=Date" />
  </picture>
 </a>
 
 ## Contributors
 
-<a href="https://github.com/Octane0411/open-vibe-island/graphs/contributors">
+<a href="https://github.com/Octane0411/agent-island/graphs/contributors">
   <!-- CONTRIBUTORS-IMG:START -->
-  <img src="https://contrib.rocks/image?repo=Octane0411/open-vibe-island&t=1783932921" />
+  <img src="https://contrib.rocks/image?repo=Octane0411/agent-island&t=1783932921" />
   <!-- CONTRIBUTORS-IMG:END -->
 </a>
 
@@ -241,13 +241,13 @@ This section is written for agents.
 
 The open-source macOS companion for terminal-native AI coding.
 
-`Open Island` puts a lightweight control surface in your notch or top bar so you can keep an eye on live coding agents, follow session progress, and jump back to the right terminal without breaking flow.
+`Agent-Island` puts a lightweight control surface in your notch or top bar so you can keep an eye on live coding agents, follow session progress, and jump back to the right terminal without breaking flow.
 
 ### Why This Product Exists
 
 AI coding is becoming part of the daily development loop, but the surrounding control layer still too often means handing your machine over to a closed-source paid app.
 
-`Open Island` takes the opposite approach:
+`Agent-Island` takes the opposite approach:
 
 - Open source
 - Local first, no server dependency
@@ -260,10 +260,10 @@ Developers who already live in the terminal and want a better way to work with c
 
 ### Agent Integrations
 
-- **Codex CLI** — Hook-based integration. The Codex CLI managed installer installs `SessionStart`, `UserPromptSubmit`, and `Stop` by default to keep the terminal workflow low-noise. Open Island can parse richer Codex hook events such as `PreToolUse` and `PostToolUse` when configured manually, but those events are not part of the default managed installation. Codex file edits may use internal apply-patch paths, so file-edit approval should not be treated as guaranteed `PreToolUse` coverage. Reads 5-hour and 7-day account usage windows from local rollout files. Install/uninstall managed hooks from the Settings window or CLI.
-- **Codex Desktop App** — Detected via `__CFBundleIdentifier`; hook sessions tagged as `isCodexAppSession` so they follow desktop-app liveness (tied to `NSWorkspace.shared.runningApplications` rather than the CLI subprocess that exits after each turn). In addition to hooks, Open Island launches its own `codex app-server` subprocess and speaks JSON-RPC over stdio to receive live `thread/started`, `turn/started`, `turn/completed`, and `thread/closed` notifications. Clicking a session opens the exact conversation via the `codex://threads/<id>` URL scheme.
+- **Codex CLI** — Hook-based integration. The Codex CLI managed installer installs `SessionStart`, `UserPromptSubmit`, and `Stop` by default to keep the terminal workflow low-noise. Agent-Island can parse richer Codex hook events such as `PreToolUse` and `PostToolUse` when configured manually, but those events are not part of the default managed installation. Codex file edits may use internal apply-patch paths, so file-edit approval should not be treated as guaranteed `PreToolUse` coverage. Reads 5-hour and 7-day account usage windows from local rollout files. Install/uninstall managed hooks from the Settings window or CLI.
+- **Codex Desktop App** — Detected via `__CFBundleIdentifier`; hook sessions tagged as `isCodexAppSession` so they follow desktop-app liveness (tied to `NSWorkspace.shared.runningApplications` rather than the CLI subprocess that exits after each turn). In addition to hooks, Agent-Island launches its own `codex app-server` subprocess and speaks JSON-RPC over stdio to receive live `thread/started`, `turn/started`, `turn/completed`, and `thread/closed` notifications. Clicking a session opens the exact conversation via the `codex://threads/<id>` URL scheme.
 - **Claude Code** — Hook-based integration via `~/.claude/settings.json`. Discovers sessions from `~/.claude/projects/` JSONL transcripts. Persists and restores sessions across app launches. Managed status line bridge with opt-in installation. Reads cached 5-hour and 7-day usage windows.
-- **Claude Code (Desktop App)** — The Claude desktop app runs Claude Code in its "local agent mode" as a TTY-less subprocess that `ps`/`lsof` process discovery cannot see. Detected via `CLAUDE_CODE_ENTRYPOINT=claude-desktop` (with `__CFBundleIdentifier=com.anthropic.claudefordesktop` as a fallback) and tagged with a `Claude.app` jump target so liveness follows the running desktop app (`NSWorkspace.shared.runningApplications`) instead of the missing terminal process. Without this, the hook-managed liveness fallback evicted the session ~6 seconds after it appeared ([#510](https://github.com/Octane0411/open-vibe-island/issues/510)). Clicking a session activates Claude. **Usage caveat:** the 5h/7d usage panel is fed by Claude Code's terminal status line, which Claude Desktop's headless `stream-json` mode never renders — so Desktop sessions do not update it on their own, and Claude does not persist the rate-limit windows to a readable file. Because the limits are account-wide, running an interactive `claude` in a terminal occasionally seeds the cache and the panel then reflects total usage (including what Desktop consumed). Native Desktop usage (without a CLI session) needs a separate data source and is tracked as a follow-up.
+- **Claude Code (Desktop App)** — The Claude desktop app runs Claude Code in its "local agent mode" as a TTY-less subprocess that `ps`/`lsof` process discovery cannot see. Detected via `CLAUDE_CODE_ENTRYPOINT=claude-desktop` (with `__CFBundleIdentifier=com.anthropic.claudefordesktop` as a fallback) and tagged with a `Claude.app` jump target so liveness follows the running desktop app (`NSWorkspace.shared.runningApplications`) instead of the missing terminal process. Without this, the hook-managed liveness fallback evicted the session ~6 seconds after it appeared ([#510](https://github.com/Octane0411/agent-island/issues/510)). Clicking a session activates Claude. **Usage caveat:** the 5h/7d usage panel is fed by Claude Code's terminal status line, which Claude Desktop's headless `stream-json` mode never renders — so Desktop sessions do not update it on their own, and Claude does not persist the rate-limit windows to a readable file. Because the limits are account-wide, running an interactive `claude` in a terminal occasionally seeds the cache and the panel then reflects total usage (including what Desktop consumed). Native Desktop usage (without a CLI session) needs a separate data source and is tracked as a follow-up.
 - **OpenCode** — JS plugin integration via `~/.config/opencode/plugins/`. Plugin auto-installed on first launch. Receives session lifecycle, tool use, permission, and question events. Permission approval and question answering flows supported. Process detection via `ps`.
 - **Qoder** — Claude Code fork. Same hook format and events via `~/.qoder/settings.json`. Use `--source qoder` with the hooks binary.
 - **Qwen Code** — Claude Code fork. Same hook format and events via `~/.qwen/settings.json`. Use `--source qwen` with the hooks binary.
@@ -271,12 +271,12 @@ Developers who already live in the terminal and want a better way to work with c
 - **CodeBuddy** — Claude Code fork. Same hook format and events via `~/.codebuddy/settings.json`. Use `--source codebuddy` with the hooks binary.
 - **Cursor** — Hook-based integration via `~/.cursor/hooks.json`. Receives `beforeSubmitPrompt`, `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile`, `afterFileEdit`, and `stop` events. Session persistence across app launches. Workspace jump-back via `cursor -r`. Use `--source cursor` with the hooks binary.
 - **Gemini CLI** — Hook-based integration via `~/.gemini/settings.json`. Receives `SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`, and `UserPromptSubmit` events. Fire-and-forget (no block/deny). Use `--source gemini` with the hooks binary.
-- **Kimi CLI** — Hook-based integration via `~/.kimi/config.toml` `[[hooks]]` array (Moonshot AI). Kimi's hook payload is byte-compatible with Claude Code, so Open Island reuses the Claude decode path and adds a dedicated TOML installer. Subscribes to `SessionStart`, `UserPromptSubmit`, `Stop`, `Notification`, `PreToolUse`, and `PostToolUse`. Requires the Kimi CLI Hooks Beta. Use `--source kimi` with the hooks binary. Manage installation from the Settings window, or via CLI:
+- **Kimi CLI** — Hook-based integration via `~/.kimi/config.toml` `[[hooks]]` array (Moonshot AI). Kimi's hook payload is byte-compatible with Claude Code, so Agent-Island reuses the Claude decode path and adds a dedicated TOML installer. Subscribes to `SessionStart`, `UserPromptSubmit`, `Stop`, `Notification`, `PreToolUse`, and `PostToolUse`. Requires the Kimi CLI Hooks Beta. Use `--source kimi` with the hooks binary. Manage installation from the Settings window, or via CLI:
 
   ```sh
-  swift run OpenIslandSetup installKimi    # write [[hooks]] entries into ~/.kimi/config.toml
-  swift run OpenIslandSetup statusKimi     # report whether managed hooks are present
-  swift run OpenIslandSetup uninstallKimi  # remove managed entries, preserve user-authored [[hooks]]
+  swift run AgentIslandSetup installKimi    # write [[hooks]] entries into ~/.kimi/config.toml
+  swift run AgentIslandSetup statusKimi     # report whether managed hooks are present
+  swift run AgentIslandSetup uninstallKimi  # remove managed entries, preserve user-authored [[hooks]]
   ```
 
 ### Terminal Support
@@ -307,10 +307,10 @@ Four targets in one Swift package:
 
 | Target | Role |
 |---|---|
-| **OpenIslandApp** | SwiftUI + AppKit shell — menu bar, overlay panel, settings |
-| **OpenIslandCore** | Shared library — models, bridge transport (Unix socket IPC), hooks, session persistence |
-| **OpenIslandHooks** | Lightweight CLI invoked by agent hooks, forwards payloads via Unix socket |
-| **OpenIslandSetup** | Installer CLI for managing `~/.codex/config.toml` and hook entries |
+| **AgentIslandApp** | SwiftUI + AppKit shell — menu bar, overlay panel, settings |
+| **AgentIslandCore** | Shared library — models, bridge transport (Unix socket IPC), hooks, session persistence |
+| **AgentIslandHooks** | Lightweight CLI invoked by agent hooks, forwards payloads via Unix socket |
+| **AgentIslandSetup** | Installer CLI for managing `~/.codex/config.toml` and hook entries |
 
 ### Quick Start (Agent)
 
@@ -326,24 +326,24 @@ Build a local `.app` bundle:
 zsh scripts/package-app.sh
 ```
 
-That script creates `output/package/Open Island.app` and `output/package/Open Island.zip`. Pass `OPEN_ISLAND_SIGN_IDENTITY` to sign the bundle. See [docs/packaging.md](docs/packaging.md) for the full path, including notarization.
+That script creates `output/package/Agent-Island.app` and `output/package/Agent-Island.zip`. Pass `AGENT_ISLAND_SIGN_IDENTITY` to sign the bundle. See [docs/packaging.md](docs/packaging.md) for the full path, including notarization.
 
 #### Connect Codex
 
 Open the package in Xcode to run the macOS app target. On launch, the app restores its local cache, scans recent `~/.codex/sessions/**/rollout-*.jsonl` files for existing Codex sessions, and starts the live bridge for new hook events.
 
-The Settings window shows live Codex hook install status from `~/.codex`, and can install or uninstall managed hook entries directly. Installs copy the helper into `~/Library/Application Support/OpenIsland/bin/OpenIslandHooks` so repo renames do not break existing hooks.
+The Settings window shows live Codex hook install status from `~/.codex`, and can install or uninstall managed hook entries directly. Installs copy the helper into `~/Library/Application Support/AgentIsland/bin/AgentIslandHooks` so repo renames do not break existing hooks.
 
 ```bash
-swift build -c release --product OpenIslandHooks
-swift run OpenIslandSetup install
-swift run OpenIslandSetup status
-swift run OpenIslandSetup uninstall
+swift build -c release --product AgentIslandHooks
+swift run AgentIslandSetup install
+swift run AgentIslandSetup status
+swift run AgentIslandSetup uninstall
 ```
 
 #### Connect Claude Code
 
-Claude usage setup is available from the app's Settings window and remains opt-in. The bridge writes a managed `statusLine.command` to `~/.open-island/bin/open-island-statusline`, caches `rate_limits` into `/tmp/open-island-rl.json`, and refuses to overwrite an existing custom status line automatically.
+Claude usage setup is available from the app's Settings window and remains opt-in. The bridge writes a managed `statusLine.command` to `~/.agent-island/bin/agent-island-statusline`, caches `rate_limits` into `/tmp/agent-island-rl.json`, and refuses to overwrite an existing custom status line automatically.
 
 ### Repository Map
 

@@ -2,7 +2,7 @@
 // Real product surfaces: pill (notch + panel + notif). Control Center is a separate window
 // outside the design scope and is intentionally not modeled here.
 //
-// Engineering source-of-truth (Sources/OpenIslandCore/AgentSession.swift):
+// Engineering source-of-truth (Sources/AgentIslandCore/AgentSession.swift):
 //   - AgentTool enum (10 cases) drives `AGENTS` below.
 //   - SessionPhase enum (running / waitingForApproval / waitingForAnswer / completed)
 //     drives the `state` strings used by NotchRow and Row. There is no `idle` phase
@@ -54,7 +54,7 @@ const TERMS = [
 ];
 
 // ---------- Phase taxonomy — engineering-aligned ----------
-// Mirrors Sources/OpenIslandCore/AgentSession.swift `SessionPhase` plus the
+// Mirrors Sources/AgentIslandCore/AgentSession.swift `SessionPhase` plus the
 // pill-only `idle` value (which is *not* a phase in the reducer — it's how the
 // notch represents "no visible session" or a session with no live activity).
 //
@@ -83,12 +83,12 @@ const phaseShort = (p) => PHASES[p]?.short || '';
 // chip rendering. `isRemote` marks SSH sessions.
 const fmtAge = (m) => m<1?'<1m':m<60?`${Math.round(m)}m`:m<60*24?`${Math.round(m/60)}h`:`${Math.round(m/60/24)}d`;
 const SESSIONS = [
-  { id:'s1', agent:'claude', state:'waitingForApproval', notifKind:'two',   project:'open-island', branch:'refactor/claude-kernel-pid-monitor', msg:'Run shell command?',                  you:'commit and push',     terminal:'Ghostty',  ttl:'TTY ttys012', attachmentState:'attached', isRemote:false, updatedAt:120 },
-  { id:'s2', agent:'codex',  state:'running',            notifKind:null,    project:'open-island', branch:'main',                                msg:'swift test --filter SessionStateTests', you:'run tests',           terminal:'Terminal', ttl:'TTY ttys005', attachmentState:'attached', isRemote:false, updatedAt:3 },
-  { id:'s3', agent:'claude', state:'waitingForApproval', notifKind:'three', project:'open-island', branch:'fix/external-island-width',           msg:'Edit SessionState.swift?',              you:'提个 PR',              terminal:'Ghostty',  ttl:'pane g3',     attachmentState:'attached', isRemote:false, updatedAt:240 },
+  { id:'s1', agent:'claude', state:'waitingForApproval', notifKind:'two',   project:'agent-island', branch:'refactor/claude-kernel-pid-monitor', msg:'Run shell command?',                  you:'commit and push',     terminal:'Ghostty',  ttl:'TTY ttys012', attachmentState:'attached', isRemote:false, updatedAt:120 },
+  { id:'s2', agent:'codex',  state:'running',            notifKind:null,    project:'agent-island', branch:'main',                                msg:'swift test --filter SessionStateTests', you:'run tests',           terminal:'Terminal', ttl:'TTY ttys005', attachmentState:'attached', isRemote:false, updatedAt:3 },
+  { id:'s3', agent:'claude', state:'waitingForApproval', notifKind:'three', project:'agent-island', branch:'fix/external-island-width',           msg:'Edit SessionState.swift?',              you:'提个 PR',              terminal:'Ghostty',  ttl:'pane g3',     attachmentState:'attached', isRemote:false, updatedAt:240 },
   { id:'s4', agent:'claude', state:'completed',          notifKind:'done',  project:'dotfiles',    branch:'main',                                msg:'Commit pushed · 3 files',               you:'commit all and push', terminal:'Kaku',     ttl:'pane k1',     attachmentState:'attached', isRemote:false, updatedAt:12 },
   { id:'s5', agent:'codex',  state:'waitingForAnswer',   notifKind:'jump',  project:'web-deck',    branch:'main',                                msg:'pnpm or npm?',                           you:'install deps',        terminal:'WezTerm',  ttl:'pane w2',     attachmentState:'attached', isRemote:false, updatedAt:60 },
-  { id:'s6', agent:'claude', state:'idle',               notifKind:null,    project:'open-island', branch:'main',                                msg:'',                                       you:'',                    terminal:'Ghostty',  ttl:'pane g1',     attachmentState:'stale',    isRemote:false, updatedAt:95 },
+  { id:'s6', agent:'claude', state:'idle',               notifKind:null,    project:'agent-island', branch:'main',                                msg:'',                                       you:'',                    terminal:'Ghostty',  ttl:'pane g1',     attachmentState:'stale',    isRemote:false, updatedAt:95 },
   { id:'s7', agent:'codex',  state:'idle',               notifKind:null,    project:'web-deck',    branch:'main',                                msg:'',                                       you:'',                    terminal:'WezTerm',  ttl:'pane w2',     attachmentState:'stale',    isRemote:true,  updatedAt:180 },
   // s8: stale completed — process detached, finished a long time ago.
   // Demonstrates the staleness derivation: phase is still `.completed`

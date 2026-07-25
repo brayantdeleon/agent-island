@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Generate the DMG installer background image for Open Island.
+"""Generate the DMG installer background image for Agent-Island.
 
 Produces a 660x400 (Retina: 1320x800) PNG with:
 - Dark gradient background matching the app's brand palette
-- "OPEN ISLAND" pixel-art-style title
+- "AGENT-ISLAND" pixel-art-style title
 - Dashed arrow with "drag to install" label between icon positions
 - Subtle star-field decoration
 """
@@ -185,7 +185,7 @@ def main():
     draw_gradient(draw, W, H, BG_TOP, BG_BOTTOM)
     draw_stars(draw, W, H)
     draw_corner_brackets(draw, W, H)
-    draw_pixel_title(draw, "OPEN ISLAND", W // 2, 60)
+    draw_pixel_title(draw, "AGENT-ISLAND", W // 2, 60)
     draw_dashed_arrow(draw, ARROW_Y, ARROW_LEFT, ARROW_RIGHT)
     draw_bottom_bar(draw, W, H)
 

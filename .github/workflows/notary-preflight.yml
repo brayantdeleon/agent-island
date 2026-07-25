@@ -34,7 +34,7 @@ jobs:
           security set-keychain-settings -lut 3600 "$keychain_path"
           security unlock-keychain -p "$keychain_password" "$keychain_path"
 
-          xcrun notarytool store-credentials "open-island-notary-preflight" \
+          xcrun notarytool store-credentials "agent-island-notary-preflight" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \

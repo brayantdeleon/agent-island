@@ -142,7 +142,7 @@ function LogoTerminal({ size = 128, animated = true, theme = 'paper' }) {
       border: `1px solid ${p.ink}22`,
     }}>
       <div style={{ textAlign: 'left', lineHeight: 1.05, fontSize: fs, letterSpacing: '-0.02em' }}>
-        <div style={{ color: p.soft, fontSize: fs * 0.65, marginBottom: fs * 0.3 }}>~/open-island</div>
+        <div style={{ color: p.soft, fontSize: fs * 0.65, marginBottom: fs * 0.3 }}>~/agent-island</div>
         <div>
           <span style={{ color: p.accent }}>{'>'}</span> <span style={{ fontWeight: 700 }}>O</span>
           <span style={{ opacity: 0.4 }}>pen</span>

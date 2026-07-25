@@ -130,7 +130,7 @@
 }
 
 /* Per-agent dot indicator
-   Colors mirror Sources/OpenIslandCore/AgentSession.swift `AgentTool.brandColorHex`
+   Colors mirror Sources/AgentIslandCore/AgentSession.swift `AgentTool.brandColorHex`
    from PR #385 (v6 redesign — locked palette). The .agent-dot rule is shared by
    the notch row and the session-row right-side stack (panel rows). */
 .oi-notch-row .agent-dot,

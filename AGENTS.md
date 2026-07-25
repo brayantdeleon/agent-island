@@ -43,12 +43,12 @@ Keep all work incremental, reviewable, and reversible. Every meaningful round of
 
 ## Branching And Worktree Rules
 
-- Treat `/Users/wangruobing/Personal/open-island` on `main` as the shared integration worktree.
+- Treat `/Users/wangruobing/Personal/agent-island` on `main` as the shared integration worktree.
 - Never edit, commit, or push directly on `main`. All changes must go through a feature branch and PR before integration.
 - Use the shared `main` worktree only to inspect repository state, fetch, update with `git pull --ff-only`, and run final verification after PRs merge.
 - Create one worktree per branch and one branch per worktree. Never attach two worktrees to the same branch.
 - Create new worktrees from `origin/main`, not from a locally drifted feature branch.
-- Use sibling worktree paths named like `/Users/wangruobing/Personal/open-island-<topic>`.
+- Use sibling worktree paths named like `/Users/wangruobing/Personal/agent-island-<topic>`.
 - Use branch names that match the workstream, such as `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, or `investigate/<topic>`.
 - Keep each worktree focused on one coherent slice with a narrow file ownership area when possible.
 - Rebase or merge the latest `origin/main` into the feature branch before integrating it back.
@@ -58,13 +58,13 @@ Keep all work incremental, reviewable, and reversible. Every meaningful round of
 - If multiple agents are working in parallel, assign each agent its own worktree instead of sharing one checkout.
 - All PRs must target `main`. Do not chain PRs through another feature branch unless the user explicitly requests that structure.
 
-See [docs/worktree-workflow.md](/Users/wangruobing/Personal/open-island/docs/worktree-workflow.md) for the concrete commands and lifecycle.
+See [docs/worktree-workflow.md](/Users/wangruobing/Personal/agent-island/docs/worktree-workflow.md) for the concrete commands and lifecycle.
 
 ## Product Boundaries
 
 - Keep product scope in `docs/product.md`. Do not duplicate the supported agent, terminal, or IDE matrix here.
 - Do not broaden supported tools, runtimes, platforms, or environments unless the user explicitly asks.
-- Keep hook behavior aligned with `docs/hooks.md` and the implementation in `Sources/OpenIslandCore`.
+- Keep hook behavior aligned with `docs/hooks.md` and the implementation in `Sources/AgentIslandCore`.
 
 ## Integration Guardrails
 
@@ -76,15 +76,15 @@ See [docs/worktree-workflow.md](/Users/wangruobing/Personal/open-island/docs/wor
 
 ## App Targets And Naming
 
-- Treat the repository executable product `OpenIslandApp` as the canonical OSS app runtime.
-- Treat `swift run OpenIslandApp` and the Xcode app target as the source-of-truth way to run the current branch's app code.
-- Treat `~/Applications/Open Island Dev.app` as a local development bundle wrapper around the repo-built `OpenIslandApp`, not as a separate product line.
-- Use `Open Island Dev.app` for manual OSS app verification when bundle semantics, LaunchServices, or installed-hook behavior matter.
-- When the user asks to launch or restart `Open Island Dev.app`, refresh the bundle from the current repo first with `zsh scripts/launch-dev-app.sh` instead of only running `open -na`. Opening the bundle alone can relaunch a stale binary.
+- Treat the repository executable product `AgentIslandApp` as the canonical OSS app runtime.
+- Treat `swift run AgentIslandApp` and the Xcode app target as the source-of-truth way to run the current branch's app code.
+- Treat `~/Applications/Agent-Island Dev.app` as a local development bundle wrapper around the repo-built `AgentIslandApp`, not as a separate product line.
+- Use `Agent-Island Dev.app` for manual OSS app verification when bundle semantics, LaunchServices, or installed-hook behavior matter.
+- When the user asks to launch or restart `Agent-Island Dev.app`, refresh the bundle from the current repo first with `zsh scripts/launch-dev-app.sh` instead of only running `open -na`. Opening the bundle alone can relaunch a stale binary.
 - For work that touches Accessibility, Automation, precision jump, or other macOS TCC-sensitive behavior, run `zsh scripts/setup-dev-signing.sh` once before repeated manual verification so the dev bundle keeps a stable local signing identity.
 - Use `scripts/harness.sh smoke` or `scripts/smoke-dev-app.sh` only for deterministic harness runs; those commands intentionally launch the repo executable directly rather than the installed dev bundle.
-- Treat any in-app label such as `Open Island OSS` as UI copy only, not as evidence of a third app target.
-- Build, debug, and verify OSS changes against `OpenIslandApp`. Treat `/Applications/Vibe Island.app` and `https://vibeisland.app/` as reference baselines only when comparison is explicitly needed.
+- Treat any in-app label such as `Agent-Island OSS` as UI copy only, not as evidence of a third app target.
+- Build, debug, and verify OSS changes against `AgentIslandApp`. Treat `/Applications/Vibe Island.app` and `https://vibeisland.app/` as reference baselines only when comparison is explicitly needed.
 
 ## Verification
 

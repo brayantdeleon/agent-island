@@ -6,7 +6,7 @@ _Started 2026-04-20 13:30 UTC_
 
 ## User
 
-我们接着来重新设计项目的session列表和通知https://github.com/Octane0411/open-vibe-island 我们之前在v6中设计好了Notch的展示以及logo，app icon
+我们接着来重新设计项目的session列表和通知https://github.com/Octane0411/agent-island 我们之前在v6中设计好了Notch的展示以及logo，app icon
 
 ## Assistant
 
@@ -16,7 +16,7 @@ _[tool: list_files]_
 
 _[tool: read_file]_
 
-I notice the system reminder about copyrighted UI — "Dynamic Island" is Apple's branded concept. However, "Open Island" appears to be the user's own open-source project (github.com/Octane0411/open-vibe-island), and we're designing their product's session list and notifications — not recreating Apple's UI. Let me explore the existing design and their repo.
+I notice the system reminder about copyrighted UI — "Dynamic Island" is Apple's branded concept. However, "Agent-Island" appears to be the user's own open-source project (github.com/Octane0411/agent-island), and we're designing their product's session list and notifications — not recreating Apple's UI. Let me explore the existing design and their repo.
 
 _[tool: list_files]_
 
@@ -43,7 +43,7 @@ _[tool: web_fetch]_
 Good, I now have full product context. Let me also snip old turns.Now I have full context. Let me ask focused questions before designing.
 
 **What I understand so far:**
-- Open Island is a macOS menu-bar companion for AI coding agents (Claude Code, Codex)
+- Agent-Island is a macOS menu-bar companion for AI coding agents (Claude Code, Codex)
 - It lives in the notch / top-bar with a live "dynamic pill"
 - **Sessions** = live agent sessions discovered from local JSONL transcripts (Claude Code from `~/.claude/projects/`, Codex from `~/.codex/sessions/`); each has state (running/waiting/done), agent, project path, terminal type, usage
 - **Notifications** = the "notification mode" — auto-height panel for permission requests (waiting) and session events (done/errors)
@@ -77,7 +77,7 @@ Questions answered:
 - permission_ui: 目前我们前三种都有 因为不同的code agent表现不同
 - interactive: 可交互 —— 点刘海能开合、行能 hover、能触发 mock 通知
 - tweaks: 切换 session 数量（0 / 1 / 3 / 8）, 切换桌面底色（plum / slate / forest / sand）, 触发一个 mock 通知, 切换密度（紧凑 / 舒适）, 切换 paper / ink / bw 色调, 切换状态组合
-- file_strategy: 新文件：Open Island - v7 (sessions + notifications).html —— v6 锁定不动
+- file_strategy: 新文件：Agent-Island - v7 (sessions + notifications).html —— v6 锁定不动
 
 ## Assistant
 
@@ -476,7 +476,7 @@ _[tool: eval_js]_
 
 <rewritten_file>
 
-**Found it!** `gridTemplateRows: "142.5px"` — the grid row itself is 142.5px. That's because `.main` is expanding vertically for some reason. Let me check `.main`'s content — the `.title` has `whiteSpace: nowrap` + content of `open-island (refactor/claude-kernel-pid-monitor)·开始执行吧，先补测试再提 PR` — actually "nowrap" with overflow hidden would stay on 1 line. But it's 278px wide and content is way longer than 278px...
+**Found it!** `gridTemplateRows: "142.5px"` — the grid row itself is 142.5px. That's because `.main` is expanding vertically for some reason. Let me check `.main`'s content — the `.title` has `whiteSpace: nowrap` + content of `agent-island (refactor/claude-kernel-pid-monitor)·开始执行吧，先补测试再提 PR` — actually "nowrap" with overflow hidden would stay on 1 line. But it's 278px wide and content is way longer than 278px...
 
 Oh! I bet `.main`'s content, because of inherit from v3 styles, has `display: flex` or similar with something weird. Let me dig deeper — the real culprit could be something inside `.main`. Actually `.main .title` is 19px but `.main` is 143px. Let me check what's BETWEEN:
 
@@ -561,7 +561,7 @@ Default variant 现在全貌可见 — 6 个 session 都在,pill 完整呈现,�
 
 Address these comments from my teammates:
 
-**NoName** (on Commit pushed to origin/main open-island · refactor/claude-…):
+**NoName** (on Commit pushed to origin/main agent-island · refactor/claude-…):
 task complete的时候 内容区域应该是agent的回复 内容自适应 超出一定高度后可滚动 应该有jump back和快速回复的功能
 
 ## Assistant

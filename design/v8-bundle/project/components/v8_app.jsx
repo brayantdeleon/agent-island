@@ -188,7 +188,7 @@ function V8App(){
   return (
     <div className="app v3 v8">
       <header className="topbar">
-        <div className="brand"><span className="dot-v3"/><span>Open Island · v8 — engineering-aligned</span></div>
+        <div className="brand"><span className="dot-v3"/><span>Agent-Island · v8 — engineering-aligned</span></div>
         <span className="meta mono">// 只画工程能拿到的</span>
         <div className="spacer"/>
         <span className="meta-pill"><span className="dot"/>10 agents · 15+ terminals · 4 session states</span>
@@ -224,7 +224,7 @@ function V8App(){
         <section className="section" data-screen-label="02 Notch states">
           <div className="section-head"><h2>02 · Notch · collapsed states</h2><span className="tag mono">// 5 phase × (single · multi) · 1-to-1 对齐 SessionPhase</span><div className="line"/></div>
           <div className="assumption" style={{ marginBottom:18, fontSize:12.5 }}>
-            Phase 完全对齐 <code>Sources/OpenIslandCore/AgentSession.swift</code> 的 <code>SessionPhase</code>:<code>.waitingForApproval</code> · <code>.waitingForAnswer</code> · <code>.running</code> · <code>.completed</code>,加上 UI-only 的 <code>idle</code>(reducer 里没有,代表"无 visible session")。<br/>
+            Phase 完全对齐 <code>Sources/AgentIslandCore/AgentSession.swift</code> 的 <code>SessionPhase</code>:<code>.waitingForApproval</code> · <code>.waitingForAnswer</code> · <code>.running</code> · <code>.completed</code>,加上 UI-only 的 <code>idle</code>(reducer 里没有,代表"无 visible session")。<br/>
             两种 waiting 视觉上共享同一个 v6 <b>UnifiedBars · waiting</b> glyph(外柱交叉脉动),但 label/通知体不同 — approval 来自 <code>PreToolUse</code>,answer 来自 <code>QuestionPrompt</code>。多 session 时默认取最高优先级一条(approval &gt; answer &gt; running &gt; completed)。
           </div>
           <div className="v8-grid four">

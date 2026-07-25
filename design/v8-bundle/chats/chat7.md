@@ -1,4 +1,4 @@
-# Open Vibe Island 架构设计
+# Agent-Island 架构设计
 
 _Started 2026-04-27 15:25 UTC_
 
@@ -6,7 +6,7 @@ _Started 2026-04-27 15:25 UTC_
 
 ## User
 
-现在我希望把v6和v7结合到一起 并且结合我们项目的真实情况https://github.com/Octane0411/open-vibe-island 给出一个最终版的更系统化的完整设计 重点关注我们能拿到的数据信息以及支持情况，需要包含session列表中session的所有可能的状态 v6的设计我基本都是满意的 在给出最终设计前你也可以先和我沟通
+现在我希望把v6和v7结合到一起 并且结合我们项目的真实情况https://github.com/Octane0411/agent-island 给出一个最终版的更系统化的完整设计 重点关注我们能拿到的数据信息以及支持情况，需要包含session列表中session的所有可能的状态 v6的设计我基本都是满意的 在给出最终设计前你也可以先和我沟通
 
 ## Assistant
 
@@ -67,7 +67,7 @@ I have everything I need. Let me snip the long fetches and present my synthesis 
 ## 我现在掌握的真实数据 / 能力（从 repo 验证过）
 
 **Agents（产品里能拿到的）**
-- ✅ Claude Code — hook 集成（`~/.claude/settings.json`）、JSONL 会话发现（`~/.claude/projects/`）、status line bridge（opt-in）、5h/7d usage（`/tmp/open-island-rl.json`）
+- ✅ Claude Code — hook 集成（`~/.claude/settings.json`）、JSONL 会话发现（`~/.claude/projects/`）、status line bridge（opt-in）、5h/7d usage（`/tmp/agent-island-rl.json`）
 - ✅ Codex — 完整 hook（`SessionStart` / `UserPromptSubmit` / `Stop` 默认 + `PreToolUse` / `PostToolUse`）、5h/7d usage、可一键 install/uninstall hook
 - 🟡 OpenCode、Gemini CLI — Planned
 
@@ -87,7 +87,7 @@ I have everything I need. Let me snip the long fetches and present my synthesis 
 - `prompt`, `last_assistant_message`, `error`, `permission_suggestions`
 
 **架构事实**
-- 4 个 Swift target：OpenIslandApp / OpenIslandCore / OpenIslandHooks(CLI) / OpenIslandSetup(installer)
+- 4 个 Swift target：AgentIslandApp / AgentIslandCore / AgentIslandHooks(CLI) / AgentIslandSetup(installer)
 - Fail-open 原则：bridge 不可用时 hook 静默退出
 - 控制中心已有：Hook 状态 / Usage / debug scenarios
 - Settings 分类：General / Display / Sound / Shortcuts / Lab / About
@@ -231,7 +231,7 @@ _[tool: done]_
 
 _[tool: fork_verifier_agent]_
 
-v8 final 已就位 — `Open Island - v8 (final).html`
+v8 final 已就位 — `Agent-Island - v8 (final).html`
 
 要点:
 - **Pill 即产品**:notch / 会话面板 / 通知 / control center 全是同一形状的不同状态
@@ -497,14 +497,14 @@ _[tool: done]_
 
 _[tool: list_files]_
 
-那个 ID 是当前项目的 design-system,不是 Open Island 仓库。我手上没有 Open Island 仓库的访问入口。能麻烦你做以下两件事之一:
+那个 ID 是当前项目的 design-system,不是 Agent-Island 仓库。我手上没有 Agent-Island 仓库的访问入口。能麻烦你做以下两件事之一:
 
 1. 把 README 里的 supported agents 列表(全名 + CLI 命令)直接贴给我
-2. 或者把 Open Island 的 GitHub 仓库 URL 发给我,我去拉
+2. 或者把 Agent-Island 的 GitHub 仓库 URL 发给我,我去拉
 
 ## User
 
-https://github.com/Octane0411/open-vibe-island
+https://github.com/Octane0411/agent-island
 
 ## Assistant
 
