@@ -404,6 +404,11 @@ Plan 文件已写好。内联公式 \\(E = mc^2\\) 和展示公式都应该正�
 
 $$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$
 
+| Check | Result |
+|---|---|
+| LaTeX | Rendered |
+| Markdown table | Rendered |
+
 ::git-push{cwd="/Users/example/open-island" branch="fix/example"}
 ::git-create-pr{cwd="/Users/example/open-island" branch="fix/example" url="https://example.com/pull/1" isDraft=false}
 """

@@ -28,7 +28,10 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1"),
-        .package(url: "https://github.com/mgriebling/SwiftMath.git", from: "1.7.3"),
+        .package(
+            url: "https://github.com/brayantdeleon/SwiftMath.git",
+            revision: "ed1264fafd5ca2b3d0c27af4da7f0dd22cb491f2"
+        ),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
     ],
     targets: [
