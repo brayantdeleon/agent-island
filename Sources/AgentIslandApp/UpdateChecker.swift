@@ -10,7 +10,7 @@ import Sparkle
 @MainActor
 @Observable
 final class UpdateChecker: NSObject {
-    static let releasesURL = URL(string: "https://github.com/Octane0411/agent-island/releases")!
+    static let releasesURL = URL(string: "https://github.com/brayantdeleon/agent-island/releases")!
 
     private(set) var canCheckForUpdates = false
     private(set) var hasUpdate = false

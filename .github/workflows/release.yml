@@ -293,7 +293,7 @@ jobs:
             --base main \
             --head "$branch" \
             --title "agentisland: bump to v${VERSION}" \
-            --body "Automated bump from https://github.com/Octane0411/agent-island/releases/tag/v${VERSION}"
+            --body "Automated bump from https://github.com/brayantdeleon/agent-island/releases/tag/v${VERSION}"
           gh pr merge "$branch" --repo Octane0411/homebrew-tap --merge --delete-branch
 
       - name: Refresh contributors image cache via PR
@@ -308,7 +308,7 @@ jobs:
           git fetch origin main
           git checkout -f -b "$branch" origin/main
           for file in README.md README.zh-CN.md; do
-            sed -i '' "s|contrib.rocks/image?repo=Octane0411/agent-island&t=[0-9]*|contrib.rocks/image?repo=Octane0411/agent-island\&t=${timestamp}|g" "$file"
+            sed -i '' "s|contrib.rocks/image?repo=brayantdeleon/agent-island&t=[0-9]*|contrib.rocks/image?repo=brayantdeleon/agent-island\&t=${timestamp}|g" "$file"
           done
           if git diff --quiet; then
             echo "No contributors timestamp changes detected, skipping."
