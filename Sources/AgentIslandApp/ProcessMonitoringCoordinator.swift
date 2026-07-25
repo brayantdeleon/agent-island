@@ -724,10 +724,18 @@ final class ProcessMonitoringCoordinator {
             activeProcesses: activeClaudeProcesses
         )
 
+        // processIdentityKey is sessionID|tty|cwd|terminalApp, and Claude
+        // Desktop exposes neither a session id nor a TTY — so two
+        // conversations open in the same repo collapse to the same key and
+        // would otherwise emit two sessions sharing an id. Mirrors the
+        // seenSessionIDs guard the Cursor path already has.
+        var seenSessionIDs: Set<String> = []
+
         return activeClaudeProcesses
             .filter { !representedProcessKeys.contains(processIdentityKey($0)) }
             .sorted { processIdentityKey($0) < processIdentityKey($1) }
             .map { syntheticClaudeSession(for: $0, now: now) }
+            .filter { seenSessionIDs.insert($0.id).inserted }
     }
 
     private func syntheticClaudeSession(
@@ -736,7 +744,13 @@ final class ProcessMonitoringCoordinator {
     ) -> AgentSession {
         let workingDirectory = process.workingDirectory
         let workspaceName = workingDirectory.map { WorkspaceNameResolver.workspaceName(for: $0) } ?? "Workspace"
-        let terminalApp = supportedTerminalApp(for: process.terminalApp) ?? "Unknown"
+        // Fall back to the raw host rather than "Unknown" (as the Cursor
+        // variant already does): supportedTerminalApp only knows terminal
+        // emulators, so a Claude.app host would otherwise be erased — and the
+        // desktop liveness gate keys on that exact tag.
+        let terminalApp = supportedTerminalApp(for: process.terminalApp)
+            ?? process.terminalApp?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? "Unknown"
         let identity = processIdentityKey(process)
 
         var session = AgentSession(
@@ -1035,7 +1049,12 @@ final class ProcessMonitoringCoordinator {
                 guard let sessionTTY = normalizedTTYForMatching(session.jumpTarget?.terminalTTY) else {
                     return true
                 }
-                return processTTY == nil || sessionTTY == processTTY
+                // A TTY-less process is Claude Desktop, which cannot be the
+                // one backing a session bound to a terminal pane. Before
+                // Desktop processes were discoverable this branch was
+                // unreachable with a nil processTTY, so requiring a match here
+                // only closes the new cross-claim.
+                return processTTY != nil && sessionTTY == processTTY
             }
             if candidates.count == 1 {
                 return candidates[0]

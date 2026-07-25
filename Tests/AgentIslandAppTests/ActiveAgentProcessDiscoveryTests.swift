@@ -291,4 +291,177 @@ struct ActiveAgentProcessDiscoveryTests {
         #expect(openCodeSnapshots.first?.workingDirectory == "/tmp/agent-island")
         #expect(openCodeSnapshots.first?.terminalTTY == nil)
     }
+
+    // MARK: - Claude Desktop ("local agent mode")
+
+    /// Command lines taken verbatim from a live Claude Desktop session. Both
+    /// the wrapper and the real CLI are TTY-less, and the binary path contains
+    /// a space ("Application Support"), which is what the old first-token
+    /// matcher could never handle.
+    private static let claudeDesktopPS = """
+      13866 76267 ?? /Applications/Claude.app/Contents/Helpers/disclaimer /Users/test/Library/Application Support/Claude/claude-code/2.1.219/claude.app/Contents/MacOS/claude --output-format stream-json --model claude-opus-5
+      13867 13866 ?? /Users/test/Library/Application Support/Claude/claude-code/2.1.219/claude.app/Contents/MacOS/claude --output-format stream-json --model claude-opus-5
+      76267 1 ?? /Applications/Claude.app/Contents/MacOS/Claude
+    """
+
+    @Test
+    func discoverFindsTTYLessClaudeDesktopProcess() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, arguments in
+            if executablePath == "/bin/ps" { return Self.claudeDesktopPS }
+            guard executablePath == "/usr/sbin/lsof",
+                  let pid = arguments.dropFirst(2).first else { return nil }
+            // Claude Desktop holds no transcript descriptor — only its cwd.
+            switch pid {
+            case "13867":
+                return """
+                fcwd
+                n/tmp/agent-island
+                """
+            default:
+                Issue.record("unexpected lsof lookup for pid \(pid)")
+                return nil
+            }
+        }
+
+        let snapshots = discovery.discover()
+
+        #expect(snapshots.count == 1)
+        #expect(snapshots.first?.tool == .claudeCode)
+        #expect(snapshots.first?.workingDirectory == "/tmp/agent-island")
+        #expect(snapshots.first?.terminalTTY == nil)
+        // The gate in ProcessMonitoringCoordinator keys on this exact tag.
+        #expect(snapshots.first?.terminalApp == "Claude.app")
+        // No per-conversation identity is recoverable from the process.
+        #expect(snapshots.first?.sessionID == nil)
+        #expect(snapshots.first?.transcriptPath == nil)
+    }
+
+    /// The disclaimer shim re-execs its child with an identical command line;
+    /// only the leaf holds the agent's descriptors.
+    @Test
+    func discoverSuppressesClaudeDesktopDisclaimerWrapper() {
+        // Give the wrapper and the leaf different cwds so a snapshot from
+        // either is distinguishable in the result.
+        let discovery = ActiveAgentProcessDiscovery { executablePath, arguments in
+            if executablePath == "/bin/ps" { return Self.claudeDesktopPS }
+            guard executablePath == "/usr/sbin/lsof",
+                  let pid = arguments.dropFirst(2).first else { return nil }
+            return """
+            fcwd
+            n/tmp/\(pid == "13866" ? "wrapper" : "leaf")
+            """
+        }
+
+        let snapshots = discovery.discover()
+
+        #expect(snapshots.count == 1)
+        #expect(snapshots.first?.workingDirectory == "/tmp/leaf")
+    }
+
+    /// The TTY gate exists to keep headless invocations out of the island, and
+    /// only Claude Desktop is exempted. A TTY-less `~/.local/bin/claude`
+    /// (a scripted `claude -p`, an MCP child, CI) must still be skipped.
+    @Test
+    func discoverStillSkipsTTYLessTerminalClaude() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, _ in
+            if executablePath == "/bin/ps" {
+                return "  101 1 ?? /Users/test/.local/bin/claude --resume abc"
+            }
+            return nil
+        }
+
+        #expect(discovery.discover().isEmpty)
+    }
+
+    @Test
+    func discoverSkipsTTYLessClaudeDesktopSubagentWorktree() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, arguments in
+            if executablePath == "/bin/ps" { return Self.claudeDesktopPS }
+            guard executablePath == "/usr/sbin/lsof",
+                  arguments.dropFirst(2).first != nil else { return nil }
+            return """
+            fcwd
+            n/tmp/agent-island/.claude/worktrees/agent-abc
+            """
+        }
+
+        #expect(discovery.discover().isEmpty)
+    }
+
+    // MARK: - Binary paths containing spaces
+
+    @Test
+    func discoverMatchesBinaryPathsContainingSpaces() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, arguments in
+            if executablePath == "/bin/ps" {
+                return """
+                  201 301 ttys001 /Users/John Smith/.local/bin/codex
+                  301 900 ttys001 -/opt/homebrew/bin/fish
+                  900 1 ?? /Applications/Ghostty.app/Contents/MacOS/ghostty
+                """
+            }
+            guard executablePath == "/usr/sbin/lsof",
+                  arguments.dropFirst(2).first != nil else { return nil }
+            return """
+            fcwd
+            n/tmp/agent-island
+            n/Users/John Smith/.codex/sessions/2026/04/03/rollout-2026-04-03T11-42-31-019d516f-71ee-7e40-bcff-502fedac0928.jsonl
+            """
+        }
+
+        let snapshots = discovery.discover()
+        #expect(snapshots.count == 1)
+        #expect(snapshots.first?.tool == .codex)
+        #expect(snapshots.first?.sessionID == "019d516f-71ee-7e40-bcff-502fedac0928")
+    }
+
+    /// Agent-Island's own hook binary names the agent it reports for. Matching
+    /// a bare name anywhere in the command line would classify it as an agent.
+    @Test
+    func discoverDoesNotClassifyHooksBinaryAsAgent() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, _ in
+            if executablePath == "/bin/ps" {
+                return """
+                  101 301 ttys001 /Users/test/Library/Application Support/AgentIsland/bin/AgentIslandHooks --source claude
+                  301 900 ttys001 -/opt/homebrew/bin/fish
+                """
+            }
+            return nil
+        }
+
+        #expect(discovery.discover().isEmpty)
+    }
+
+    /// An interpreter plus a script path is the same session as the real
+    /// binary, not a second one.
+    @Test
+    func discoverDoesNotTreatInterpreterPlusScriptAsSeparateAgent() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, _ in
+            if executablePath == "/bin/ps" {
+                return """
+                  201 301 ttys001 node /Users/test/.nvm/versions/node/v22/bin/codex
+                  301 900 ttys001 -/opt/homebrew/bin/fish
+                """
+            }
+            return nil
+        }
+
+        #expect(discovery.discover().isEmpty)
+    }
+
+    @Test
+    func discoverDoesNotClassifyKimiAuxiliaryBinaries() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, _ in
+            if executablePath == "/bin/ps" {
+                return """
+                  101 301 ttys001 /opt/homebrew/bin/kimi-info
+                  102 301 ttys001 /opt/homebrew/bin/kimi-mcp
+                  301 900 ttys001 -/opt/homebrew/bin/fish
+                """
+            }
+            return nil
+        }
+
+        #expect(discovery.discover().isEmpty)
+    }
 }

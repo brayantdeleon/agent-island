@@ -253,6 +253,11 @@ struct TerminalSessionAttachmentProbe {
                 if peerOwnsProcess { return true }
                 let unassignedProcessSharesCWD = activeProcesses.contains { process in
                     process.tool == .claudeCode
+                        // A TTY-less process (Claude Desktop) can never be
+                        // attached to a terminal pane, so letting it contest
+                        // the cwd only strips the recent-hook grace from a
+                        // session that is demonstrably alive.
+                        && process.terminalTTY != nil
                         && !activeSessionIDs.contains(where: {
                             activeProcessesBySessionID[$0]?.terminalTTY == process.terminalTTY
                                 && activeProcessesBySessionID[$0]?.workingDirectory == process.workingDirectory

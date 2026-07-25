@@ -62,16 +62,28 @@ struct ActiveAgentProcessDiscovery {
         }
 
         let processesByPID = Dictionary(uniqueKeysWithValues: processes.map { ($0.pid, $0) })
+        let wrapperPIDs = launcherWrapperPIDs(among: processes)
 
         var snapshots: [ProcessSnapshot] = []
         var claimedKeys: Set<String> = []
 
         for process in processes {
+            // A launcher that re-execs its child verbatim is the same session
+            // seen twice; keep the leaf, which is the process holding the
+            // agent's file descriptors.
+            if wrapperPIDs.contains(process.pid) {
+                continue
+            }
+
             // Most agent detection requires a TTY (terminal-attached process).
             // OpenCode is an exception: it can run inside IDE integrated terminals
             // that don't expose a TTY in `ps` output. Let OpenCode processes
             // through so the liveness fallback can keep their sessions alive.
-            if process.terminalTTY == nil && !isOpenCodeProcess(command: process.command) {
+            // Claude Desktop is the other exception: its embedded Claude Code
+            // is always TTY-less, so it could never be discovered otherwise.
+            if process.terminalTTY == nil
+                && !isOpenCodeProcess(command: process.command)
+                && !isClaudeDesktopProcess(command: process.command) {
                 continue
             }
 
@@ -472,6 +484,20 @@ struct ActiveAgentProcessDiscovery {
             return "Codex.app"
         }
 
+        // Claude.app hosting its embedded Claude Code. The `/claude-code/`
+        // exclusion matters: the *embedded* CLI lives at
+        // `…/claude-code/<version>/claude.app/Contents/MacOS/claude`, which
+        // lowercases to the same substring as the outer app bundle. Only the
+        // outer `/Applications/Claude.app` is the host.
+        if lowered.contains("/claude.app/contents/helpers/") {
+            return "Claude.app"
+        }
+
+        if lowered.contains("/claude.app/contents/macos/claude"),
+           !lowered.contains("/claude-code/") {
+            return "Claude.app"
+        }
+
         if lowered.contains("/cmux.app/contents/macos/cmux") {
             return "cmux"
         }
@@ -650,25 +676,90 @@ struct ActiveAgentProcessDiscovery {
         return "/dev/\(trimmed)"
     }
 
-    private func isCodexProcess(command: String) -> Bool {
-        let lowered = command.lowercased()
-        guard let firstToken = lowered.split(separator: " ").first.map(String.init) else {
+    /// PIDs of processes that merely re-launch one of their own children with
+    /// the identical command line, e.g. Claude.app's
+    /// `Contents/Helpers/disclaimer <claude …>` shim, whose command is exactly
+    /// its child's command with a prefix.
+    ///
+    /// Matched structurally rather than by name so it survives a rename, and
+    /// scoped to a real parent/child pair so it cannot swallow a genuine
+    /// nested agent — Claude subagents differ in both command and cwd from
+    /// their parent (see ``isClaudeSubagentWorktree(_:)``).
+    private func launcherWrapperPIDs(among processes: [RunningProcess]) -> Set<String> {
+        var childCommandsByParentPID: [String: [String]] = [:]
+        for process in processes {
+            childCommandsByParentPID[process.parentPID, default: []].append(process.command)
+        }
+
+        var wrapperPIDs: Set<String> = []
+        for process in processes {
+            guard let childCommands = childCommandsByParentPID[process.pid] else { continue }
+            if childCommands.contains(where: {
+                $0 != process.command && process.command.hasSuffix($0)
+            }) {
+                wrapperPIDs.insert(process.pid)
+            }
+        }
+
+        return wrapperPIDs
+    }
+
+    /// The tokens of a `ps` command line that could still be part of the
+    /// executable path, i.e. everything before the first flag.
+    ///
+    /// `ps` gives us one space-joined string, so a binary whose path contains
+    /// a space is split across several tokens. Claude Desktop ships exactly
+    /// that: `…/Library/Application Support/Claude/…/claude`. Truncating at
+    /// the first `-` keeps flag values such as `--config /opt/claude` from
+    /// being mistaken for the executable.
+    private func executablePathTokens(in loweredCommand: String) -> [String] {
+        Array(
+            loweredCommand
+                .split(separator: " ")
+                .map(String.init)
+                .prefix { !$0.hasPrefix("-") }
+        )
+    }
+
+    /// Whether the command launches a binary with the given name, tolerating
+    /// spaces in its path.
+    ///
+    /// The normal case is the first token. The fallback re-joins the leading
+    /// tokens, which is what recovers a space-containing path like Claude
+    /// Desktop's `…/Library/Application Support/Claude/…/MacOS/claude`.
+    ///
+    /// That fallback only applies when the leading tokens plausibly form *one*
+    /// path: the first must be absolute, and none of the rest may start its
+    /// own. Without that restriction `node /usr/lib/.../codex/codex` would
+    /// match `codex`, turning an interpreter plus script into a second copy of
+    /// a session already represented by the real binary. Matching a bare name
+    /// anywhere would be worse still — Agent-Island's own hook runs as
+    /// `…/bin/AgentIslandHooks --source claude`.
+    private func launchesBinary(named name: String, in loweredCommand: String) -> Bool {
+        let tokens = executablePathTokens(in: loweredCommand)
+        guard let first = tokens.first else { return false }
+
+        if first == name || first.hasSuffix("/\(name)") {
+            return true
+        }
+
+        guard tokens.count > 1,
+              first.hasPrefix("/"),
+              !tokens.dropFirst().contains(where: { $0.hasPrefix("/") }) else {
             return false
         }
 
-        return firstToken == "codex"
-            || firstToken.hasSuffix("/codex")
+        return tokens.joined(separator: " ").hasSuffix("/\(name)")
+    }
+
+    private func isCodexProcess(command: String) -> Bool {
+        let lowered = command.lowercased()
+        return launchesBinary(named: "codex", in: lowered)
             || lowered.contains("/codex/codex")
     }
 
     private func isCursorAgentProcess(command: String) -> Bool {
-        let lowered = command.lowercased()
-        guard let firstToken = lowered.split(separator: " ").first.map(String.init) else {
-            return false
-        }
-
-        return firstToken == "cursor-agent"
-            || firstToken.hasSuffix("/cursor-agent")
+        launchesBinary(named: "cursor-agent", in: command.lowercased())
     }
 
     private func isOpenCodeProcess(command: String) -> Bool {
@@ -679,10 +770,8 @@ struct ActiveAgentProcessDiscovery {
         }
 
         // Fast path: explicitly launched as opencode or opencode-ai
-        if firstToken == "opencode"
-            || firstToken == "opencode-ai"
-            || firstToken.hasSuffix("/opencode")
-            || firstToken.hasSuffix("/opencode-ai")
+        if launchesBinary(named: "opencode", in: lowered)
+            || launchesBinary(named: "opencode-ai", in: lowered)
         {
             return true
         }
@@ -741,12 +830,7 @@ struct ActiveAgentProcessDiscovery {
 
     private func isGeminiProcess(command: String) -> Bool {
         let lowered = command.lowercased()
-        guard let firstToken = lowered.split(separator: " ").first.map(String.init) else {
-            return false
-        }
-
-        return firstToken == "gemini"
-            || firstToken.hasSuffix("/gemini")
+        return launchesBinary(named: "gemini", in: lowered)
             || lowered.contains("/bin/gemini")
             || lowered.contains("/google/gemini-cli")
             || lowered.contains("/@google/gemini-cli")
@@ -757,16 +841,16 @@ struct ActiveAgentProcessDiscovery {
     /// alongside the main binary and must not be picked up as agent sessions.
     private func isKimiProcess(command: String) -> Bool {
         let lowered = command.lowercased()
-        guard let firstToken = lowered.split(separator: " ").first.map(String.init) else {
+
+        // Reject the auxiliary binaries explicitly rather than relying on the
+        // `/kimi` suffix alone: `launchesBinary` also inspects later path
+        // tokens, so `kimi-info /some/path/kimi` would otherwise match.
+        if let first = executablePathTokens(in: lowered).first,
+           (first as NSString).lastPathComponent.hasPrefix("kimi-") {
             return false
         }
 
-        let binaryName = (firstToken as NSString).lastPathComponent
-        guard binaryName == "kimi" else {
-            return false
-        }
-
-        return firstToken == "kimi" || firstToken.hasSuffix("/kimi")
+        return launchesBinary(named: "kimi", in: lowered)
     }
 
     /// Returns `true` when the given `ps` command string belongs to a Claude Code process.
@@ -778,12 +862,31 @@ struct ActiveAgentProcessDiscovery {
             return true
         }
 
-        guard let firstToken = lowered.split(separator: " ").first.map(String.init) else {
-            return false
+        return launchesBinary(named: "claude", in: lowered)
+    }
+
+    /// Claude Code embedded in Claude.app ("local agent mode"), either the CLI
+    /// itself or the `disclaimer` helper that wraps it.
+    ///
+    /// Narrower than ``isClaudeProcess(command:)`` on purpose: it is the only
+    /// thing allowed through the TTY gate, and admitting every TTY-less
+    /// `claude` would pull in headless invocations (`claude -p` from a git
+    /// hook, MCP-spawned children, CI) that deliberately stay out of the
+    /// island.
+    private func isClaudeDesktopProcess(command: String) -> Bool {
+        let lowered = command.lowercased()
+
+        if lowered.contains("/claude.app/contents/helpers/") {
+            return true
         }
 
-        return firstToken == "claude"
-            || firstToken.hasSuffix("/claude")
+        // The embedded CLI lives under `…/claude-code/<version>/claude.app/…`,
+        // which lowercases to the same substring as the outer
+        // `/Applications/Claude.app/Contents/MacOS/Claude` host process. Only
+        // the former is an agent; admitting the host would make Claude.app
+        // itself look like a Claude Code session.
+        return lowered.contains("/claude.app/contents/macos/claude")
+            && lowered.contains("/claude-code/")
     }
 
     private static func commandOutput(executablePath: String, arguments: [String]) -> String? {
