@@ -404,8 +404,9 @@ struct AppModelSessionListTests {
 
         model.state = SessionState(sessions: [stale, done, approval])
 
-        #expect(model.islandSessionSections.map(\.id) == ["state-approval", "state-done", "state-idle"])
-        #expect(model.islandSessionSections.map(\.sessions.first?.id) == ["approval", "done", "stale"])
+        let sections = model.islandSessionSections(at: now)
+        #expect(sections.map(\.id) == ["state-approval", "state-done", "state-idle"])
+        #expect(sections.map(\.sessions.first?.id) == ["approval", "done", "stale"])
     }
 
     @Test
@@ -419,8 +420,81 @@ struct AppModelSessionListTests {
         oldDone.isProcessAlive = true
         model.state = SessionState(sessions: [oldDone])
 
-        #expect(model.islandSessionSections.map(\.id) == ["state-done"])
-        #expect(model.islandSessionSections.first?.sessions.first?.id == "old-done")
+        let sections = model.islandSessionSections(at: now)
+        #expect(sections.map(\.id) == ["state-done"])
+        #expect(sections.first?.sessions.first?.id == "old-done")
+    }
+
+    /// The header chips and the section headings must agree at every
+    /// threshold. They previously used two different predicates: the sections
+    /// keyed purely off `completedStaleThreshold`, while the header also
+    /// treated a session as idle once `islandPresence` went `.inactive` at a
+    /// fixed 20 minutes. Identical for thresholds up to 20 minutes, but at
+    /// `.never` the chip said "idle" while the heading still said "Just done".
+    @Test
+    func headerIdleCountMatchesIdleSectionCountAtEveryThreshold() {
+        let now = Date()
+        let model = AppModel()
+        model.islandSessionGroup = .state
+
+        let ages: [TimeInterval] = [-60, -360, -1_260, -7_200]
+        model.state = SessionState(sessions: ages.enumerated().map { index, age in
+            var session = listSession(
+                id: "s\(index)",
+                phase: .completed,
+                updatedAt: now.addingTimeInterval(age)
+            )
+            session.isProcessAlive = true
+            return session
+        })
+
+        for threshold in IslandCompletedStaleThreshold.allCases {
+            model.completedStaleThreshold = threshold
+
+            let sections = model.islandSessionSections(at: now)
+            let counts = model.islandSessionOverviewCounts(at: now)
+            let sectionCount = { (id: String) in
+                sections.first(where: { $0.id == id })?.sessions.count ?? 0
+            }
+
+            #expect(counts.idle == sectionCount("state-idle"), "idle mismatch at \(threshold)")
+            #expect(counts.done == sectionCount("state-done"), "done mismatch at \(threshold)")
+        }
+    }
+
+    /// The user-visible half of the mismatch above.
+    @Test
+    func headerReportsCompletedAsDoneWhenStaleThresholdIsNever() {
+        let now = Date()
+        let model = AppModel()
+        model.islandSessionGroup = .state
+        model.completedStaleThreshold = .never
+
+        var oldDone = listSession(id: "old-done", phase: .completed, updatedAt: now.addingTimeInterval(-1_800))
+        oldDone.isProcessAlive = true
+        model.state = SessionState(sessions: [oldDone])
+
+        let counts = model.islandSessionOverviewCounts(at: now)
+        #expect(counts.done == 1)
+        #expect(counts.idle == 0)
+    }
+
+    /// Pins that sections bucket against the supplied clock rather than
+    /// `.now`, which is what lets the view share one `context.date` between
+    /// the header and the headings.
+    @Test
+    func islandSessionSectionsUseSuppliedReferenceDate() {
+        let now = Date()
+        let model = AppModel()
+        model.islandSessionGroup = .state
+        model.completedStaleThreshold = .fiveMinutes
+
+        var fresh = listSession(id: "fresh", phase: .completed, updatedAt: now)
+        fresh.isProcessAlive = true
+        model.state = SessionState(sessions: [fresh])
+
+        #expect(model.islandSessionSections(at: now).map(\.id) == ["state-done"])
+        #expect(model.islandSessionSections(at: now.addingTimeInterval(1_800)).map(\.id) == ["state-idle"])
     }
 
     @Test

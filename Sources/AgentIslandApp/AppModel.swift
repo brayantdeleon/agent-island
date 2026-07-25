@@ -754,15 +754,20 @@ final class AppModel {
         )
     }
 
+    /// Membership of the flattened list is reference-date independent — every
+    /// completed session lands in exactly one of the done/idle sections — so
+    /// this can keep the `.now` default without drifting from the view's clock.
     var islandListSessions: [AgentSession] {
-        islandSessionSections.flatMap(\.sessions)
+        islandSessionSections().flatMap(\.sessions)
     }
 
     var islandRenderedSessions: [AgentSession] {
         islandListSessions + (isHiddenSessionSectionExpanded ? hiddenIslandSessions : [])
     }
 
-    var islandSessionSections: [IslandSessionSection] {
+    /// Callers inside the island's `TimelineView` should pass its `context.date`
+    /// so the sections and the header counters bucket against the same instant.
+    func islandSessionSections(at referenceDate: Date = .now) -> [IslandSessionSection] {
         let sessions = sortIslandSessions(surfacedSessions)
         switch islandSessionGroup {
         case .none:
@@ -774,7 +779,7 @@ final class AppModel {
                 )
             ]
         case .state:
-            return stateGroupedSections(for: sessions)
+            return stateGroupedSections(for: sessions, at: referenceDate)
         case .agent:
             return AgentTool.allCases.compactMap { tool in
                 let list = sessions.filter { $0.tool == tool }
@@ -791,6 +796,34 @@ final class AppModel {
                 return IslandSessionSection(id: "project-\(name)", title: name, sessions: list)
             }
         }
+    }
+
+    /// Counts behind the island's header chips.
+    ///
+    /// Lives on the model rather than in the view so it shares
+    /// ``AgentSession/isIdleForIsland(at:completedStaleThreshold:)`` with
+    /// ``islandSessionSections(at:)`` — the header previously had its own
+    /// private predicate that also treated a session as idle once
+    /// `islandPresence` went `.inactive` at a fixed 20 minutes, so with the
+    /// "Done timeout" set to Never the chip said "idle" while the section
+    /// heading still said "Just done".
+    func islandSessionOverviewCounts(
+        at referenceDate: Date
+    ) -> (total: Int, waiting: Int, running: Int, done: Int, idle: Int) {
+        let sessions = islandListSessions
+        let threshold = completedStaleThreshold.seconds
+
+        return (
+            total: sessions.count,
+            waiting: sessions.filter(\.phase.requiresAttention).count,
+            running: sessions.filter { $0.phase == .running }.count,
+            done: sessions.filter {
+                $0.isJustDoneForIsland(at: referenceDate, completedStaleThreshold: threshold)
+            }.count,
+            idle: sessions.filter {
+                $0.isIdleForIsland(at: referenceDate, completedStaleThreshold: threshold)
+            }.count
+        )
     }
 
     var recentSessionCount: Int {
@@ -867,18 +900,20 @@ final class AppModel {
         isHiddenSessionSectionExpanded.toggle()
     }
 
-    private func stateGroupedSections(for sessions: [AgentSession]) -> [IslandSessionSection] {
+    private func stateGroupedSections(
+        for sessions: [AgentSession],
+        at referenceDate: Date
+    ) -> [IslandSessionSection] {
+        let threshold = completedStaleThreshold.seconds
         let definitions: [(id: String, title: String, include: (AgentSession) -> Bool)] = [
             ("approval", "island.section.needsApproval", { $0.phase == .waitingForApproval }),
             ("answer", "island.section.needsAnswer", { $0.phase == .waitingForAnswer }),
             ("running", "island.section.inProgress", { $0.phase == .running }),
-            ("done", "island.section.justDone", { [completedStaleThreshold] session in
-                session.phase == .completed
-                    && !session.isStaleCompletedForIsland(at: .now, threshold: completedStaleThreshold.seconds)
+            ("done", "island.section.justDone", { session in
+                session.isJustDoneForIsland(at: referenceDate, completedStaleThreshold: threshold)
             }),
-            ("idle", "island.section.idle", { [completedStaleThreshold] session in
-                session.phase == .completed
-                    && session.isStaleCompletedForIsland(at: .now, threshold: completedStaleThreshold.seconds)
+            ("idle", "island.section.idle", { session in
+                session.isIdleForIsland(at: referenceDate, completedStaleThreshold: threshold)
             }),
         ]
 
@@ -1883,7 +1918,11 @@ final class AppModel {
             score += 600
         }
 
-        if session.isStaleCompletedForIsland(at: now, threshold: completedStaleThreshold.seconds) {
+        // `now` here is computeSessionBuckets' own clock, which feeds
+        // _cachedSessionBuckets — a ranking clock, not the bucket-membership
+        // clock the sections and header share. Threading the view's
+        // referenceDate through would defeat that cache for no behavioural gain.
+        if session.isIdleForIsland(at: now, completedStaleThreshold: completedStaleThreshold.seconds) {
             score -= 900
         }
 

@@ -412,6 +412,38 @@ extension AgentSession {
             && referenceDate.timeIntervalSince(islandActivityDate) >= threshold
     }
 
+    /// Whether this row belongs in the island's low-priority "Idle" bucket.
+    ///
+    /// The single definition of idle, shared by the section grouping, the
+    /// header counters, the row presentation, and display ranking. It is
+    /// exactly ``isStaleCompletedForIsland(at:threshold:)`` — the fixed
+    /// 20-minute `islandActivityThreshold` used by ``islandPresence(at:)`` is
+    /// deliberately *not* folded in here. For every threshold up to 20 minutes
+    /// it is subsumed anyway (the phase guard means `.inactive` reduces to
+    /// "older than 20 minutes", which any shorter threshold already covers),
+    /// and at the `.never` setting it would override the user's explicit
+    /// choice to keep completed rows out of Idle forever.
+    ///
+    /// `islandPresence` remains what it always was: the running/active/inactive
+    /// signal behind the row dot and the ranking bonus.
+    func isIdleForIsland(
+        at referenceDate: Date,
+        completedStaleThreshold: TimeInterval
+    ) -> Bool {
+        isStaleCompletedForIsland(at: referenceDate, threshold: completedStaleThreshold)
+    }
+
+    /// Completed recently enough to still read as "Just done" rather than
+    /// Idle. The complement of ``isIdleForIsland(at:completedStaleThreshold:)``
+    /// within the completed rows, so the two always partition them.
+    func isJustDoneForIsland(
+        at referenceDate: Date,
+        completedStaleThreshold: TimeInterval
+    ) -> Bool {
+        phase == .completed
+            && !isIdleForIsland(at: referenceDate, completedStaleThreshold: completedStaleThreshold)
+    }
+
     private var spotlightRunningActivityText: String? {
         guard let currentTool = currentToolName?.trimmedForSurface,
               !currentTool.isEmpty else {

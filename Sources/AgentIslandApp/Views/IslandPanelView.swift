@@ -641,7 +641,7 @@ struct IslandPanelView: View {
                     .buttonStyle(.plain)
                 }
             } else {
-                ForEach(model.islandSessionSections) { section in
+                ForEach(model.islandSessionSections(at: referenceDate)) { section in
                     VStack(alignment: .leading, spacing: 0) {
                         if model.islandSessionGroup != .none {
                             sessionSectionHeader(section)
@@ -697,7 +697,7 @@ struct IslandPanelView: View {
 
     @ViewBuilder
     private func sessionRowsContent(referenceDate: Date) -> some View {
-        ForEach(model.islandSessionSections) { section in
+        ForEach(model.islandSessionSections(at: referenceDate)) { section in
             VStack(alignment: .leading, spacing: 0) {
                 if model.islandSessionGroup != .none {
                     sessionSectionHeader(section)
@@ -826,37 +826,16 @@ struct IslandPanelView: View {
     }
 
     private func sessionOverviewItems(referenceDate: Date) -> [SessionOverviewItem] {
-        let sessions = model.islandListSessions
-        guard !sessions.isEmpty else { return [] }
-
-        let threshold = model.completedStaleThreshold.seconds
-        let waiting = sessions.filter(\.phase.requiresAttention).count
-        let running = sessions.filter { $0.phase == .running }.count
-        let done = sessions.filter {
-            $0.phase == .completed
-                && !isIdleSessionOverviewItem($0, referenceDate: referenceDate, threshold: threshold)
-        }.count
-        let idle = sessions.filter {
-            isIdleSessionOverviewItem($0, referenceDate: referenceDate, threshold: threshold)
-        }.count
+        let counts = model.islandSessionOverviewCounts(at: referenceDate)
+        guard counts.total > 0 else { return [] }
 
         return [
-            SessionOverviewItem(id: "total", title: lang.t("island.sessionOverview.total"), compactTitle: "", count: sessions.count, tint: nil),
-            SessionOverviewItem(id: "waiting", title: lang.t("island.sessionOverview.waiting"), compactTitle: lang.t("island.sessionOverview.waitingCompact"), count: waiting, tint: IslandDesignPalette.Status.waitingAggregate),
-            SessionOverviewItem(id: "running", title: lang.t("island.sessionOverview.running"), compactTitle: lang.t("island.sessionOverview.runningCompact"), count: running, tint: IslandDesignPalette.Status.running),
-            SessionOverviewItem(id: "done", title: lang.t("island.sessionOverview.done"), compactTitle: lang.t("island.sessionOverview.done"), count: done, tint: IslandDesignPalette.Status.completed),
-            SessionOverviewItem(id: "idle", title: lang.t("island.sessionOverview.idle"), compactTitle: lang.t("island.sessionOverview.idle"), count: idle, tint: IslandDesignPalette.Status.idle),
+            SessionOverviewItem(id: "total", title: lang.t("island.sessionOverview.total"), compactTitle: "", count: counts.total, tint: nil),
+            SessionOverviewItem(id: "waiting", title: lang.t("island.sessionOverview.waiting"), compactTitle: lang.t("island.sessionOverview.waitingCompact"), count: counts.waiting, tint: IslandDesignPalette.Status.waitingAggregate),
+            SessionOverviewItem(id: "running", title: lang.t("island.sessionOverview.running"), compactTitle: lang.t("island.sessionOverview.runningCompact"), count: counts.running, tint: IslandDesignPalette.Status.running),
+            SessionOverviewItem(id: "done", title: lang.t("island.sessionOverview.done"), compactTitle: lang.t("island.sessionOverview.done"), count: counts.done, tint: IslandDesignPalette.Status.completed),
+            SessionOverviewItem(id: "idle", title: lang.t("island.sessionOverview.idle"), compactTitle: lang.t("island.sessionOverview.idle"), count: counts.idle, tint: IslandDesignPalette.Status.idle),
         ].filter { $0.id == "total" || $0.count > 0 }
-    }
-
-    private func isIdleSessionOverviewItem(
-        _ session: AgentSession,
-        referenceDate: Date,
-        threshold: TimeInterval
-    ) -> Bool {
-        guard session.phase == .completed else { return false }
-        return session.isStaleCompletedForIsland(at: referenceDate, threshold: threshold)
-            || session.islandPresence(at: referenceDate) == .inactive
     }
 
     private func sessionOverviewView(_ items: [SessionOverviewItem], compact: Bool) -> some View {
@@ -1332,9 +1311,9 @@ private struct IslandSessionRow: View {
 
     private func rowBody(referenceDate: Date) -> some View {
         let rawPresence = session.islandPresence(at: referenceDate)
-        let isStaleCompleted = session.isStaleCompletedForIsland(
+        let isStaleCompleted = session.isIdleForIsland(
             at: referenceDate,
-            threshold: completedStaleThreshold
+            completedStaleThreshold: completedStaleThreshold
         )
         let defaultShowsDetail = !isStaleCompleted
             && presentation == .notification
