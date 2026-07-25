@@ -24,6 +24,9 @@ public struct HookHealthReport: Equatable, Sendable {
         case manifestMissing(expectedPath: String)
         /// The OpenCode plugin file is missing even though it should be installed.
         case pluginMissing(expectedPath: String)
+        /// Hook commands from a previous name of this project are still
+        /// registered alongside the current ones, so every event runs twice.
+        case legacyHooksDetected(names: [String], configPath: String)
 
         public var description: String {
             switch self {
@@ -41,12 +44,21 @@ public struct HookHealthReport: Equatable, Sendable {
                 "Installation manifest missing: \(expectedPath)"
             case .pluginMissing(let expectedPath):
                 "OpenCode plugin file is missing: \(expectedPath)"
+            case .legacyHooksDetected(let names, let configPath):
+                "Legacy hooks still registered in \(configPath): \(names.joined(separator: ", "))"
             }
         }
 
         public var severity: Severity {
             switch self {
             case .otherHooksDetected:
+                .info
+            // Duplicated legacy hooks only cost latency — the legacy binary
+            // writes to a socket this app no longer binds, and hooks fail
+            // open. Reporting this as an error would show a permanent red
+            // state for something that does not break anything, so it stays
+            // informational and is fixed silently by the repair pass below.
+            case .legacyHooksDetected:
                 .info
             default:
                 .error
@@ -55,7 +67,8 @@ public struct HookHealthReport: Equatable, Sendable {
 
         public var isAutoRepairable: Bool {
             switch self {
-            case .staleCommandPath, .binaryNotExecutable, .manifestMissing, .pluginMissing:
+            case .staleCommandPath, .binaryNotExecutable, .manifestMissing, .pluginMissing,
+                 .legacyHooksDetected:
                 true
             default:
                 false
@@ -139,6 +152,14 @@ public enum HookHealthCheck {
                         issues.append(.staleCommandPath(recorded: cmd, configPath: settingsPath))
                     }
 
+                    // Hooks left over from a previous name of this project
+                    let legacyNames = findLegacyIslandHookCommands(in: data)
+                    if !legacyNames.isEmpty {
+                        issues.append(
+                            .legacyHooksDetected(names: legacyNames, configPath: settingsPath)
+                        )
+                    }
+
                     // Check for other hooks (informational)
                     var otherNames = findThirdPartyHookNames(in: data, agent: "claude")
                     if containsClaudeIslandHook(in: data) {
@@ -204,6 +225,13 @@ public enum HookHealthCheck {
                     let staleCommands = findStaleCommandPaths(in: data, fileManager: fileManager)
                     for cmd in staleCommands {
                         issues.append(.staleCommandPath(recorded: cmd, configPath: hooksPath))
+                    }
+
+                    let legacyNames = findLegacyIslandHookCommands(in: data)
+                    if !legacyNames.isEmpty {
+                        issues.append(
+                            .legacyHooksDetected(names: legacyNames, configPath: hooksPath)
+                        )
                     }
 
                     let otherNames = findThirdPartyHookNames(in: data, agent: "codex")
@@ -301,10 +329,9 @@ public enum HookHealthCheck {
                 for hook in hookEntries {
                     guard let command = hook["command"] as? String else { continue }
 
-                    // Only check Agent-Island / Vibe Island commands
+                    // Only check commands from this project's own lineage
                     let normalized = command.lowercased()
-                    guard normalized.contains("agentislandhooks") || normalized.contains("vibeislandhooks")
-                        || normalized.contains("agent-island") || normalized.contains("vibe-island") else {
+                    guard isIslandLineageHookCommand(normalized) else {
                         continue
                     }
 
@@ -321,6 +348,52 @@ public enum HookHealthCheck {
         }
 
         return staleCommands
+    }
+
+    /// Whether a hook command belongs to this project under any of the names
+    /// it has shipped under. Used to keep our own hooks out of the
+    /// "third-party integrations" notice and to scope the stale-path check.
+    private static func isIslandLineageHookCommand(_ normalizedCommand: String) -> Bool {
+        [
+            "agentislandhooks", "agent-island",
+            "openislandhooks", "open-island",
+            "vibeislandhooks", "vibe-island",
+        ].contains { normalizedCommand.contains($0) }
+    }
+
+    /// Hook commands left behind by a previous name of this project. They
+    /// target a socket the current BridgeServer does not bind, so they fail
+    /// open — but they still run on every event, doubling hook latency.
+    static func findLegacyIslandHookCommands(in data: Data) -> [String] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = root["hooks"] as? [String: Any] else {
+            return []
+        }
+
+        var names: Set<String> = []
+
+        for (_, eventValue) in hooks {
+            guard let groups = eventValue as? [[String: Any]] else { continue }
+            for group in groups {
+                guard let hookEntries = group["hooks"] as? [[String: Any]] else { continue }
+                for hook in hookEntries {
+                    guard let command = hook["command"] as? String else { continue }
+                    let normalized = command.lowercased()
+                    guard normalized.contains("openislandhooks")
+                        || normalized.contains("open-island-bridge")
+                        || normalized.contains("vibeislandhooks")
+                        || normalized.contains("vibe-island-bridge") else {
+                        continue
+                    }
+
+                    names.insert(
+                        URL(fileURLWithPath: extractBinaryPath(from: command)).lastPathComponent
+                    )
+                }
+            }
+        }
+
+        return names.sorted()
     }
 
     /// Finds third-party (non-Agent-Island) hook command names for display.
@@ -340,9 +413,8 @@ public enum HookHealthCheck {
                     guard let command = hook["command"] as? String else { continue }
                     let normalized = command.lowercased()
 
-                    // Skip Agent-Island / Vibe Island hooks
-                    if normalized.contains("agentislandhooks") || normalized.contains("vibeislandhooks")
-                        || normalized.contains("agent-island") || normalized.contains("vibe-island") {
+                    // Skip our own hooks, under any of the project's names
+                    if isIslandLineageHookCommand(normalized) {
                         continue
                     }
 
@@ -401,7 +473,13 @@ public enum HookHealthCheck {
                 for hook in hookEntries {
                     if let command = hook["command"] as? String {
                         let normalized = command.lowercased()
-                        if normalized.contains("agentislandhooks") || normalized.contains("vibeislandhooks") {
+                        // Includes the former name so a legacy-only install
+                        // still gets its manifest check — combined with
+                        // legacyHooksDetected being repairable, the reinstall
+                        // then fixes both at once.
+                        if normalized.contains("agentislandhooks")
+                            || normalized.contains("openislandhooks")
+                            || normalized.contains("vibeislandhooks") {
                             return true
                         }
                     }

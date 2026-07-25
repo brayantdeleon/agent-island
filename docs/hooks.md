@@ -32,6 +32,31 @@ This is meant for per-process launches. Do not set it globally unless you want A
 
 **Entry point**: [`Sources/AgentIslandHooks/main.swift`](../Sources/AgentIslandHooks/main.swift)
 
+## Legacy Hook Migration
+
+This project has shipped under earlier names, and their hook binaries
+(`OpenIslandHooks`, `VibeIslandHooks`, and the `*-island-bridge` variants) may
+still be registered in a user's agent config. They target sockets the current
+`BridgeServer` does not bind, so they fail open — but they still run on every
+event, doubling hook latency.
+
+Each installer's legacy matcher recognises all of those names, so installing
+*replaces* a legacy registration rather than stacking a second command beside
+it. Every matcher is scoped to its own agent (`--source claude`, `--source
+kimi`, and so on) so one agent's install never disturbs another's.
+
+Existing installs self-heal without a reinstall:
+`HookHealthCheck.findLegacyIslandHookCommands` reports
+`Issue.legacyHooksDetected`, which is `.info` severity but auto-repairable, so
+`repairHooksIfNeeded` on the next launch rewrites the config. Severity matters
+here — an error would leave the UI permanently red for something that still
+works.
+
+OpenCode is the exception: it installs a plugin *file*
+(`OpenCodePluginInstallationManager`) rather than a command string, so a legacy
+`open-island.js` needs file removal plus config pruning rather than a matcher
+change. Not yet handled.
+
 ---
 
 ## Codex Hooks (`--source codex`)

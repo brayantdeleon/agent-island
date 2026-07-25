@@ -146,9 +146,14 @@ public enum CursorHookInstaller {
         return isAgentIslandCursorHookCommand(command)
     }
 
+    /// Matches any Agent-Island lineage, including the `OpenIslandHooks`
+    /// binary shipped under the project's former name, so installing replaces
+    /// a legacy registration instead of stacking a second command onto it.
     private static func isAgentIslandCursorHookCommand(_ command: String) -> Bool {
         let normalized = command.lowercased()
-        return (normalized.contains("agentislandhooks") || normalized.contains("vibeislandhooks"))
+        return (normalized.contains("agentislandhooks")
+            || normalized.contains("openislandhooks")
+            || normalized.contains("vibeislandhooks"))
             && normalized.contains("cursor")
     }
 
