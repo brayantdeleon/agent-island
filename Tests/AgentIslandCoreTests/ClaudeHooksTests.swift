@@ -434,6 +434,94 @@ struct ClaudeHooksTests {
         if case let .activityUpdated(activity) = runningEvent {
             #expect(activity.summary == "Prompt: Continue the implementation.")
         }
+
+        let endResponse = try BridgeCommandClient(socketURL: socketURL).send(
+            .processClaudeHook(
+                ClaudeHookPayload(
+                    cwd: "/tmp/worktree",
+                    hookEventName: .sessionEnd,
+                    sessionID: sessionID,
+                    transcriptPath: "/tmp/claude-desktop-passive-resume.jsonl",
+                    terminalApp: "Claude.app"
+                )
+            )
+        )
+        #expect(endResponse == .acknowledged)
+
+        let completedEvent = try await nextMatchingEvent(from: &iterator, maxEvents: 6) { event in
+            if case let .sessionCompleted(completed) = event {
+                return completed.sessionID == sessionID
+            }
+            return false
+        }
+        if case let .sessionCompleted(completed) = completedEvent {
+            #expect(completed.summary == "Claude Code session ended.")
+            #expect(completed.isSessionEnd == true)
+        }
+    }
+
+    @Test
+    func claudeDesktopStartupThatEndsWithoutActivityDoesNotCreateSession() async throws {
+        let socketURL = BridgeSocketLocation.uniqueTestURL()
+        let server = BridgeServer(socketURL: socketURL)
+        try server.start()
+        defer { server.stop() }
+
+        let observer = LocalBridgeClient(socketURL: socketURL)
+        let stream = try observer.connect()
+        defer { observer.disconnect() }
+        try await observer.send(.registerClient(role: .observer))
+
+        let desktopSessionID = "claude-desktop-empty-startup"
+        let commandClient = BridgeCommandClient(socketURL: socketURL)
+        let startResponse = try commandClient.send(
+            .processClaudeHook(
+                ClaudeHookPayload(
+                    cwd: "/tmp/worktree",
+                    hookEventName: .sessionStart,
+                    sessionID: desktopSessionID,
+                    transcriptPath: "/tmp/claude-desktop-empty-startup.jsonl",
+                    source: .startup,
+                    terminalApp: "Claude.app"
+                )
+            )
+        )
+        #expect(startResponse == .acknowledged)
+
+        let endResponse = try commandClient.send(
+            .processClaudeHook(
+                ClaudeHookPayload(
+                    cwd: "/tmp/worktree",
+                    hookEventName: .sessionEnd,
+                    sessionID: desktopSessionID,
+                    transcriptPath: "/tmp/claude-desktop-empty-startup.jsonl",
+                    terminalApp: "Claude.app"
+                )
+            )
+        )
+        #expect(endResponse == .acknowledged)
+
+        let terminalSessionID = "claude-terminal-startup-control"
+        let terminalResponse = try commandClient.send(
+            .processClaudeHook(
+                ClaudeHookPayload(
+                    cwd: "/tmp/worktree",
+                    hookEventName: .sessionStart,
+                    sessionID: terminalSessionID,
+                    source: .startup,
+                    terminalApp: "Ghostty"
+                )
+            )
+        )
+        #expect(terminalResponse == .acknowledged)
+
+        var iterator = stream.makeAsyncIterator()
+        let firstEvent = try await nextEvent(from: &iterator)
+        guard case let .sessionStarted(started) = firstEvent else {
+            Issue.record("Expected the terminal Claude startup control event")
+            return
+        }
+        #expect(started.sessionID == terminalSessionID)
     }
 
     @Test
