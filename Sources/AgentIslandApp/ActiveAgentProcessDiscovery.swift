@@ -10,6 +10,14 @@ struct ActiveAgentProcessDiscovery {
     }
 
     struct ProcessSnapshot: Equatable, Sendable {
+        enum EvidenceScope: Equatable, Sendable {
+            /// The process can participate in normal session/terminal matching.
+            case process
+            /// The process proves only that Claude Desktop hosts local agents.
+            /// It cannot identify or attach an individual conversation.
+            case desktopHost
+        }
+
         var tool: AgentTool
         var sessionID: String?
         var workingDirectory: String?
@@ -18,6 +26,7 @@ struct ActiveAgentProcessDiscovery {
         var transcriptPath: String?
         var tmuxTarget: String?
         var tmuxSocketPath: String?
+        var evidenceScope: EvidenceScope
 
         init(
             tool: AgentTool,
@@ -27,7 +36,8 @@ struct ActiveAgentProcessDiscovery {
             terminalApp: String? = nil,
             transcriptPath: String? = nil,
             tmuxTarget: String? = nil,
-            tmuxSocketPath: String? = nil
+            tmuxSocketPath: String? = nil,
+            evidenceScope: EvidenceScope = .process
         ) {
             self.tool = tool
             self.sessionID = sessionID
@@ -37,6 +47,7 @@ struct ActiveAgentProcessDiscovery {
             self.transcriptPath = transcriptPath
             self.tmuxTarget = tmuxTarget
             self.tmuxSocketPath = tmuxSocketPath
+            self.evidenceScope = evidenceScope
         }
     }
 
@@ -62,16 +73,25 @@ struct ActiveAgentProcessDiscovery {
         }
 
         let processesByPID = Dictionary(uniqueKeysWithValues: processes.map { ($0.pid, $0) })
+        let desktopDisclaimerWrapperPIDs = claudeDesktopDisclaimerWrapperPIDs(among: processes)
 
         var snapshots: [ProcessSnapshot] = []
         var claimedKeys: Set<String> = []
 
         for process in processes {
+            if desktopDisclaimerWrapperPIDs.contains(process.pid) {
+                continue
+            }
+
+            let isClaudeDesktopAgent = isClaudeDesktopProcess(command: process.command)
+
             // Most agent detection requires a TTY (terminal-attached process).
             // OpenCode is an exception: it can run inside IDE integrated terminals
             // that don't expose a TTY in `ps` output. Let OpenCode processes
             // through so the liveness fallback can keep their sessions alive.
-            if process.terminalTTY == nil && !isOpenCodeProcess(command: process.command) {
+            if process.terminalTTY == nil
+                && !isOpenCodeProcess(command: process.command)
+                && !isClaudeDesktopAgent {
                 continue
             }
 
@@ -81,6 +101,21 @@ struct ActiveAgentProcessDiscovery {
                 }
 
                 let claimKey = "codex:\(snapshot.sessionID ?? process.pid)"
+                guard claimedKeys.insert(claimKey).inserted else {
+                    continue
+                }
+
+                snapshots.append(snapshot)
+                continue
+            }
+
+            if isClaudeDesktopAgent {
+                guard var snapshot = claudeSnapshot(for: process, processesByPID: processesByPID) else {
+                    continue
+                }
+                snapshot.evidenceScope = .desktopHost
+
+                let claimKey = "claude-desktop:\(snapshot.workingDirectory ?? process.pid)"
                 guard claimedKeys.insert(claimKey).inserted else {
                     continue
                 }
@@ -472,6 +507,15 @@ struct ActiveAgentProcessDiscovery {
             return "Codex.app"
         }
 
+        if lowered.contains("/claude.app/contents/helpers/") {
+            return "Claude.app"
+        }
+
+        if lowered.contains("/claude.app/contents/macos/claude"),
+           !lowered.contains("/claude-code/") {
+            return "Claude.app"
+        }
+
         if lowered.contains("/cmux.app/contents/macos/cmux") {
             return "cmux"
         }
@@ -784,6 +828,36 @@ struct ActiveAgentProcessDiscovery {
 
         return firstToken == "claude"
             || firstToken.hasSuffix("/claude")
+    }
+
+    /// Claude Code embedded in Claude.app ("local agent mode"). This narrow
+    /// check is the only TTY-less Claude process admitted by discovery.
+    private func isClaudeDesktopProcess(command: String) -> Bool {
+        let lowered = command.lowercased()
+        return lowered.contains("/claude-code/")
+            && lowered.contains("/claude.app/contents/macos/claude")
+    }
+
+    /// Claude Desktop launches its embedded CLI through a disclaimer helper
+    /// whose command line ends with the child's complete command line. Suppress
+    /// only that known parent/child pair; generic suffix-based wrapper removal
+    /// could hide legitimate nested agents.
+    private func claudeDesktopDisclaimerWrapperPIDs(
+        among processes: [RunningProcess]
+    ) -> Set<String> {
+        let childrenByParentPID = Dictionary(grouping: processes, by: \.parentPID)
+        return Set(processes.compactMap { process in
+            let lowered = process.command.lowercased()
+            guard lowered.contains("/claude.app/contents/helpers/disclaimer"),
+                  let children = childrenByParentPID[process.pid],
+                  children.contains(where: {
+                      isClaudeDesktopProcess(command: $0.command)
+                          && process.command.hasSuffix($0.command)
+                  }) else {
+                return nil
+            }
+            return process.pid
+        })
     }
 
     private static func commandOutput(executablePath: String, arguments: [String]) -> String? {

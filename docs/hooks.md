@@ -174,6 +174,19 @@ All other Codex events require no stdout response.
 | `SubagentStop` | A sub-agent stops | None |
 | `PreCompact` | Before context compaction | None |
 
+### Session identity and liveness
+
+Claude hook events are authoritative for conversation identity and lifecycle:
+
+- `SessionStart` establishes or restores a live session.
+- `Stop` completes one turn; it does not mean that the conversation ended.
+- `SessionEnd` is the per-conversation end signal.
+- Process absence is runtime availability evidence only. After consecutive misses it can settle a running turn, but it does not synthesize `SessionEnd`.
+
+Transcript discovery enriches sessions already identified by hooks or the persisted hook registry. It does not add unmatched transcripts to live state because ordinary Claude chats share the same transcript store.
+
+Claude Desktop's embedded Claude Code worker is treated as host-only evidence. It may keep hook-identified `Claude.app` sessions alive, but it cannot create a synthetic conversation, attach a terminal, or select one of several chats by working directory. Completed Claude cache entries are retained for up to 24 hours independently of lifecycle state.
+
 ### Common payload fields
 
 | JSON key | Swift property | Description |
