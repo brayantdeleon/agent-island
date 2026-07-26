@@ -23,6 +23,7 @@ struct ClaudeSessionRegistryTests {
                 summary: "Working on the registry.",
                 phase: .running,
                 updatedAt: Date(timeIntervalSince1970: 1_000),
+                runStartedAt: Date(timeIntervalSince1970: 900),
                 jumpTarget: JumpTarget(
                     terminalApp: "Ghostty",
                     workspaceName: "agent-island",
@@ -49,6 +50,7 @@ struct ClaudeSessionRegistryTests {
         #expect(reloaded == records)
         #expect(reloaded.first?.session.claudeMetadata?.transcriptPath == "/tmp/claude.jsonl")
         #expect(reloaded.first?.session.jumpTarget?.terminalTTY == "/dev/ttys002")
+        #expect(reloaded.first?.session.runStartedAt == Date(timeIntervalSince1970: 900))
     }
 
     @Test

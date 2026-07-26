@@ -267,6 +267,9 @@ final class SessionDiscoveryCoordinator {
 
         if discoveredIsNewer {
             merged.updatedAt = discovered.updatedAt
+            if existing.phase == .completed && discovered.phase != .completed {
+                merged.runStartedAt = discovered.runStartedAt
+            }
 
             // Transcript/rollout discovery often has only a generic
             // "Provider · project" fallback. Do not let that erase a

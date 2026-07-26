@@ -148,6 +148,84 @@ struct AgentSessionPresentationTests {
     }
 
     @Test
+    func activeRunTimerSurvivesApprovalAndAnswerResolution() throws {
+        let startedAt = Date(timeIntervalSince1970: 10_000)
+        var state = SessionState()
+        state.apply(.sessionStarted(SessionStarted(
+            sessionID: "agent-run",
+            title: "Agent run",
+            tool: .codex,
+            summary: "Working",
+            timestamp: startedAt
+        )))
+        state.apply(.permissionRequested(PermissionRequested(
+            sessionID: "agent-run",
+            request: PermissionRequest(
+                title: "Run tests",
+                summary: "Needs approval",
+                affectedPath: "/tmp/repo"
+            ),
+            timestamp: startedAt.addingTimeInterval(60)
+        )))
+        state.resolvePermission(
+            sessionID: "agent-run",
+            resolution: .allowOnce(),
+            at: startedAt.addingTimeInterval(120)
+        )
+
+        var session = try #require(state.session(id: "agent-run"))
+        #expect(session.runStartedAt == startedAt)
+        #expect(session.spotlightAgeBadge(at: startedAt.addingTimeInterval(180)) == "3m")
+
+        state.apply(.questionAsked(QuestionAsked(
+            sessionID: "agent-run",
+            prompt: QuestionPrompt(title: "Which option?", options: ["A", "B"]),
+            timestamp: startedAt.addingTimeInterval(210)
+        )))
+        state.answerQuestion(
+            sessionID: "agent-run",
+            response: QuestionPromptResponse(answer: "A"),
+            at: startedAt.addingTimeInterval(240)
+        )
+
+        session = try #require(state.session(id: "agent-run"))
+        #expect(session.runStartedAt == startedAt)
+        #expect(session.spotlightAgeBadge(at: startedAt.addingTimeInterval(300)) == "5m")
+    }
+
+    @Test
+    func completedAgeUsesCompletionTimeAndNextRunGetsANewTimer() throws {
+        let startedAt = Date(timeIntervalSince1970: 20_000)
+        var state = SessionState()
+        state.apply(.sessionStarted(SessionStarted(
+            sessionID: "agent-run",
+            title: "Agent run",
+            tool: .claudeCode,
+            summary: "Working",
+            timestamp: startedAt
+        )))
+        state.apply(.sessionCompleted(SessionCompleted(
+            sessionID: "agent-run",
+            summary: "Done",
+            timestamp: startedAt.addingTimeInterval(300)
+        )))
+
+        var session = try #require(state.session(id: "agent-run"))
+        #expect(session.spotlightAgeBadge(at: startedAt.addingTimeInterval(420)) == "2m")
+
+        state.apply(.activityUpdated(SessionActivityUpdated(
+            sessionID: "agent-run",
+            summary: "Working again",
+            phase: .running,
+            timestamp: startedAt.addingTimeInterval(600)
+        )))
+
+        session = try #require(state.session(id: "agent-run"))
+        #expect(session.runStartedAt == startedAt.addingTimeInterval(600))
+        #expect(session.spotlightAgeBadge(at: startedAt.addingTimeInterval(660)) == "1m")
+    }
+
+    @Test
     func attachedCompletedSessionStaysActiveWhileRecent() {
         let referenceDate = Date(timeIntervalSince1970: 10_000)
         let session = AgentSession(

@@ -1800,6 +1800,7 @@ struct SessionStateTests {
         )))
 
         #expect(state.session(id: "s-1")?.firstSeenAt == t0)
+        #expect(state.session(id: "s-1")?.runStartedAt == t0)
 
         // A repeated sessionStarted (e.g. hook reconnect) must preserve the
         // original firstSeenAt even though the payload timestamp is later.
@@ -1811,6 +1812,7 @@ struct SessionStateTests {
             timestamp: t0.addingTimeInterval(120)
         )))
         #expect(state.session(id: "s-1")?.firstSeenAt == t0)
+        #expect(state.session(id: "s-1")?.runStartedAt == t0)
         #expect(state.session(id: "s-1")?.updatedAt == t0.addingTimeInterval(120))
 
         // Activity updates leave firstSeenAt untouched.
@@ -1821,10 +1823,64 @@ struct SessionStateTests {
             timestamp: t0.addingTimeInterval(240)
         )))
         #expect(state.session(id: "s-1")?.firstSeenAt == t0)
+        #expect(state.session(id: "s-1")?.runStartedAt == t0)
     }
 
     @Test
-    func firstSeenAtPersistsThroughRegistryRoundTrip() throws {
+    func runStartedAtOnlyAdvancesWhenACompletedSessionRunsAgain() {
+        let t0 = Date(timeIntervalSince1970: 15_000)
+        var state = SessionState()
+        state.apply(.sessionStarted(SessionStarted(
+            sessionID: "s-1",
+            title: "Agent run",
+            tool: .codex,
+            summary: "Working",
+            timestamp: t0
+        )))
+        state.apply(.permissionRequested(PermissionRequested(
+            sessionID: "s-1",
+            request: PermissionRequest(
+                title: "Run command",
+                summary: "Needs approval",
+                affectedPath: "/tmp/repo"
+            ),
+            timestamp: t0.addingTimeInterval(30)
+        )))
+        state.resolvePermission(
+            sessionID: "s-1",
+            resolution: .allowOnce(),
+            at: t0.addingTimeInterval(60)
+        )
+        state.apply(.questionAsked(QuestionAsked(
+            sessionID: "s-1",
+            prompt: QuestionPrompt(title: "Choose", options: ["A"]),
+            timestamp: t0.addingTimeInterval(90)
+        )))
+        state.answerQuestion(
+            sessionID: "s-1",
+            response: QuestionPromptResponse(answer: "A"),
+            at: t0.addingTimeInterval(120)
+        )
+
+        #expect(state.session(id: "s-1")?.runStartedAt == t0)
+
+        state.apply(.sessionCompleted(SessionCompleted(
+            sessionID: "s-1",
+            summary: "Done",
+            timestamp: t0.addingTimeInterval(150)
+        )))
+        state.apply(.activityUpdated(SessionActivityUpdated(
+            sessionID: "s-1",
+            summary: "Working again",
+            phase: .running,
+            timestamp: t0.addingTimeInterval(300)
+        )))
+
+        #expect(state.session(id: "s-1")?.runStartedAt == t0.addingTimeInterval(300))
+    }
+
+    @Test
+    func timingAnchorsPersistThroughRegistryRoundTrip() throws {
         let t0 = Date(timeIntervalSince1970: 20_000)
         let session = AgentSession(
             id: "claude-1",
@@ -1833,7 +1889,8 @@ struct SessionStateTests {
             phase: .running,
             summary: "Working",
             updatedAt: t0.addingTimeInterval(60),
-            firstSeenAt: t0
+            firstSeenAt: t0,
+            runStartedAt: t0.addingTimeInterval(10)
         )
         let record = ClaudeTrackedSessionRecord(session: session)
 
@@ -1846,9 +1903,11 @@ struct SessionStateTests {
 
         #expect(decoded.firstSeenAt == t0)
         #expect(decoded.session.firstSeenAt == t0)
+        #expect(decoded.runStartedAt == t0.addingTimeInterval(10))
+        #expect(decoded.session.runStartedAt == t0.addingTimeInterval(10))
 
-        // Legacy records without firstSeenAt decode cleanly and fall back to
-        // updatedAt on the restored AgentSession.
+        // Legacy records without timing anchors decode cleanly and fall back
+        // to updatedAt on the restored AgentSession.
         let legacyJSON = """
         {
           "attachmentState": "stale",
@@ -1863,6 +1922,8 @@ struct SessionStateTests {
         #expect(legacy.firstSeenAt == nil)
         let legacyUpdated = ISO8601DateFormatter().date(from: "2026-01-01T00:00:00Z")
         #expect(legacy.session.firstSeenAt == legacyUpdated)
+        #expect(legacy.runStartedAt == nil)
+        #expect(legacy.session.runStartedAt == legacyUpdated)
     }
 }
 

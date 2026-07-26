@@ -27,6 +27,7 @@ final class OpenCodeSessionRegistryTests: XCTestCase {
                 summary: "Testing OpenCode persistence",
                 phase: .running,
                 updatedAt: Date(),
+                runStartedAt: Date(timeIntervalSince1970: 900),
                 openCodeMetadata: OpenCodeSessionMetadata(
                     initialUserPrompt: "Hello",
                     model: "gpt-4"
@@ -40,6 +41,7 @@ final class OpenCodeSessionRegistryTests: XCTestCase {
         XCTAssertEqual(loaded.count, 1)
         XCTAssertEqual(loaded[0].sessionID, "opencode-1")
         XCTAssertEqual(loaded[0].openCodeMetadata?.initialUserPrompt, "Hello")
+        XCTAssertEqual(loaded[0].session.runStartedAt, Date(timeIntervalSince1970: 900))
     }
 
     func testLoadEmpty() throws {

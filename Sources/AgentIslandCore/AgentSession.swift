@@ -368,6 +368,10 @@ public struct AgentSession: Equatable, Identifiable, Codable, Sendable {
     /// persisted so the closed-island's right-slot grid can keep a stable
     /// display order regardless of how the panel list is sorted.
     public var firstSeenAt: Date
+    /// Start of the current active run/turn. Unlike `updatedAt`, this does not
+    /// move when activity, approval, or answer events arrive. It advances only
+    /// when a completed session begins running again.
+    public var runStartedAt: Date
     public var permissionRequest: PermissionRequest?
     public var questionPrompt: QuestionPrompt?
     public var jumpTarget: JumpTarget?
@@ -414,6 +418,7 @@ public struct AgentSession: Equatable, Identifiable, Codable, Sendable {
         summary: String,
         updatedAt: Date,
         firstSeenAt: Date? = nil,
+        runStartedAt: Date? = nil,
         permissionRequest: PermissionRequest? = nil,
         questionPrompt: QuestionPrompt? = nil,
         jumpTarget: JumpTarget? = nil,
@@ -432,6 +437,7 @@ public struct AgentSession: Equatable, Identifiable, Codable, Sendable {
         self.summary = summary
         self.updatedAt = updatedAt
         self.firstSeenAt = firstSeenAt ?? updatedAt
+        self.runStartedAt = runStartedAt ?? updatedAt
         self.permissionRequest = permissionRequest
         self.questionPrompt = questionPrompt
         self.jumpTarget = jumpTarget
@@ -452,6 +458,7 @@ public struct AgentSession: Equatable, Identifiable, Codable, Sendable {
         case summary
         case updatedAt
         case firstSeenAt
+        case runStartedAt
         case permissionRequest
         case questionPrompt
         case jumpTarget
@@ -473,6 +480,7 @@ public struct AgentSession: Equatable, Identifiable, Codable, Sendable {
         summary = try container.decode(String.self, forKey: .summary)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         firstSeenAt = try container.decodeIfPresent(Date.self, forKey: .firstSeenAt) ?? updatedAt
+        runStartedAt = try container.decodeIfPresent(Date.self, forKey: .runStartedAt) ?? updatedAt
         permissionRequest = try container.decodeIfPresent(PermissionRequest.self, forKey: .permissionRequest)
         questionPrompt = try container.decodeIfPresent(QuestionPrompt.self, forKey: .questionPrompt)
         jumpTarget = try container.decodeIfPresent(JumpTarget.self, forKey: .jumpTarget)
@@ -494,6 +502,7 @@ public struct AgentSession: Equatable, Identifiable, Codable, Sendable {
         try container.encode(summary, forKey: .summary)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encode(firstSeenAt, forKey: .firstSeenAt)
+        try container.encode(runStartedAt, forKey: .runStartedAt)
         try container.encodeIfPresent(permissionRequest, forKey: .permissionRequest)
         try container.encodeIfPresent(questionPrompt, forKey: .questionPrompt)
         try container.encodeIfPresent(jumpTarget, forKey: .jumpTarget)

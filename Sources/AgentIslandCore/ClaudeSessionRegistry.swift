@@ -9,6 +9,7 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
     public var phase: SessionPhase
     public var updatedAt: Date
     public var firstSeenAt: Date?
+    public var runStartedAt: Date?
     public var jumpTarget: JumpTarget?
     public var claudeMetadata: ClaudeSessionMetadata?
     public var isHookManaged: Bool
@@ -23,6 +24,7 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
         phase: SessionPhase,
         updatedAt: Date,
         firstSeenAt: Date? = nil,
+        runStartedAt: Date? = nil,
         jumpTarget: JumpTarget? = nil,
         claudeMetadata: ClaudeSessionMetadata? = nil,
         isHookManaged: Bool = false,
@@ -36,6 +38,7 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
         self.phase = phase
         self.updatedAt = updatedAt
         self.firstSeenAt = firstSeenAt
+        self.runStartedAt = runStartedAt
         self.jumpTarget = jumpTarget
         self.claudeMetadata = claudeMetadata
         self.isHookManaged = isHookManaged
@@ -52,6 +55,7 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
             phase: session.phase,
             updatedAt: session.updatedAt,
             firstSeenAt: session.firstSeenAt,
+            runStartedAt: session.runStartedAt,
             jumpTarget: session.jumpTarget,
             claudeMetadata: session.claudeMetadata,
             isHookManaged: session.isHookManaged,
@@ -70,6 +74,7 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
             summary: summary,
             updatedAt: updatedAt,
             firstSeenAt: firstSeenAt,
+            runStartedAt: runStartedAt,
             jumpTarget: jumpTarget,
             claudeMetadata: claudeMetadata
         )
@@ -95,6 +100,7 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
         case phase
         case updatedAt
         case firstSeenAt
+        case runStartedAt
         case jumpTarget
         case claudeMetadata
         case isHookManaged
@@ -111,6 +117,7 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
         phase = try container.decode(SessionPhase.self, forKey: .phase)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         firstSeenAt = try container.decodeIfPresent(Date.self, forKey: .firstSeenAt)
+        runStartedAt = try container.decodeIfPresent(Date.self, forKey: .runStartedAt)
         jumpTarget = try container.decodeIfPresent(JumpTarget.self, forKey: .jumpTarget)
         claudeMetadata = try container.decodeIfPresent(ClaudeSessionMetadata.self, forKey: .claudeMetadata)
         isHookManaged = try container.decodeIfPresent(Bool.self, forKey: .isHookManaged) ?? false
@@ -127,6 +134,7 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
         try container.encode(phase, forKey: .phase)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(firstSeenAt, forKey: .firstSeenAt)
+        try container.encodeIfPresent(runStartedAt, forKey: .runStartedAt)
         try container.encodeIfPresent(jumpTarget, forKey: .jumpTarget)
         try container.encodeIfPresent(claudeMetadata, forKey: .claudeMetadata)
         try container.encode(isHookManaged, forKey: .isHookManaged)
