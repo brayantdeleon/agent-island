@@ -54,7 +54,7 @@ final class ProcessMonitoringCoordinator {
     private static let idlePollInterval: TimeInterval = 300
     private static let cursorStalenessTimeout: TimeInterval = 600  // 10 minutes
     private static let codexAppStalenessTimeout: TimeInterval = 600  // 10 minutes
-    private static let claudeDesktopStalenessTimeout: TimeInterval = 600  // 10 minutes
+    private static let claudeSessionCacheRetentionWindow: TimeInterval = 86_400
 
     static func monitoringPollInterval(
         isResolvingInitialLiveSessions: Bool,
@@ -141,7 +141,10 @@ final class ProcessMonitoringCoordinator {
                         if shouldResolveTerminals {
                             g = probe.ghosttySnapshotAvailability()
                             t = probe.terminalSnapshotAvailability()
-                            j = resolver.resolveJumpTargets(for: liveSessions, activeProcesses: s)
+                            j = resolver.resolveJumpTargets(
+                                for: liveSessions,
+                                activeProcesses: s.filter { $0.evidenceScope != .desktopHost }
+                            )
                         } else {
                             g = .available([], appIsRunning: false)
                             t = .available([], appIsRunning: false)
@@ -205,6 +208,9 @@ final class ProcessMonitoringCoordinator {
         observedCodexAppRunning: Bool? = nil
     ) {
         let activeProcesses = activeProcesses ?? activeAgentProcessDiscovery.discover()
+        let attachableActiveProcesses = activeProcesses.filter {
+            $0.evidenceScope != .desktopHost
+        }
 
         // Work on a local copy to avoid triggering didSet (and its queue.sync +
         // view invalidation) on every intermediate mutation.
@@ -218,19 +224,19 @@ final class ProcessMonitoringCoordinator {
 
         let mergedClaudeSessions = mergedWithSyntheticClaudeSessions(
             existingSessions: local.sessions,
-            activeProcesses: activeProcesses
+            activeProcesses: attachableActiveProcesses
         )
         let mergedSessions = mergedWithSyntheticCursorSessions(
             existingSessions: mergedClaudeSessions,
-            activeProcesses: activeProcesses
+            activeProcesses: attachableActiveProcesses
         )
         if mergedSessions != local.sessions {
             local = SessionState(sessions: mergedSessions)
         }
 
         // Adopt process TTYs inline on local copy.
-        adoptProcessTTYsForClaudeSessions(activeProcesses: activeProcesses, sessions: &local)
-        adoptProcessTTYsForCursorSessions(activeProcesses: activeProcesses, sessions: &local)
+        adoptProcessTTYsForClaudeSessions(activeProcesses: attachableActiveProcesses, sessions: &local)
+        adoptProcessTTYsForCursorSessions(activeProcesses: attachableActiveProcesses, sessions: &local)
 
         // Detect Codex.app running state BEFORE the empty-sessions early
         // return — we need to fire the callback on a brand-new Codex.app
@@ -253,13 +259,13 @@ final class ProcessMonitoringCoordinator {
                 for: sessions,
                 ghosttyAvailability: ghosttyAvailability,
                 terminalAvailability: terminalAvailability,
-                activeProcesses: activeProcesses,
+                activeProcesses: attachableActiveProcesses,
                 allowRecentAttachmentGrace: !isResolvingInitialLiveSessions
             )
         } else {
             resolutionReport = terminalSessionAttachmentProbe.sessionResolutionReport(
                 for: sessions,
-                activeProcesses: activeProcesses,
+                activeProcesses: attachableActiveProcesses,
                 allowRecentAttachmentGrace: !isResolvingInitialLiveSessions
             )
         }
@@ -277,7 +283,8 @@ final class ProcessMonitoringCoordinator {
         // Phase 1: populate isProcessAlive in parallel with existing system.
         let aliveIDs = sessionIDsWithAliveProcesses(
             activeProcesses: activeProcesses,
-            isCodexAppRunning: isCodexAppRunning
+            isCodexAppRunning: isCodexAppRunning,
+            sessions: local.sessions
         )
         _ = local.markProcessLiveness(
             aliveSessionIDs: aliveIDs,
@@ -290,7 +297,7 @@ final class ProcessMonitoringCoordinator {
         let resolverJumpTargets = preResolvedJumpTargets
             ?? terminalJumpTargetResolver.resolveJumpTargets(
                 for: local.sessions.filter(\.isTrackedLiveSession),
-                activeProcesses: activeProcesses
+                activeProcesses: attachableActiveProcesses
             )
         if !resolverJumpTargets.isEmpty {
             _ = local.reconcileJumpTargets(resolverJumpTargets)
@@ -302,6 +309,11 @@ final class ProcessMonitoringCoordinator {
         _ = local.removeInvisibleSessions(
             retainingCompletedSince: Date.now.addingTimeInterval(
                 -AgentSession.islandCompletedVisibilityWindow
+            )
+        )
+        _ = local.removeInactiveClaudeSessions(
+            lastActivityBefore: Date.now.addingTimeInterval(
+                -Self.claudeSessionCacheRetentionWindow
             )
         )
 
@@ -386,10 +398,13 @@ final class ProcessMonitoringCoordinator {
     /// Codex/Claude/Gemini).
     func sessionIDsWithAliveProcesses(
         activeProcesses: [ActiveProcessSnapshot],
-        isCodexAppRunning: Bool
+        isCodexAppRunning: Bool,
+        isClaudeDesktopRunning: Bool? = nil,
+        sessions: [AgentSession]? = nil,
+        now: Date = .now
     ) -> Set<String> {
         var aliveIDs: Set<String> = []
-        let sessions = state.sessions
+        let sessions = sessions ?? state.sessions
 
         // Codex CLI sessions: match by session ID directly.
         let codexProcessIDs = Set(
@@ -404,7 +419,7 @@ final class ProcessMonitoringCoordinator {
                     continue
                 }
                 let isStale = session.phase == .completed
-                    && session.updatedAt.addingTimeInterval(Self.codexAppStalenessTimeout) < Date.now
+                    && session.updatedAt.addingTimeInterval(Self.codexAppStalenessTimeout) < now
                 if isCodexAppRunning, !isStale {
                     aliveIDs.insert(session.id)
                 }
@@ -414,8 +429,15 @@ final class ProcessMonitoringCoordinator {
         }
 
         // Claude sessions: reuse the multi-pass matching from representedClaudeProcessKeys.
-        let claudeProcesses = activeProcesses.filter { $0.tool == .claudeCode }
-        let trackedClaudeSessions = sessions.filter { $0.tool == .claudeCode && !isSyntheticClaudeSession($0) }
+        let claudeProcesses = activeProcesses.filter {
+            $0.tool == .claudeCode && $0.evidenceScope == .process
+        }
+        let trackedClaudeSessions = sessions.filter {
+            $0.tool == .claudeCode
+                && !$0.isSessionEnded
+                && !$0.isClaudeDesktopSession
+                && !isSyntheticClaudeSession($0)
+        }
         var claimedSessionIDs: Set<String> = []
 
         // Pass 1: exact session ID match.
@@ -545,34 +567,45 @@ final class ProcessMonitoringCoordinator {
                 if session.isSessionEnded { continue }
                 if normalizedTTYForMatching(session.jumpTarget?.terminalTTY) != nil { continue }
                 let isStale = session.phase == .completed
-                    && session.updatedAt.addingTimeInterval(Self.cursorStalenessTimeout) < Date.now
+                    && session.updatedAt.addingTimeInterval(Self.cursorStalenessTimeout) < now
                 if !isStale {
                     aliveIDs.insert(session.id)
                 }
             }
         }
 
-        // Claude Desktop sessions: Claude Code launched by Claude.app ("local
-        // agent mode") runs as a TTY-less subprocess that ps/lsof discovery
-        // never sees, so the hook-managed liveness fallback in
-        // SessionState.markProcessLiveness would evict these sessions ~6s after
-        // they appear (#510).  Keep them alive while Claude.app is running, but
-        // let completed sessions expire after a staleness window — Claude
-        // Desktop has no per-conversation "closed" signal beyond the SessionEnd
-        // hook (mirrors the Cursor handling above).  The session is identified
-        // by the "Claude.app" terminalApp tag stamped by the hook.
-        let isClaudeDesktopRunning = Self.isClaudeDesktopAppRunning()
-        if isClaudeDesktopRunning {
-            for session in sessions
-            where session.tool == .claudeCode
-                && !session.isDemoSession
-                && session.jumpTarget?.terminalApp == "Claude.app" {
-                if session.isSessionEnded { continue }
-                let isStale = session.phase == .completed
-                    && session.updatedAt.addingTimeInterval(Self.claudeDesktopStalenessTimeout) < Date.now
-                if !isStale {
-                    aliveIDs.insert(session.id)
+        // Claude Desktop subprocesses prove only that the host has local-agent
+        // work in a workspace. They cannot identify a conversation. Apply this
+        // evidence only to hook-tagged Claude.app sessions, never to generic
+        // transcript rows or synthetic process sessions.
+        let desktopHostWorkingDirectories = Set(
+            activeProcesses
+                .filter {
+                    $0.tool == .claudeCode
+                        && $0.evidenceScope == .desktopHost
                 }
+                .compactMap { normalizedPathForMatching($0.workingDirectory) }
+        )
+        for session in sessions where session.isClaudeDesktopSession
+            && !session.isDemoSession
+            && !session.isSessionEnded {
+            if let workingDirectory = normalizedPathForMatching(
+                session.jumpTarget?.workingDirectory
+            ), desktopHostWorkingDirectories.contains(workingDirectory) {
+                aliveIDs.insert(session.id)
+            }
+        }
+
+        // App-level liveness is a conservative fallback when process discovery
+        // cannot see the embedded worker. It keeps all hook-identified desktop
+        // conversations available; only SessionEnd can end an individual one.
+        let isClaudeDesktopRunning = isClaudeDesktopRunning
+            ?? Self.isClaudeDesktopAppRunning()
+        if isClaudeDesktopRunning {
+            for session in sessions where session.isClaudeDesktopSession
+                && !session.isDemoSession
+                && !session.isSessionEnded {
+                aliveIDs.insert(session.id)
             }
         }
 
@@ -713,7 +746,7 @@ final class ProcessMonitoringCoordinator {
         now: Date
     ) -> [AgentSession] {
         let activeClaudeProcesses = activeProcesses.filter { process in
-            process.tool == .claudeCode
+            process.tool == .claudeCode && process.evidenceScope == .process
         }
         let trackedClaudeSessions = existingSessions.filter { session in
             session.tool == .claudeCode && !isSyntheticClaudeSession(session)
@@ -940,7 +973,10 @@ final class ProcessMonitoringCoordinator {
         activeProcesses: [ActiveProcessSnapshot]
     ) -> Set<String> {
         let trackedClaudeSessions = sessions.filter { session in
-            session.tool == .claudeCode && !isSyntheticClaudeSession(session)
+            session.tool == .claudeCode
+                && !session.isSessionEnded
+                && !session.isClaudeDesktopSession
+                && !isSyntheticClaudeSession(session)
         }
 
         var representedProcessKeys: Set<String> = []
@@ -1040,10 +1076,6 @@ final class ProcessMonitoringCoordinator {
             if candidates.count == 1 {
                 return candidates[0]
             }
-
-            if candidates.count > 1 {
-                return candidates.max(by: { $0.updatedAt < $1.updatedAt })
-            }
         }
 
         return nil
@@ -1096,6 +1128,8 @@ final class ProcessMonitoringCoordinator {
             for index in sessions.indices {
                 let session = sessions[index]
                 guard session.tool == .claudeCode,
+                      !session.isSessionEnded,
+                      !session.isClaudeDesktopSession,
                       !isSyntheticClaudeSession(session),
                       let jumpTarget = session.jumpTarget,
                       normalizedPathForMatching(jumpTarget.workingDirectory) == processCWD,
@@ -1121,7 +1155,6 @@ final class ProcessMonitoringCoordinator {
 
                 sessions[index].jumpTarget?.terminalTTY = processTTY
                 sessions[index].attachmentState = .attached
-                sessions[index].updatedAt = .now
                 changed = true
                 break
             }

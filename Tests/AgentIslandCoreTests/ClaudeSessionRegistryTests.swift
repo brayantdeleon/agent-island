@@ -53,6 +53,38 @@ struct ClaudeSessionRegistryTests {
 
     @Test
     func claudeTrackedSessionRecordRestoresAsStale() {
+        var session = AgentSession(
+            id: "claude-session-1",
+            title: "Claude · agent-island",
+            tool: .claudeCode,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "Working on the registry.",
+            updatedAt: .now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Ghostty",
+                workspaceName: "agent-island",
+                paneTitle: "claude ~/Personal/agent-island",
+                workingDirectory: "/tmp/agent-island",
+                terminalSessionID: "ghostty-claude",
+                terminalTTY: "/dev/ttys002"
+            )
+        )
+        session.isHookManaged = true
+        session.isProcessAlive = true
+        let record = ClaudeTrackedSessionRecord(session: session)
+
+        #expect(record.session.attachmentState == .attached)
+        #expect(record.restorableSession.attachmentState == .stale)
+        #expect(record.restorableSession.jumpTarget?.terminalSessionID == "ghostty-claude")
+        #expect(record.restorableSession.isHookManaged)
+        #expect(!record.restorableSession.isProcessAlive)
+        #expect(record.shouldRestoreToLiveState)
+    }
+
+    @Test
+    func explicitlyEndedClaudeRecordDoesNotRestoreToLiveState() {
         let record = ClaudeTrackedSessionRecord(
             sessionID: "claude-session-1",
             title: "Claude · agent-island",
@@ -68,11 +100,33 @@ struct ClaudeSessionRegistryTests {
                 workingDirectory: "/tmp/agent-island",
                 terminalSessionID: "ghostty-claude",
                 terminalTTY: "/dev/ttys002"
+            ),
+            isHookManaged: true,
+            isSessionEnded: true
+        )
+
+        #expect(record.session.isSessionEnded)
+        #expect(!record.shouldRestoreToLiveState)
+    }
+
+    @Test
+    func legacyTranscriptOnlyRecordDoesNotRestoreAsLive() {
+        let record = ClaudeTrackedSessionRecord(
+            sessionID: "ordinary-chat",
+            title: "Claude · agent-island",
+            origin: .live,
+            summary: "Historical transcript",
+            phase: .completed,
+            updatedAt: .now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Unknown",
+                workspaceName: "agent-island",
+                paneTitle: "Claude ordinary",
+                workingDirectory: "/tmp/agent-island"
             )
         )
 
-        #expect(record.session.attachmentState == .attached)
-        #expect(record.restorableSession.attachmentState == .stale)
-        #expect(record.restorableSession.jumpTarget?.terminalSessionID == "ghostty-claude")
+        #expect(!record.isHookManaged)
+        #expect(!record.shouldRestoreToLiveState)
     }
 }

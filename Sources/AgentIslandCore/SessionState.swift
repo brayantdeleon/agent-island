@@ -380,23 +380,47 @@ public struct SessionState: Equatable, Sendable {
                 continue
             }
 
-            // Hook-managed sessions primarily rely on hook lifecycle signals
-            // (SessionStart / SessionEnd).  However, if the bridge becomes
-            // unavailable the SessionEnd hook can never arrive, leaving the
-            // session permanently stuck as visible.  As a fallback, we also
-            // check process liveness: when the agent process is confirmed dead
-            // by two consecutive polls we mark the session ended so it can be
-            // cleaned up.
+            // Claude hooks are the lifecycle authority. Process discovery is
+            // only runtime evidence: after two misses it can mark the process
+            // unavailable and settle a running turn, but it must not fabricate
+            // a SessionEnd. Claude Desktop in particular exposes only
+            // host-level process evidence, never a per-chat process that can
+            // prove a conversation ended.
             if session.isHookManaged {
                 if session.isSessionEnded {
                     continue
                 }
 
-                // Codex.app sessions are handled by the app-level liveness branch
-                // above.  Other Codex hook sessions, such as VS Code / Claude
-                // plugin sessions, must still age out when their CLI process is
-                // gone even if Codex.app itself is running.
+                if session.tool == .claudeCode {
+                    if aliveSessionIDs.contains(id) {
+                        let wasAlive = session.isProcessAlive
+                        session.isProcessAlive = true
+                        session.processNotSeenCount = 0
+                        if !wasAlive {
+                            changed.insert(id)
+                        }
+                    } else {
+                        session.processNotSeenCount += 1
+                        if session.processNotSeenCount >= 2 {
+                            let wasAlive = session.isProcessAlive
+                            session.isProcessAlive = false
+                            if wasAlive {
+                                changed.insert(id)
+                            }
+                            if session.phase == .running {
+                                session.phase = .completed
+                                changed.insert(id)
+                            }
+                        }
+                    }
 
+                    upsert(session)
+                    continue
+                }
+
+                // Preserve the established fallback for other hook-managed
+                // tools, whose adapters rely on polling when SessionEnd cannot
+                // be delivered.
                 if aliveSessionIDs.contains(id) {
                     session.processNotSeenCount = 0
                 } else {
@@ -463,6 +487,25 @@ public struct SessionState: Equatable, Sendable {
             }
 
             return session.updatedAt >= completedCutoff
+        }
+        return sessionsByID.count != before
+    }
+
+    /// Evict completed Claude cache entries after the transcript/registry
+    /// retention window. This bounds state growth without pretending that
+    /// runtime absence was an authoritative SessionEnd.
+    @discardableResult
+    public mutating func removeInactiveClaudeSessions(
+        lastActivityBefore cutoff: Date
+    ) -> Bool {
+        let before = sessionsByID.count
+        sessionsByID = sessionsByID.filter { _, session in
+            guard session.tool == .claudeCode,
+                  session.phase == .completed else {
+                return true
+            }
+
+            return session.updatedAt >= cutoff
         }
         return sessionsByID.count != before
     }

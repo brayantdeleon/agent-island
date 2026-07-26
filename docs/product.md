@@ -52,7 +52,7 @@ CLI coding agents are powerful, but they pull attention away from the editor and
 - **Notification mode** — auto-height panel for permission requests and session events
 - **Notification sounds** — configurable system sounds with mute toggle
 - **i18n** — English and Simplified Chinese
-- **Session discovery** — auto-discover from local transcripts, persist across launches
+- **Session recovery** — persist live session identity across launches and use local transcripts to enrich known sessions
 - **Process discovery** — match active agents via `ps`/`lsof`
 - **DMG packaging** — signing, notarization, GitHub Actions release workflow
 - **Auto-update** — Sparkle-based automatic updates with appcast
