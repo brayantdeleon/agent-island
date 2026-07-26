@@ -45,9 +45,7 @@ a signed but non-notarized build.
      "output/package/Agent-Island.zip"
    ```
    Copy the `sparkle:edSignature` and `length` values for the appcast entry.
-4. **Update `appcast.xml`** in the repo root — add a new `<item>` entry with the version, download URL, EdDSA signature, and length. See the "Sparkle Appcast" section below.
-5. **Commit and push** the updated `appcast.xml` to `main`.
-6. **Create the release**:
+4. **Create and publish the release**:
    ```bash
    gh release create v<version> \
      "output/package/Agent-Island.dmg#Agent-Island.dmg" \
@@ -56,7 +54,12 @@ a signed but non-notarized build.
      --title "Agent-Island v<version> — <Title>" \
      --notes-file release-notes.md
    ```
-7. **Verify**: open the release page and confirm assets are downloadable.
+5. **Verify the release asset**: open the release page and confirm
+   `Agent-Island.zip` is publicly downloadable.
+6. **Update `appcast.xml`** in the repo root — add a new `<item>` entry with
+   the version, download URL, EdDSA signature, and length. See the "Sparkle
+   Appcast" section below.
+7. **Commit and push** the updated `appcast.xml` to `main`.
 
 ## Release Notes Format
 
@@ -127,7 +130,7 @@ Every release ships two artifacts:
 The file `appcast.xml` in the repo root is the Sparkle update feed. It is served via GitHub raw content at:
 
 ```
-https://raw.githubusercontent.com/Octane0411/agent-island/main/appcast.xml
+https://raw.githubusercontent.com/brayantdeleon/agent-island/main/appcast.xml
 ```
 
 Each release needs a new `<item>` entry. Template:
@@ -140,13 +143,17 @@ Each release needs a new `<item>` entry. Template:
     <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
     <pubDate>Thu, 06 Apr 2026 00:00:00 +0000</pubDate>
     <enclosure
-        url="https://github.com/Octane0411/agent-island/releases/download/vX.Y.Z/Agent-Island.zip"
+        url="https://github.com/brayantdeleon/agent-island/releases/download/vX.Y.Z/Agent-Island.zip"
         type="application/octet-stream"
         sparkle:edSignature="PASTE_SIGNATURE_HERE"
         length="PASTE_LENGTH_HERE"
     />
 </item>
 ```
+
+Never merge an appcast entry before its GitHub release is published and its
+`Agent-Island.zip` asset is publicly downloadable. The automated release
+workflow opens an appcast PR but intentionally leaves it for this verification.
 
 ### EdDSA Key Setup (one-time)
 
