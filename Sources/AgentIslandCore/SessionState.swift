@@ -56,7 +56,11 @@ public struct SessionState: Equatable, Sendable {
     public mutating func apply(_ event: AgentEvent) {
         switch event {
         case let .sessionStarted(payload):
-            let preservedFirstSeenAt = sessionsByID[payload.sessionID]?.firstSeenAt
+            let existingSession = sessionsByID[payload.sessionID]
+            let preservedFirstSeenAt = existingSession?.firstSeenAt
+            let preservedRunStartedAt = existingSession?.phase == .completed
+                ? nil
+                : existingSession?.runStartedAt
             var session = AgentSession(
                 id: payload.sessionID,
                 title: payload.title,
@@ -67,6 +71,7 @@ public struct SessionState: Equatable, Sendable {
                 summary: payload.summary,
                 updatedAt: payload.timestamp,
                 firstSeenAt: preservedFirstSeenAt,
+                runStartedAt: preservedRunStartedAt,
                 jumpTarget: payload.jumpTarget,
                 codexMetadata: payload.codexMetadata?.isEmpty == true ? nil : payload.codexMetadata,
                 claudeMetadata: payload.claudeMetadata?.isEmpty == true ? nil : payload.claudeMetadata,
@@ -104,6 +109,7 @@ public struct SessionState: Equatable, Sendable {
                 return
             }
 
+            let wasCompleted = session.phase == .completed
             let keepsPendingApproval = session.phase == .waitingForApproval
                 && session.permissionRequest != nil
             let keepsPendingQuestion = session.phase == .waitingForAnswer
@@ -111,6 +117,9 @@ public struct SessionState: Equatable, Sendable {
             let preservesActionableState = keepsPendingApproval || keepsPendingQuestion
 
             if !preservesActionableState {
+                if wasCompleted && payload.phase != .completed {
+                    session.runStartedAt = payload.timestamp
+                }
                 session.phase = payload.phase
                 session.summary = payload.summary
                 if payload.phase != .waitingForApproval {
@@ -129,6 +138,9 @@ public struct SessionState: Equatable, Sendable {
                 return
             }
 
+            if session.phase == .completed {
+                session.runStartedAt = payload.timestamp
+            }
             session.phase = .waitingForApproval
             session.summary = payload.request.summary
             session.permissionRequest = payload.request
@@ -141,6 +153,9 @@ public struct SessionState: Equatable, Sendable {
                 return
             }
 
+            if session.phase == .completed {
+                session.runStartedAt = payload.timestamp
+            }
             session.phase = .waitingForAnswer
             session.summary = payload.prompt.title
             session.questionPrompt = payload.prompt

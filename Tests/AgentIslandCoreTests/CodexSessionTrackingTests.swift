@@ -23,6 +23,7 @@ struct CodexSessionTrackingTests {
                 summary: "Inspecting rollout watcher.",
                 phase: .running,
                 updatedAt: Date(timeIntervalSince1970: 1_000),
+                runStartedAt: Date(timeIntervalSince1970: 900),
                 jumpTarget: JumpTarget(
                     terminalApp: "Ghostty",
                     workspaceName: "agent-island",
@@ -48,6 +49,7 @@ struct CodexSessionTrackingTests {
         #expect(reloaded.first?.session.codexMetadata?.lastUserPrompt == "Check the rollout watcher state.")
         #expect(reloaded.first?.session.origin == .live)
         #expect(reloaded.first?.session.attachmentState == .attached)
+        #expect(reloaded.first?.session.runStartedAt == Date(timeIntervalSince1970: 900))
     }
 
     @Test

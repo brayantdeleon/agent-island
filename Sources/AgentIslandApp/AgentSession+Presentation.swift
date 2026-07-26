@@ -37,6 +37,10 @@ extension AgentSession {
         updatedAt
     }
 
+    var spotlightTimerStartDate: Date {
+        phase == .completed ? updatedAt : runStartedAt
+    }
+
     /// Completed conversations remain in the expanded island for one hour,
     /// independent of process/attachment reconciliation. Non-completed rows
     /// retain the stricter live visibility rules so restored stale sessions do
@@ -369,7 +373,11 @@ extension AgentSession {
     }
 
     var spotlightAgeBadge: String {
-        let age = max(0, Int(Date.now.timeIntervalSince(islandActivityDate)))
+        spotlightAgeBadge(at: .now)
+    }
+
+    func spotlightAgeBadge(at referenceDate: Date) -> String {
+        let age = max(0, Int(referenceDate.timeIntervalSince(spotlightTimerStartDate)))
 
         if age < 60 {
             return "<1m"

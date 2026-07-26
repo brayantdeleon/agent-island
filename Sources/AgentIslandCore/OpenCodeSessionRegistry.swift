@@ -8,6 +8,7 @@ public struct OpenCodeTrackedSessionRecord: Equatable, Codable, Sendable {
     public var summary: String
     public var phase: SessionPhase
     public var updatedAt: Date
+    public var runStartedAt: Date?
     public var jumpTarget: JumpTarget?
     public var openCodeMetadata: OpenCodeSessionMetadata?
 
@@ -19,6 +20,7 @@ public struct OpenCodeTrackedSessionRecord: Equatable, Codable, Sendable {
         summary: String,
         phase: SessionPhase,
         updatedAt: Date,
+        runStartedAt: Date? = nil,
         jumpTarget: JumpTarget? = nil,
         openCodeMetadata: OpenCodeSessionMetadata? = nil
     ) {
@@ -29,6 +31,7 @@ public struct OpenCodeTrackedSessionRecord: Equatable, Codable, Sendable {
         self.summary = summary
         self.phase = phase
         self.updatedAt = updatedAt
+        self.runStartedAt = runStartedAt
         self.jumpTarget = jumpTarget
         self.openCodeMetadata = openCodeMetadata
     }
@@ -42,6 +45,7 @@ public struct OpenCodeTrackedSessionRecord: Equatable, Codable, Sendable {
             summary: session.summary,
             phase: session.phase,
             updatedAt: session.updatedAt,
+            runStartedAt: session.runStartedAt,
             jumpTarget: session.jumpTarget,
             openCodeMetadata: session.openCodeMetadata
         )
@@ -57,6 +61,7 @@ public struct OpenCodeTrackedSessionRecord: Equatable, Codable, Sendable {
             phase: phase,
             summary: summary,
             updatedAt: updatedAt,
+            runStartedAt: runStartedAt,
             jumpTarget: jumpTarget,
             openCodeMetadata: openCodeMetadata
         )
@@ -76,6 +81,7 @@ public struct OpenCodeTrackedSessionRecord: Equatable, Codable, Sendable {
         case summary
         case phase
         case updatedAt
+        case runStartedAt
         case jumpTarget
         case openCodeMetadata
     }
@@ -89,6 +95,7 @@ public struct OpenCodeTrackedSessionRecord: Equatable, Codable, Sendable {
         summary = try container.decode(String.self, forKey: .summary)
         phase = try container.decode(SessionPhase.self, forKey: .phase)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        runStartedAt = try container.decodeIfPresent(Date.self, forKey: .runStartedAt)
         jumpTarget = try container.decodeIfPresent(JumpTarget.self, forKey: .jumpTarget)
         openCodeMetadata = try container.decodeIfPresent(OpenCodeSessionMetadata.self, forKey: .openCodeMetadata)
     }
@@ -102,6 +109,7 @@ public struct OpenCodeTrackedSessionRecord: Equatable, Codable, Sendable {
         try container.encode(summary, forKey: .summary)
         try container.encode(phase, forKey: .phase)
         try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encodeIfPresent(runStartedAt, forKey: .runStartedAt)
         try container.encodeIfPresent(jumpTarget, forKey: .jumpTarget)
         try container.encodeIfPresent(openCodeMetadata, forKey: .openCodeMetadata)
     }
