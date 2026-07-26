@@ -691,6 +691,15 @@ public extension ClaudeHookPayload {
         "Claude · \(workspaceName)"
     }
 
+    /// Claude Desktop starts its saved local-agent tabs with `claude --resume`
+    /// whenever the host app launches. That hook reports host restoration, not
+    /// fresh user or agent activity.
+    var isPassiveClaudeDesktopResume: Bool {
+        hookEventName == .sessionStart
+            && source == .resume
+            && terminalApp == "Claude.app"
+    }
+
     var defaultJumpTarget: JumpTarget {
         JumpTarget(
             terminalApp: terminalApp ?? "Unknown",

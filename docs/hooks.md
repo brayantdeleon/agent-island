@@ -204,7 +204,9 @@ All other Codex events require no stdout response.
 
 Claude hook events are authoritative for conversation identity and lifecycle:
 
-- `SessionStart` establishes or restores a live session.
+- `SessionStart` establishes or restores a live session, except for a passive
+  `resume` emitted when Claude Desktop reopens saved local-agent tabs. AgentIsland
+  waits for the first prompt or agent-activity hook before creating those sessions.
 - `Stop` completes one turn; it does not mean that the conversation ended.
 - `SessionEnd` is the per-conversation end signal.
 - Process absence is runtime availability evidence only. After consecutive misses it can settle a running turn, but it does not synthesize `SessionEnd`.

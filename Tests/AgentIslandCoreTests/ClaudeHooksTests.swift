@@ -374,6 +374,69 @@ struct ClaudeHooksTests {
     }
 
     @Test
+    func claudeDesktopPassiveResumeDoesNotCreateSessionButPromptStillDoes() async throws {
+        let socketURL = BridgeSocketLocation.uniqueTestURL()
+        let server = BridgeServer(socketURL: socketURL)
+        try server.start()
+        defer { server.stop() }
+
+        let observer = LocalBridgeClient(socketURL: socketURL)
+        let stream = try observer.connect()
+        defer { observer.disconnect() }
+        try await observer.send(.registerClient(role: .observer))
+
+        let sessionID = "claude-desktop-passive-resume"
+        let resumeResponse = try BridgeCommandClient(socketURL: socketURL).send(
+            .processClaudeHook(
+                ClaudeHookPayload(
+                    cwd: "/tmp/worktree",
+                    hookEventName: .sessionStart,
+                    sessionID: sessionID,
+                    transcriptPath: "/tmp/claude-desktop-passive-resume.jsonl",
+                    source: .resume,
+                    terminalApp: "Claude.app"
+                )
+            )
+        )
+        #expect(resumeResponse == .acknowledged)
+
+        let promptResponse = try BridgeCommandClient(socketURL: socketURL).send(
+            .processClaudeHook(
+                ClaudeHookPayload(
+                    cwd: "/tmp/worktree",
+                    hookEventName: .userPromptSubmit,
+                    sessionID: sessionID,
+                    transcriptPath: "/tmp/claude-desktop-passive-resume.jsonl",
+                    prompt: "Continue the implementation.",
+                    terminalApp: "Claude.app"
+                )
+            )
+        )
+        #expect(promptResponse == .acknowledged)
+
+        var iterator = stream.makeAsyncIterator()
+        let firstEvent = try await nextEvent(from: &iterator)
+        guard case let .sessionStarted(started) = firstEvent else {
+            Issue.record("Expected the first real prompt to create the Claude Desktop session")
+            return
+        }
+
+        #expect(started.sessionID == sessionID)
+        #expect(started.summary == "Claude Code received a new prompt in worktree.")
+        #expect(started.claudeMetadata?.initialUserPrompt == "Continue the implementation.")
+
+        let runningEvent = try await nextMatchingEvent(from: &iterator, maxEvents: 4) { event in
+            if case let .activityUpdated(activity) = event {
+                return activity.sessionID == sessionID && activity.phase == .running
+            }
+            return false
+        }
+        if case let .activityUpdated(activity) = runningEvent {
+            #expect(activity.summary == "Prompt: Continue the implementation.")
+        }
+    }
+
+    @Test
     func claudePermissionRequestReturnsAllowDirectiveAfterApproval() async throws {
         let socketURL = BridgeSocketLocation.uniqueTestURL()
         let server = BridgeServer(socketURL: socketURL)

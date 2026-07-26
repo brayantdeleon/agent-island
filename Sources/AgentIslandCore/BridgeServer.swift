@@ -627,6 +627,16 @@ public final class BridgeServer: @unchecked Sendable {
             return
         }
 
+        // Reopening Claude Desktop restores every saved local-agent tab with
+        // `claude --resume`. SessionStart alone is not evidence of current
+        // activity, so wait for a prompt, tool, permission, or other real hook
+        // before creating the island session. Explicit terminal resumes keep
+        // their existing SessionStart behavior.
+        if payload.isPassiveClaudeDesktopResume {
+            send(.response(.acknowledged), to: clientID)
+            return
+        }
+
         // On every event from the parent session, opportunistically clean up
         // subagents whose SubagentStop was never received.
         cleanUpStaleSubagents(forSession: payload.sessionID)
