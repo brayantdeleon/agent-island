@@ -1356,6 +1356,119 @@ struct SessionStateTests {
         #expect(!stopCommands.contains(where: { $0.contains("OpenIslandHooks") }))
     }
 
+    /// Commit 143ead8 added this migration for Codex but not Claude, so a
+    /// machine upgraded from the project's former name ended up with both
+    /// OpenIslandHooks and AgentIslandHooks registered for all 14 Claude
+    /// events. The legacy binary targets a socket the current BridgeServer
+    /// does not bind, so it fails open — but it still runs on every event.
+    @Test
+    func claudeHookInstallerMigratesDuplicateOpenIslandHooks() throws {
+        let existing = """
+        {
+          "hooks": {
+            "PermissionRequest": [
+              {
+                "matcher": "*",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks' --source claude",
+                    "timeout": 86400
+                  }
+                ]
+              },
+              {
+                "matcher": "*",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "'/Users/test/Library/Application Support/AgentIsland/bin/AgentIslandHooks' --source claude",
+                    "timeout": 86400
+                  }
+                ]
+              }
+            ],
+            "Stop": [
+              {
+                "matcher": "*",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks' --source claude"
+                  },
+                  {
+                    "type": "command",
+                    "command": "/usr/bin/true"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)
+
+        let replacement = "'/Users/test/Library/Application Support/AgentIsland/bin/AgentIslandHooks' --source claude"
+        let mutation = try ClaudeHookInstaller.installSettingsJSON(
+            existingData: existing,
+            hookCommand: replacement
+        )
+
+        let root = try jsonObject(from: mutation.contents)
+        let hooks = root["hooks"] as? [String: Any]
+        func commands(for event: String) -> [String] {
+            (hooks?[event] as? [[String: Any]])?
+                .compactMap { $0["hooks"] as? [[String: Any]] }
+                .flatMap { $0 }
+                .compactMap { $0["command"] as? String } ?? []
+        }
+
+        #expect(commands(for: "PermissionRequest") == [replacement])
+        #expect(commands(for: "Stop").filter { $0 == replacement }.count == 1)
+        #expect(commands(for: "Stop").contains("/usr/bin/true"))
+
+        let allCommands = (hooks ?? [:]).keys.flatMap { commands(for: $0) }
+        #expect(!allCommands.contains(where: { $0.contains("OpenIslandHooks") }))
+    }
+
+    /// The `--source claude` qualifier keeps the Claude installer from
+    /// vandalising a sibling agent's registration that happens to share the
+    /// settings file.
+    @Test
+    func claudeHookInstallerKeepsOpenIslandHooksForOtherSources() throws {
+        let existing = """
+        {
+          "hooks": {
+            "Stop": [
+              {
+                "matcher": "*",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks' --source gemini"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)
+
+        let replacement = "'/Users/test/Library/Application Support/AgentIsland/bin/AgentIslandHooks' --source claude"
+        let mutation = try ClaudeHookInstaller.installSettingsJSON(
+            existingData: existing,
+            hookCommand: replacement
+        )
+
+        let root = try jsonObject(from: mutation.contents)
+        let stopCommands = ((root["hooks"] as? [String: Any])?["Stop"] as? [[String: Any]])?
+            .compactMap { $0["hooks"] as? [[String: Any]] }
+            .flatMap { $0 }
+            .compactMap { $0["command"] as? String } ?? []
+
+        #expect(stopCommands.contains(where: { $0.contains("--source gemini") }))
+        #expect(stopCommands.contains(replacement))
+    }
+
     @Test
     func codexHookInstallerUninstallRemovesOnlyManagedHooks() throws {
         let existing = """

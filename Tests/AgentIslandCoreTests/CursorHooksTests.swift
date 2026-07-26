@@ -121,6 +121,39 @@ struct CursorHooksTests {
     }
 
     @Test
+    func cursorHookInstallerReplacesLegacyOpenIslandHooks() throws {
+        let existing = """
+        {
+            "version": 1,
+            "hooks": {
+                "beforeShellExecution": [
+                    {
+                        "command": "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks' --source cursor"
+                    },
+                    { "command": "/usr/local/bin/my-custom-hook" }
+                ]
+            }
+        }
+        """.data(using: .utf8)!
+        let replacement = "/usr/local/bin/AgentIslandHooks --source cursor"
+
+        let mutation = try CursorHookInstaller.installHooksJSON(
+            existingData: existing,
+            hookCommand: replacement
+        )
+
+        let data = try #require(mutation.contents)
+        let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let hooks = object["hooks"] as! [String: Any]
+        let shellEntries = hooks["beforeShellExecution"] as! [[String: Any]]
+        let commands = shellEntries.compactMap { $0["command"] as? String }
+
+        #expect(!commands.contains { $0.contains("OpenIslandHooks") })
+        #expect(commands.filter { $0 == replacement }.count == 1)
+        #expect(commands.contains("/usr/local/bin/my-custom-hook"))
+    }
+
+    @Test
     func cursorHookInstallerUninstallsCleanly() throws {
         let installed = try CursorHookInstaller.installHooksJSON(
             existingData: nil,

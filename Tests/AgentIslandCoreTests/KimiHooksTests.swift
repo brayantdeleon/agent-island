@@ -48,6 +48,33 @@ struct KimiHooksTests {
     }
 
     @Test
+    func installReplacesLegacyOpenIslandHooks() {
+        let existing = """
+        [[hooks]]
+        event = "SessionStart"
+        command = "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks' --source kimi"
+
+        [[hooks]]
+        event = "PostToolUse"
+        command = "user-hook"
+
+        """
+        let replacement = KimiHookInstaller.hookCommand(
+            for: "/opt/agent-island/AgentIslandHooks"
+        )
+
+        let mutation = KimiHookInstaller.installConfigTOML(
+            existingContents: existing,
+            hookCommand: replacement
+        )
+
+        let contents = try! #require(mutation.contents)
+        #expect(!contents.contains("OpenIslandHooks"))
+        #expect(contents.contains("command = \"user-hook\""))
+        #expect(contents.contains("--source kimi"))
+    }
+
+    @Test
     func installRemovesEmptyTopLevelHooksArrayPlaceholder() {
         let userToml = """
         default_model = "kimi-code/kimi-for-coding"
