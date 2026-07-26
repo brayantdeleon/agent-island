@@ -7,6 +7,23 @@ Agent-Island — native macOS companion for AI coding agents. Sits in the notch 
 - **Target product** (closed-source baseline): https://vibeisland.app/
 - **OSS reference** (design ideas only, not a spec): https://github.com/farouqaldori/claude-island
 
+### Provenance
+
+This repo is **standalone** — `brayantdeleon/agent-island`, not a fork. It began as a fork of
+`Octane0411/open-vibe-island` and was detached from the fork network; there is no upstream
+remote and no syncing back. `origin` is the only remote.
+
+Consequences worth not re-litigating:
+
+- Every GitHub URL — appcast feed, `SUFeedURL` baked in by `scripts/package-app.sh`, release
+  links, issue links — must name `brayantdeleon/agent-island`. Pointing any of them at a repo
+  that doesn't exist silently breaks the in-app Sparkle updater.
+- **Homebrew distribution was removed deliberately.** There is no tap. Don't re-add a tap step
+  to `release.yml` or a `brew install` line to the READMEs without one existing first. GitHub
+  Releases is the supported install path.
+- `design/**/chats/*.md` are verbatim transcripts of past design sessions and still quote old
+  upstream URLs. That's intentional — leave them as written.
+
 ## Architecture
 
 One Swift package (`AgentIsland`), four targets:

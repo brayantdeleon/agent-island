@@ -1243,7 +1243,7 @@ struct AppModelSessionListTests {
     }
 
     @Test
-    func mergeDiscoveredClaudeSessionsPreservesRegistryJumpTargetAndAddsTranscriptMetadata() {
+    func trackedClaudeTranscriptMergeEnrichesKnownSessionAndIgnoresOrdinaryChat() {
         let now = Date(timeIntervalSince1970: 2_000)
         let model = AppModel()
         model.state = SessionState(
@@ -1269,7 +1269,7 @@ struct AppModelSessionListTests {
             ]
         )
 
-        let merged = model.discovery.mergeDiscoveredSessions([
+        let merged = model.discovery.mergeTrackedClaudeTranscriptSessions([
             AgentSession(
                 id: "claude-session",
                 title: "Claude · agent-island",
@@ -1291,9 +1291,30 @@ struct AppModelSessionListTests {
                     currentTool: "Task"
                 )
             ),
+            AgentSession(
+                id: "ordinary-chat",
+                title: "Claude · agent-island",
+                tool: .claudeCode,
+                origin: .live,
+                attachmentState: .stale,
+                phase: .completed,
+                summary: "A regular Claude chat",
+                updatedAt: now,
+                jumpTarget: JumpTarget(
+                    terminalApp: "Unknown",
+                    workspaceName: "agent-island",
+                    paneTitle: "Claude ordinary",
+                    workingDirectory: "/tmp/agent-island"
+                ),
+                claudeMetadata: ClaudeSessionMetadata(
+                    transcriptPath: "/tmp/ordinary-chat.jsonl",
+                    lastUserPrompt: "This is not a live Claude Code session."
+                )
+            ),
         ])
 
         #expect(merged.count == 1)
+        #expect(merged.first?.id == "claude-session")
         #expect(merged.first?.jumpTarget?.terminalApp == "Ghostty")
         #expect(merged.first?.jumpTarget?.terminalSessionID == "ghostty-claude")
         #expect(merged.first?.claudeMetadata?.transcriptPath == "/tmp/claude.jsonl")
@@ -1873,7 +1894,7 @@ struct AppModelSessionListTests {
     }
 
     @Test
-    func recoveredSessionMatchesLiveGhosttyProcessByCWDWhenMultipleCandidatesExist() {
+    func ambiguousRecoveredSessionsDoNotClaimLiveProcessByCWD() {
         let now = Date(timeIntervalSince1970: 2_000)
         let model = AppModel()
         let recoveredSessions = [
@@ -1926,10 +1947,11 @@ struct AppModelSessionListTests {
             now: now
         )
 
-        // With relaxed CWD matching, recovered session matches the process
-        // so no synthetic session is created.
-        #expect(merged.count == 2)
-        #expect(merged.allSatisfy { !$0.id.hasPrefix("claude-process:") })
+        // A shared working directory cannot identify which conversation owns
+        // the process. Keep both recovered rows untouched and represent the
+        // otherwise-unclaimed terminal process separately.
+        #expect(merged.count == 3)
+        #expect(merged.filter { $0.id.hasPrefix("claude-process:") }.count == 1)
 
         let probe = TerminalSessionAttachmentProbe()
         let resolutions = probe.sessionResolutions(
@@ -1951,7 +1973,7 @@ struct AppModelSessionListTests {
         )
 
         let claudeSessions = model.state.sessions.filter { $0.tool == .claudeCode }
-        #expect(claudeSessions.count == 2)
+        #expect(claudeSessions.count == 3)
     }
 
     private func listSession(id: String, phase: SessionPhase, updatedAt: Date) -> AgentSession {

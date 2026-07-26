@@ -33,7 +33,7 @@ If you run into a problem, copy the prompt below into your code agent (Claude Co
 <summary>Click to expand the prompt</summary>
 
 ```
-I'm having an issue with Agent-Island (https://github.com/Octane0411/agent-island).
+I'm having an issue with Agent-Island (https://github.com/brayantdeleon/agent-island).
 
 Please help me file a GitHub issue. Do the following:
 
@@ -54,7 +54,7 @@ Please help me file a GitHub issue. Do the following:
    - Body with sections: **Environment**, **Description**, **Steps to Reproduce**, **Expected vs Actual Behavior**
    - Add label "bug" if applicable
 
-Repository: Octane0411/agent-island
+Repository: brayantdeleon/agent-island
 ```
 
 </details>
@@ -67,7 +67,7 @@ Have an idea? Let your agent draft the proposal for you.
 <summary>Click to expand the prompt</summary>
 
 ```
-I'd like to request a feature for Agent-Island (https://github.com/Octane0411/agent-island).
+I'd like to request a feature for Agent-Island (https://github.com/brayantdeleon/agent-island).
 
 Please help me file a GitHub issue. Do the following:
 
@@ -81,7 +81,7 @@ Please help me file a GitHub issue. Do the following:
    - Body with sections: **Feature Description**, **Motivation**, **Proposed Behavior**
    - Add label "enhancement" if applicable
 
-Repository: Octane0411/agent-island
+Repository: brayantdeleon/agent-island
 ```
 
 </details>

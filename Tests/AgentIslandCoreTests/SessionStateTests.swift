@@ -136,13 +136,8 @@ struct SessionStateTests {
         #expect(state.activeActionableSession?.permissionRequest == nil)
     }
 
-    /// Contract that the Claude Desktop fix (#510) relies on: a hook-managed
-    /// Claude session stays visible for as long as its ID is reported in
-    /// `aliveSessionIDs`, and is only evicted after two consecutive polls
-    /// where it is absent. ProcessMonitoringCoordinator keeps Claude Desktop
-    /// session IDs in that set while Claude.app is running (the desktop
-    /// subprocess is TTY-less and invisible to ps/lsof discovery), so they no
-    /// longer vanish ~6s after appearing.
+    /// Runtime absence settles the active turn but does not invent a
+    /// SessionEnd for a hook-managed Claude conversation.
     @Test
     func hookManagedClaudeSessionLivenessFollowsReportedAliveSet() {
         var session = AgentSession(
@@ -163,15 +158,55 @@ struct SessionStateTests {
         #expect(state.session(id: "desktop-1")?.isSessionEnded == false)
         #expect(state.session(id: "desktop-1")?.isVisibleInIsland == true)
 
-        // First miss (e.g. Claude.app just quit): debounced, not yet evicted.
+        // First miss is debounced.
         state.markProcessLiveness(aliveSessionIDs: [])
         #expect(state.session(id: "desktop-1")?.isSessionEnded == false)
         #expect(state.session(id: "desktop-1")?.isVisibleInIsland == true)
 
-        // Second consecutive miss: session ends and leaves the island.
+        // Second miss marks the runtime unavailable and settles the turn, but
+        // the hook lifecycle remains open until SessionEnd.
         state.markProcessLiveness(aliveSessionIDs: [])
-        #expect(state.session(id: "desktop-1")?.isSessionEnded == true)
-        #expect(state.session(id: "desktop-1")?.isVisibleInIsland == false)
+        #expect(state.session(id: "desktop-1")?.isSessionEnded == false)
+        #expect(state.session(id: "desktop-1")?.isProcessAlive == false)
+        #expect(state.session(id: "desktop-1")?.phase == .completed)
+        #expect(state.session(id: "desktop-1")?.isVisibleInIsland == true)
+    }
+
+    @Test
+    func inactiveClaudeCacheEvictionDoesNotRequireSessionEnd() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        var oldClaude = AgentSession(
+            id: "old-claude",
+            title: "Old Claude",
+            tool: .claudeCode,
+            phase: .completed,
+            summary: "Idle",
+            updatedAt: now.addingTimeInterval(-86_401)
+        )
+        oldClaude.isHookManaged = true
+
+        var recentClaude = oldClaude
+        recentClaude.id = "recent-claude"
+        recentClaude.updatedAt = now.addingTimeInterval(-86_399)
+
+        let oldCodex = AgentSession(
+            id: "old-codex",
+            title: "Old Codex",
+            tool: .codex,
+            phase: .completed,
+            summary: "Done",
+            updatedAt: now.addingTimeInterval(-200_000)
+        )
+
+        var state = SessionState(sessions: [oldClaude, recentClaude, oldCodex])
+        let changed = state.removeInactiveClaudeSessions(
+            lastActivityBefore: now.addingTimeInterval(-86_400)
+        )
+
+        #expect(changed)
+        #expect(state.session(id: "old-claude") == nil)
+        #expect(state.session(id: "recent-claude") != nil)
+        #expect(state.session(id: "old-codex") != nil)
     }
 
     @Test
