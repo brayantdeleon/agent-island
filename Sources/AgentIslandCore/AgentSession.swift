@@ -545,6 +545,15 @@ public extension AgentSession {
         tool == .codex && !isDemoSession
     }
 
+    /// Claude Code running inside Claude.app ("local agent mode").
+    ///
+    /// Hooks stamp this runtime surface on the jump target. The desktop host
+    /// cannot identify an individual conversation, so this tag — together
+    /// with the hook session ID — remains the authoritative classification.
+    var isClaudeDesktopSession: Bool {
+        tool == .claudeCode && jumpTarget?.terminalApp == "Claude.app"
+    }
+
     var isAttachedToTerminal: Bool {
         attachmentState.isLive
     }

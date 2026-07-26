@@ -291,4 +291,75 @@ struct ActiveAgentProcessDiscoveryTests {
         #expect(openCodeSnapshots.first?.workingDirectory == "/tmp/agent-island")
         #expect(openCodeSnapshots.first?.terminalTTY == nil)
     }
+
+    private static let claudeDesktopProcesses = """
+      13866 76267 ?? /Applications/Claude.app/Contents/Helpers/disclaimer /Users/test/Library/Application Support/Claude/claude-code/2.1.219/claude.app/Contents/MacOS/claude --output-format stream-json
+      13867 13866 ?? /Users/test/Library/Application Support/Claude/claude-code/2.1.219/claude.app/Contents/MacOS/claude --output-format stream-json
+      76267 1 ?? /Applications/Claude.app/Contents/MacOS/Claude
+    """
+
+    @Test
+    func discoverClassifiesTTYLessClaudeDesktopWorkerAsHostOnlyEvidence() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, arguments in
+            if executablePath == "/bin/ps" {
+                return Self.claudeDesktopProcesses
+            }
+            guard executablePath == "/usr/sbin/lsof",
+                  arguments.dropFirst(2).first == "13867" else {
+                return nil
+            }
+            return """
+            fcwd
+            n/tmp/agent-island
+            """
+        }
+
+        let snapshots = discovery.discover()
+
+        #expect(snapshots.count == 1)
+        #expect(snapshots.first?.tool == .claudeCode)
+        #expect(snapshots.first?.workingDirectory == "/tmp/agent-island")
+        #expect(snapshots.first?.terminalTTY == nil)
+        #expect(snapshots.first?.terminalApp == "Claude.app")
+        #expect(snapshots.first?.sessionID == nil)
+        #expect(snapshots.first?.transcriptPath == nil)
+        #expect(snapshots.first?.evidenceScope == .desktopHost)
+    }
+
+    @Test
+    func discoverSuppressesClaudeDesktopDisclaimerWrapper() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, arguments in
+            if executablePath == "/bin/ps" {
+                return Self.claudeDesktopProcesses
+            }
+            guard executablePath == "/usr/sbin/lsof",
+                  let pid = arguments.dropFirst(2).first else {
+                return nil
+            }
+            if pid != "13867" {
+                Issue.record("unexpected lsof lookup for pid \(pid)")
+            }
+            return """
+            fcwd
+            n/tmp/\(pid)
+            """
+        }
+
+        let snapshots = discovery.discover()
+
+        #expect(snapshots.count == 1)
+        #expect(snapshots.first?.workingDirectory == "/tmp/13867")
+    }
+
+    @Test
+    func discoverStillSkipsTTYLessHeadlessClaudeCLI() {
+        let discovery = ActiveAgentProcessDiscovery { executablePath, _ in
+            if executablePath == "/bin/ps" {
+                return "101 1 ?? /Users/test/.local/bin/claude -p hello"
+            }
+            return nil
+        }
+
+        #expect(discovery.discover().isEmpty)
+    }
 }
