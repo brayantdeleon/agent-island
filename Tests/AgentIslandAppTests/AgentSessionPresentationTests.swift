@@ -563,4 +563,64 @@ struct AgentSessionPresentationTests {
         codex.phase = .completed
         #expect(codex.spotlightActiveTitleColorHex == nil)
     }
+
+    private func completedSession(id: String, updatedAt: Date, phase: SessionPhase = .completed) -> AgentSession {
+        AgentSession(
+            id: id,
+            title: "Claude · repo",
+            tool: .claudeCode,
+            attachmentState: .stale,
+            phase: phase,
+            summary: "Completed the turn",
+            updatedAt: updatedAt
+        )
+    }
+
+    @Test
+    func idleForIslandMatchesStaleCompletedAtDefaultThreshold() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let session = completedSession(id: "s", updatedAt: now.addingTimeInterval(-360))
+
+        #expect(session.isIdleForIsland(at: now, completedStaleThreshold: 5 * 60))
+        #expect(!session.isJustDoneForIsland(at: now, completedStaleThreshold: 5 * 60))
+    }
+
+    /// `islandPresence` flips to `.inactive` at a fixed 20 minutes. Folding
+    /// that into the idle predicate — as the island header used to — overrides
+    /// a user who explicitly chose "Never" for the Done timeout.
+    @Test
+    func idleForIslandIgnoresTwentyMinutePresenceWhenThresholdIsNever() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        let session = completedSession(id: "s", updatedAt: now.addingTimeInterval(-24 * 3_600))
+
+        #expect(session.islandPresence(at: now) == .inactive)
+        #expect(!session.isIdleForIsland(at: now, completedStaleThreshold: .infinity))
+        #expect(session.isJustDoneForIsland(at: now, completedStaleThreshold: .infinity))
+    }
+
+    @Test
+    func idleForIslandIsFalseForNonCompletedPhases() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        let running = completedSession(id: "s", updatedAt: now.addingTimeInterval(-3_600), phase: .running)
+
+        #expect(!running.isIdleForIsland(at: now, completedStaleThreshold: 5 * 60))
+        #expect(!running.isJustDoneForIsland(at: now, completedStaleThreshold: 5 * 60))
+    }
+
+    /// Every completed row belongs to exactly one of the two island buckets,
+    /// so the section headings and the header chips can never disagree.
+    @Test
+    func justDoneAndIdleArePartitionOfCompleted() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        let ages: [TimeInterval] = [-60, -360, -1_260, -7_200]
+
+        for threshold in IslandCompletedStaleThreshold.allCases {
+            for age in ages {
+                let session = completedSession(id: "s", updatedAt: now.addingTimeInterval(age))
+                let idle = session.isIdleForIsland(at: now, completedStaleThreshold: threshold.seconds)
+                let done = session.isJustDoneForIsland(at: now, completedStaleThreshold: threshold.seconds)
+                #expect(idle != done, "age \(age) at \(threshold) landed in \(idle) / \(done)")
+            }
+        }
+    }
 }
