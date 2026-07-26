@@ -299,13 +299,25 @@ public enum ClaudeHookInstaller {
         return isLegacyAgentIslandHookCommand(command)
     }
 
+    /// Recognises hook commands from any Agent-Island lineage — including the
+    /// `OpenIslandHooks` / `open-island-bridge` binaries this project shipped
+    /// under its former name — so installing replaces them instead of stacking
+    /// a second command onto every event.
+    ///
+    /// The `--source claude` qualifier keeps this from touching a sibling
+    /// agent's registration that happens to live in the same settings file.
     private static func isLegacyAgentIslandHookCommand(_ command: String) -> Bool {
         let normalized = command.lowercased()
-        if (normalized.contains("agentislandhooks") || normalized.contains("vibeislandhooks")) && normalized.contains("--source claude") {
+        if (normalized.contains("agentislandhooks")
+            || normalized.contains("openislandhooks")
+            || normalized.contains("vibeislandhooks"))
+            && normalized.contains("--source claude") {
             return true
         }
 
-        return (normalized.contains("agent-island-bridge") || normalized.contains("vibe-island-bridge"))
+        return (normalized.contains("agent-island-bridge")
+            || normalized.contains("open-island-bridge")
+            || normalized.contains("vibe-island-bridge"))
             && normalized.contains("claude")
     }
 

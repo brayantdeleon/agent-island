@@ -49,6 +49,55 @@ struct GeminiHooksTests {
     }
 
     @Test
+    func geminiHookInstallerReplacesLegacyOpenIslandHooks() throws {
+        let existing = """
+        {
+          "hooks": {
+            "SessionStart": [
+              {
+                "matcher": "*",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "'/Users/test/Library/Application Support/OpenIsland/bin/OpenIslandHooks' --source gemini"
+                  }
+                ]
+              },
+              {
+                "matcher": "*",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "/usr/local/bin/my-custom-hook"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)!
+        let replacement = "/usr/local/bin/AgentIslandHooks --source gemini"
+
+        let mutation = try GeminiHookInstaller.installSettingsJSON(
+            existingData: existing,
+            hookCommand: replacement
+        )
+
+        let data = try #require(mutation.contents)
+        let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let hooks = object["hooks"] as! [String: Any]
+        let groups = hooks["SessionStart"] as! [[String: Any]]
+        let commands = groups
+            .compactMap { $0["hooks"] as? [[String: Any]] }
+            .flatMap { $0 }
+            .compactMap { $0["command"] as? String }
+
+        #expect(!commands.contains { $0.contains("OpenIslandHooks") })
+        #expect(commands.filter { $0 == replacement }.count == 1)
+        #expect(commands.contains("/usr/local/bin/my-custom-hook"))
+    }
+
+    @Test
     func geminiNotificationBecomesActivityUpdate() async throws {
         let socketURL = BridgeSocketLocation.uniqueTestURL()
         let server = BridgeServer(socketURL: socketURL)

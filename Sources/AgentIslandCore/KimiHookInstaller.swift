@@ -355,8 +355,10 @@ public enum KimiHookInstaller {
         }
 
         return normalized.contains("agentislandhooks")
+            || normalized.contains("openislandhooks")
             || normalized.contains("vibeislandhooks")
             || normalized.contains("agent-island-bridge")
+            || normalized.contains("open-island-bridge")
             || normalized.contains("vibe-island-bridge")
     }
 
