@@ -45,12 +45,13 @@ Each installer's legacy matcher recognises all of those names, so installing
 it. Every matcher is scoped to its own agent (`--source claude`, `--source
 kimi`, and so on) so one agent's install never disturbs another's.
 
-Existing installs self-heal without a reinstall:
+Existing Claude and Codex installs self-heal without a manual reinstall:
 `HookHealthCheck.findLegacyIslandHookCommands` reports
 `Issue.legacyHooksDetected`, which is `.info` severity but auto-repairable, so
-`repairHooksIfNeeded` on the next launch rewrites the config. Severity matters
-here — an error would leave the UI permanently red for something that still
-works.
+`repairHooksIfNeeded` on the next launch rewrites those configs. Cursor, Gemini,
+and Kimi use the same migration matcher when their hooks are next installed.
+Severity matters here — an error would leave the UI permanently red for
+something that still works.
 
 OpenCode is the exception: it installs a plugin *file*
 (`OpenCodePluginInstallationManager`) rather than a command string, so a legacy
