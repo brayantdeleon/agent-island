@@ -188,7 +188,7 @@ jobs:
             "${{ steps.sparkle_sign.outputs.length }}"
           cat appcast.xml
 
-      - name: Update appcast.xml via PR
+      - name: Open appcast.xml update PR
         if: steps.sparkle_sign.outputs.signed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -208,8 +208,7 @@ jobs:
             --base main \
             --head "$branch" \
             --title "chore: update appcast.xml for v${{ steps.version.outputs.version }}" \
-            --body "Automated appcast.xml update from release workflow."
-          gh pr merge "$branch" --merge --admin --delete-branch
+            --body "Automated appcast.xml update from the release workflow. Publish and verify the GitHub release before merging this PR so Sparkle never advertises an unavailable download."
 
       - name: Create GitHub Release
         env:
