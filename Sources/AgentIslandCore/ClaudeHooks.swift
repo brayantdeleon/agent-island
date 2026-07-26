@@ -691,6 +691,14 @@ public extension ClaudeHookPayload {
         "Claude · \(workspaceName)"
     }
 
+    /// Claude Desktop emits SessionStart while opening or restoring local-agent
+    /// tabs. That hook reports UI/session setup, not fresh user or agent
+    /// activity; subsequent activity hooks establish a real island session.
+    var isClaudeDesktopSessionStart: Bool {
+        hookEventName == .sessionStart
+            && terminalApp == "Claude.app"
+    }
+
     var defaultJumpTarget: JumpTarget {
         JumpTarget(
             terminalApp: terminalApp ?? "Unknown",

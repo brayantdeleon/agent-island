@@ -136,7 +136,9 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
 
 public extension ClaudeTrackedSessionRecord {
     var shouldRestoreToLiveState: Bool {
-        guard origin != .demo, !isSessionEnded else {
+        guard origin != .demo,
+              !isSessionEnded,
+              !isPassiveClaudeDesktopResumePlaceholder else {
             return false
         }
 
@@ -148,6 +150,33 @@ public extension ClaudeTrackedSessionRecord {
             return isHookManaged
         }
         return isHookManaged || terminalApp != "Unknown"
+    }
+
+    /// Compatibility cleanup for rows written before passive Claude Desktop
+    /// resume hooks were filtered by the bridge. Any later prompt or agent
+    /// activity fills at least one lifecycle field and preserves the record.
+    private var isPassiveClaudeDesktopResumePlaceholder: Bool {
+        guard jumpTarget?.terminalApp == "Claude.app",
+              phase == .completed,
+              summary.hasPrefix("Resumed "),
+              claudeMetadata?.startupSource == .resume else {
+            return false
+        }
+
+        let recordedActivity = [
+            claudeMetadata?.initialUserPrompt,
+            claudeMetadata?.lastUserPrompt,
+            claudeMetadata?.lastAssistantMessage,
+            claudeMetadata?.currentTool,
+            claudeMetadata?.currentToolInputPreview,
+        ]
+        let hasNoRecordedTextActivity = recordedActivity.allSatisfy {
+            ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        return hasNoRecordedTextActivity
+            && (claudeMetadata?.activeSubagents.isEmpty ?? true)
+            && (claudeMetadata?.activeTasks.isEmpty ?? true)
     }
 }
 

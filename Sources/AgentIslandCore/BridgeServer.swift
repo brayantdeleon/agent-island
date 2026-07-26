@@ -627,6 +627,17 @@ public final class BridgeServer: @unchecked Sendable {
             return
         }
 
+        // Claude Desktop emits SessionStart both when restoring saved local
+        // agents and when opening chats that launch short-lived helper
+        // sessions. SessionStart alone is not evidence of current activity, so
+        // wait for a prompt, tool, permission, or other real hook before
+        // creating the island session. Terminal Claude sessions keep their
+        // existing SessionStart behavior.
+        if payload.isClaudeDesktopSessionStart {
+            send(.response(.acknowledged), to: clientID)
+            return
+        }
+
         // On every event from the parent session, opportunistically clean up
         // subagents whose SubagentStop was never received.
         cleanUpStaleSubagents(forSession: payload.sessionID)
@@ -1000,6 +1011,17 @@ public final class BridgeServer: @unchecked Sendable {
             send(.response(.acknowledged), to: clientID)
 
         case .sessionEnd:
+            // Opening a Claude Desktop chat can launch an empty helper session
+            // that sends SessionStart followed immediately by SessionEnd. Its
+            // start is intentionally ignored above; do not recreate it here.
+            // A Desktop session with real activity already exists in local
+            // state because every activity hook establishes the session first.
+            if payload.terminalApp == "Claude.app",
+               !hasSession(id: payload.sessionID) {
+                send(.response(.acknowledged), to: clientID)
+                return
+            }
+
             clearStaleClaudeInteractionIfNeeded(for: payload.sessionID)
             ensureClaudeSessionExists(for: payload)
             synchronizeClaudeJumpTarget(for: payload)

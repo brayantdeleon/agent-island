@@ -129,4 +129,59 @@ struct ClaudeSessionRegistryTests {
         #expect(!record.isHookManaged)
         #expect(!record.shouldRestoreToLiveState)
     }
+
+    @Test
+    func passiveClaudeDesktopResumePlaceholderDoesNotRestoreToLiveState() {
+        let record = ClaudeTrackedSessionRecord(
+            sessionID: "claude-desktop-passive-resume",
+            title: "Claude · agent-island",
+            origin: .live,
+            attachmentState: .attached,
+            summary: "Resumed Claude Code session in agent-island.",
+            phase: .completed,
+            updatedAt: .now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Claude.app",
+                workspaceName: "agent-island",
+                paneTitle: "Claude claude-d",
+                workingDirectory: "/tmp/agent-island"
+            ),
+            claudeMetadata: ClaudeSessionMetadata(
+                transcriptPath: "/tmp/claude-desktop-passive-resume.jsonl",
+                startupSource: .resume
+            ),
+            isHookManaged: true
+        )
+
+        #expect(!record.shouldRestoreToLiveState)
+    }
+
+    @Test
+    func activeClaudeDesktopResumeRecordStillRestoresToLiveState() {
+        let record = ClaudeTrackedSessionRecord(
+            sessionID: "claude-desktop-active-resume",
+            title: "Claude · agent-island",
+            origin: .live,
+            attachmentState: .attached,
+            summary: "Implemented the requested change.",
+            phase: .completed,
+            updatedAt: .now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Claude.app",
+                workspaceName: "agent-island",
+                paneTitle: "Claude claude-d",
+                workingDirectory: "/tmp/agent-island"
+            ),
+            claudeMetadata: ClaudeSessionMetadata(
+                transcriptPath: "/tmp/claude-desktop-active-resume.jsonl",
+                initialUserPrompt: "Implement the requested change.",
+                lastUserPrompt: "Implement the requested change.",
+                lastAssistantMessage: "Implemented the requested change.",
+                startupSource: .resume
+            ),
+            isHookManaged: true
+        )
+
+        #expect(record.shouldRestoreToLiveState)
+    }
 }
