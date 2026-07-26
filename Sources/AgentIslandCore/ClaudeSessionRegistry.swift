@@ -11,6 +11,8 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
     public var firstSeenAt: Date?
     public var jumpTarget: JumpTarget?
     public var claudeMetadata: ClaudeSessionMetadata?
+    public var isHookManaged: Bool
+    public var isSessionEnded: Bool
 
     public init(
         sessionID: String,
@@ -22,7 +24,9 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
         updatedAt: Date,
         firstSeenAt: Date? = nil,
         jumpTarget: JumpTarget? = nil,
-        claudeMetadata: ClaudeSessionMetadata? = nil
+        claudeMetadata: ClaudeSessionMetadata? = nil,
+        isHookManaged: Bool = false,
+        isSessionEnded: Bool = false
     ) {
         self.sessionID = sessionID
         self.title = title
@@ -34,6 +38,8 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
         self.firstSeenAt = firstSeenAt
         self.jumpTarget = jumpTarget
         self.claudeMetadata = claudeMetadata
+        self.isHookManaged = isHookManaged
+        self.isSessionEnded = isSessionEnded
     }
 
     public init(session: AgentSession) {
@@ -47,12 +53,14 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
             updatedAt: session.updatedAt,
             firstSeenAt: session.firstSeenAt,
             jumpTarget: session.jumpTarget,
-            claudeMetadata: session.claudeMetadata
+            claudeMetadata: session.claudeMetadata,
+            isHookManaged: session.isHookManaged,
+            isSessionEnded: session.isSessionEnded
         )
     }
 
     public var session: AgentSession {
-        AgentSession(
+        var session = AgentSession(
             id: sessionID,
             title: title,
             tool: .claudeCode,
@@ -65,11 +73,16 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
             jumpTarget: jumpTarget,
             claudeMetadata: claudeMetadata
         )
+        session.isHookManaged = isHookManaged
+        session.isSessionEnded = isSessionEnded
+        return session
     }
 
     public var restorableSession: AgentSession {
         var session = session
         session.attachmentState = .stale
+        session.isProcessAlive = false
+        session.processNotSeenCount = 0
         return session
     }
 
@@ -84,6 +97,8 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
         case firstSeenAt
         case jumpTarget
         case claudeMetadata
+        case isHookManaged
+        case isSessionEnded
     }
 
     public init(from decoder: any Decoder) throws {
@@ -98,6 +113,8 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
         firstSeenAt = try container.decodeIfPresent(Date.self, forKey: .firstSeenAt)
         jumpTarget = try container.decodeIfPresent(JumpTarget.self, forKey: .jumpTarget)
         claudeMetadata = try container.decodeIfPresent(ClaudeSessionMetadata.self, forKey: .claudeMetadata)
+        isHookManaged = try container.decodeIfPresent(Bool.self, forKey: .isHookManaged) ?? false
+        isSessionEnded = try container.decodeIfPresent(Bool.self, forKey: .isSessionEnded) ?? false
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -112,12 +129,25 @@ public struct ClaudeTrackedSessionRecord: Equatable, Codable, Sendable {
         try container.encodeIfPresent(firstSeenAt, forKey: .firstSeenAt)
         try container.encodeIfPresent(jumpTarget, forKey: .jumpTarget)
         try container.encodeIfPresent(claudeMetadata, forKey: .claudeMetadata)
+        try container.encode(isHookManaged, forKey: .isHookManaged)
+        try container.encode(isSessionEnded, forKey: .isSessionEnded)
     }
 }
 
 public extension ClaudeTrackedSessionRecord {
     var shouldRestoreToLiveState: Bool {
-        origin != .demo
+        guard origin != .demo, !isSessionEnded else {
+            return false
+        }
+
+        // Older registries also contain transcript-discovery rows. They were
+        // never proven live and usually carry an "Unknown" runtime surface.
+        // Keep backward compatibility for actual terminal/app records while
+        // pruning those historical-only entries.
+        guard let terminalApp = jumpTarget?.terminalApp else {
+            return isHookManaged
+        }
+        return isHookManaged || terminalApp != "Unknown"
     }
 }
 

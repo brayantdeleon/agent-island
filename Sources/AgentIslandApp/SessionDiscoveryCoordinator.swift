@@ -176,12 +176,20 @@ final class SessionDiscoveryCoordinator {
             onStatusMessage?("Discovered \(payload.discoveredCodexRecords.count) recent Codex session(s) from local rollouts.")
         }
 
-        // Merge discovered Claude sessions.
+        // Claude transcript discovery is metadata enrichment only. A recent
+        // transcript proves that a chat exists, not that it is a live Claude
+        // Code session; regular Claude chats use the same transcript store.
+        // Hooks and persisted hook records establish session identity.
         if !payload.discoveredClaudeSessions.isEmpty {
-            let mergedSessions = mergeDiscoveredSessions(payload.discoveredClaudeSessions)
-            state = SessionState(sessions: mergedSessions)
-            scheduleClaudeSessionPersistence()
-            onStatusMessage?("Discovered \(payload.discoveredClaudeSessions.count) recent Claude session(s) from local transcripts.")
+            let mergedSessions = mergeTrackedClaudeTranscriptSessions(
+                payload.discoveredClaudeSessions
+            )
+            let mergedState = SessionState(sessions: mergedSessions)
+            if mergedState != state {
+                state = mergedState
+                scheduleClaudeSessionPersistence()
+                onStatusMessage?("Refreshed tracked Claude session metadata from local transcripts.")
+            }
         }
 
         // Sync rollout tracking with current sessions.
@@ -204,6 +212,34 @@ final class SessionDiscoveryCoordinator {
         }
 
         return Array(mergedByID.values)
+    }
+
+    /// Enrich only sessions whose identity was already established by a hook
+    /// or persisted hook record. Claude's transcript directory also contains
+    /// ordinary chats, so discovery must never add an unmatched row to live
+    /// session state.
+    func mergeTrackedClaudeTranscriptSessions(
+        _ discoveredSessions: [AgentSession]
+    ) -> [AgentSession] {
+        let trackedSessions = state.sessions
+        let trackedSessionIDs = Set(trackedSessions.map(\.id))
+        let trackedTranscriptPaths = Set(
+            trackedSessions.compactMap(\.claudeMetadata?.transcriptPath)
+        )
+        let matchedSessions = discoveredSessions.filter { discovered in
+            if trackedSessionIDs.contains(discovered.id) {
+                return true
+            }
+            guard let transcriptPath = discovered.claudeMetadata?.transcriptPath else {
+                return false
+            }
+            return trackedTranscriptPaths.contains(transcriptPath)
+        }
+
+        guard !matchedSessions.isEmpty else {
+            return trackedSessions
+        }
+        return mergeDiscoveredSessions(matchedSessions)
     }
 
     private func existingSessionID(
@@ -638,6 +674,13 @@ final class SessionDiscoveryCoordinator {
             .filter {
                 $0.tool == .claudeCode
                     && $0.isTrackedLiveSession
+                    && !$0.isSessionEnded
+                    && (
+                        $0.isHookManaged
+                            || $0.jumpTarget.map {
+                                $0.terminalApp != "Unknown"
+                            } == true
+                    )
                     && (prefix.isEmpty || !$0.id.hasPrefix(prefix))
                     && $0.updatedAt >= Date.now.addingTimeInterval(-86_400)
                     && ($0.jumpTarget != nil || $0.claudeMetadata?.transcriptPath != nil)
