@@ -225,8 +225,8 @@ without implementing app or firmware behavior.
 ### Round 2 — Bidirectional hardware spike
 
 - [ ] Record and test the stock-firmware recovery/DFU path before flashing.
-- [ ] Build a minimal custom firmware image from the pinned source.
-- [ ] Build a diagnostic macOS host probe outside the production coordinator.
+- [x] Build a minimal custom firmware image from the pinned source.
+- [x] Build a diagnostic macOS host probe outside the production coordinator.
 - [ ] Set the `1` LED to blue from the host.
 - [ ] Receive one digit selection and one action-key intent from firmware.
 - [ ] Verify heartbeat expiry clears state and exits Agent Control.
@@ -236,6 +236,28 @@ without implementing app or firmware behavior.
 Exit criterion: one LED and one key work bidirectionally on USB, factory
 recovery is proven, and 2.4 GHz support is either proven or explicitly
 deferred with evidence. Do not integrate Agent Island before this gate passes.
+
+#### Round 2 software evidence
+
+On 2026-07-25:
+
+- The connected stock K0 Max enumerated as VID/PID `3434:0A06` with Raw HID
+  usage page `0xFF60`, usage `0x61`, and 32-byte reports.
+- A read-only host probe received Keychron protocol version 2 and command set
+  2 from the stock firmware.
+- Stock and diagnostic firmware compiled from pinned Keychron commit
+  `07bfc38a4b11b8dac7ab758dfc5868b4229499ca` with QMK CLI 1.2.0 and
+  `arm-none-eabi-gcc` 15.2.0.
+- The current diagnostic source digest/build ID is
+  `71b21e252854b870c5c1b2925f06fe302f958cb2431dd87578ba95b0e929f76f`
+  / `0x71b21e25`. The built image is 73,552 bytes; stock is 71,104 bytes.
+- The probe's CRC-8/ATM golden `HELLO` vector passed with CRC `0x97`.
+- A 60-second non-writing DFU watch did not observe `0483:DF11`; no custom
+  image was flashed. Physical Esc-at-plug-in recovery, the bidirectional USB
+  exercise, 2.4 GHz, and Launcher coexistence remain open.
+
+Build, recovery, flash, probe, and restore instructions live in
+[`Hardware/KeychronK0Max/README.md`](../../../Hardware/KeychronK0Max/README.md).
 
 ### Round 3 — Stable slot and projection model
 

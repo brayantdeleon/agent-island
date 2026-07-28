@@ -18,7 +18,7 @@ to a session and for deciding whether a jump, approval, or denial is valid.
 - Repository: [Keychron/qmk_firmware](https://github.com/Keychron/qmk_firmware)
 - Branch: `2025q3`
 - Pinned commit: [`07bfc38a4b11b8dac7ab758dfc5868b4229499ca`](https://github.com/Keychron/qmk_firmware/commit/07bfc38a4b11b8dac7ab758dfc5868b4229499ca)
-- QMK target: `keychron/k0_max/encoder:keychron`
+- QMK target: `keychron/k0_max:keychron`
 - USB vendor ID: `0x3434`
 - USB product ID: `0x0A06`
 - Device version: `1.1.1`
@@ -111,6 +111,15 @@ CRC-8/ATM parameters:
 - Output reflected: no
 - Final XOR: `0x00`
 
+Round 2 golden `HELLO` report for sequence `1`, minor `0`, nonce
+`0x0123456789ABCDEF`, watchdog `6`, and host capabilities `0x001F`:
+
+```text
+ac414901010001000c00efcdab8967452301061f000000000000000000000097
+```
+
+The final byte is CRC `0x97`.
+
 The sender increments its sequence for each new non-response packet. A
 response copies the sequence from the request and sets the response flag.
 Duplicate action sequences within the active connection nonce must return the
@@ -188,9 +197,10 @@ Firmware capability bits use the same low five meanings as the host. The host
 must keep action handling disabled if a required capability is absent or the
 major version is incompatible.
 
-The build identifier is the low 32 bits of a documented deterministic digest
-of the firmware source state. Round 2 must choose and record the digest
-algorithm before producing distributable firmware.
+The build identifier is the first 32 bits of a SHA-256 digest over the pinned
+Keychron commit plus the ordered paths and SHA-256 values of the local
+firmware overlay and patch files. The build manifest records the complete
+digest. The identifier excludes QMK's generated build timestamp.
 
 ## `STATE_SNAPSHOT` (`0x02`)
 
