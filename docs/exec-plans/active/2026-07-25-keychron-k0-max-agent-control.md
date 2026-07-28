@@ -239,7 +239,7 @@ deferred with evidence. Do not integrate Agent Island before this gate passes.
 
 #### Round 2 software evidence
 
-On 2026-07-25:
+On 2026-07-25, refreshed on 2026-07-28:
 
 - The connected stock K0 Max enumerated as VID/PID `3434:0A06` with Raw HID
   usage page `0xFF60`, usage `0x61`, and 32-byte reports.
@@ -249,12 +249,17 @@ On 2026-07-25:
   `07bfc38a4b11b8dac7ab758dfc5868b4229499ca` with QMK CLI 1.2.0 and
   `arm-none-eabi-gcc` 15.2.0.
 - The current diagnostic source digest/build ID is
-  `71b21e252854b870c5c1b2925f06fe302f958cb2431dd87578ba95b0e929f76f`
-  / `0x71b21e25`. The built image is 73,552 bytes; stock is 71,104 bytes.
+  `12ec1c09fbf0168f148cb8862e61cddf31fce95c467fdab45c08afbe88fbef82`
+  / `0x12ec1c09`. The built image is 73,552 bytes; stock is 71,104 bytes.
 - The probe's CRC-8/ATM golden `HELLO` vector passed with CRC `0x97`.
-- A 60-second non-writing DFU watch did not observe `0483:DF11`; no custom
-  image was flashed. Physical Esc-at-plug-in recovery, the bidirectional USB
-  exercise, 2.4 GHz, and Launcher coexistence remain open.
+- After rebasing the spike onto `origin/main` at `26b13d4`, both firmware
+  images and the macOS probe rebuilt successfully and the temporary Keychron
+  source checkout remained clean.
+- A fresh read-only stock probe again received Keychron protocol version 2
+  and command set 2. A subsequent 120-second non-writing DFU watch did not
+  observe `0483:DF11`; the keyboard continued responding on stock firmware
+  and no custom image was flashed. Physical Esc-at-plug-in recovery, the
+  bidirectional USB exercise, 2.4 GHz, and Launcher coexistence remain open.
 
 Build, recovery, flash, probe, and restore instructions live in
 [`Hardware/KeychronK0Max/README.md`](../../../Hardware/KeychronK0Max/README.md).
