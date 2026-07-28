@@ -14,12 +14,10 @@ enum layers {
     AGENT,
 };
 
-enum tap_dances {
-    TD_AGENT_M5,
-};
-
 enum custom_keycodes {
-    AI_SLOT_1 = SAFE_RANGE,
+    AI_TOGGLE = SAFE_RANGE,
+    AI_FN,
+    AI_SLOT_1,
     AI_SLOT_2,
     AI_SLOT_3,
     AI_SLOT_4,
@@ -53,7 +51,7 @@ enum agent_island_action {
 };
 
 enum agent_island_layer_reason {
-    AI_LAYER_M5_TAP          = 0,
+    AI_LAYER_CONTROL_TAP      = 0,
     AI_LAYER_WATCHDOG_EXPIRED = 1,
 };
 
@@ -69,14 +67,15 @@ enum agent_island_constants {
     AI_SLOT_COUNT           = 10,
     AI_DEFAULT_WATCHDOG_SEC = 6,
     AI_ALL_CAPABILITIES     = 0x1F,
-    AI_LED_M5               = 22,
-    AI_LED_SLOT_1           = 19,
+    AI_LED_CONTROL          = 18,
 };
+
+static const uint8_t ai_slot_leds[AI_SLOT_COUNT] = {19, 20, 21, 15, 16, 17, 10, 11, 12, 23};
 
 static bool     ai_handshake_active;
 static bool     ai_agent_control_active;
-static bool     ai_m5_fn_active;
-static bool     ai_m5_restore_agent;
+static bool     ai_fn_active;
+static bool     ai_fn_restore_agent;
 static bool     ai_unavailable_feedback_active;
 static uint8_t  ai_last_transport;
 static uint8_t  ai_watchdog_seconds = AI_DEFAULT_WATCHDOG_SEC;
@@ -334,6 +333,37 @@ static void ai_send_action(uint8_t action) {
 }
 
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+    if (keycode == AI_TOGGLE) {
+        if (record->event.pressed && !ai_fn_active) {
+            if (ai_handshake_active && timer_elapsed32(ai_watchdog_timer) <= (uint32_t)ai_watchdog_seconds * 1000U) {
+                ai_set_agent_control(!ai_agent_control_active, AI_LAYER_CONTROL_TAP);
+            } else {
+                ai_unavailable_feedback_active = true;
+                ai_unavailable_feedback_timer  = timer_read32();
+            }
+        }
+        return false;
+    }
+
+    if (keycode == AI_FN) {
+        if (record->event.pressed && !ai_fn_active) {
+            ai_fn_restore_agent = ai_agent_control_active;
+            if (ai_fn_restore_agent) {
+                layer_off(AGENT);
+            }
+            layer_on(FN);
+            ai_fn_active = true;
+        } else if (!record->event.pressed && ai_fn_active) {
+            layer_off(FN);
+            if (ai_fn_restore_agent && ai_agent_control_active && ai_handshake_active) {
+                layer_on(AGENT);
+            }
+            ai_fn_active         = false;
+            ai_fn_restore_agent  = false;
+        }
+        return false;
+    }
+
     if (keycode >= AI_SLOT_1 && keycode <= AI_SLOT_10) {
         if (record->event.pressed && ai_agent_control_active && ai_handshake_active) {
             ai_send_slot_selected((uint8_t)(keycode - AI_SLOT_1));
@@ -378,8 +408,11 @@ static uint16_t ai_agent_keycode_for_position(keypos_t key) {
 
 uint16_t keymap_key_to_keycode(uint8_t layer, keypos_t key) {
     if (key.row < MATRIX_ROWS && key.col < MATRIX_COLS) {
+        if (key.row == 4 && key.col == 0) {
+            return AI_TOGGLE;
+        }
         if (key.row == 5 && key.col == 0) {
-            return TD(TD_AGENT_M5);
+            return AI_FN;
         }
         if (layer == AGENT) {
             return ai_agent_keycode_for_position(key);
@@ -397,46 +430,6 @@ uint16_t keymap_key_to_keycode(uint8_t layer, keypos_t key) {
     return KC_NO;
 }
 
-static void ai_m5_finished(tap_dance_state_t *state, void *user_data) {
-    if (state->count != 1) {
-        return;
-    }
-
-    if (state->pressed || state->interrupted) {
-        ai_m5_restore_agent = ai_agent_control_active;
-        if (ai_m5_restore_agent) {
-            layer_off(AGENT);
-        }
-        layer_on(FN);
-        ai_m5_fn_active = true;
-        return;
-    }
-
-    if (ai_handshake_active && timer_elapsed32(ai_watchdog_timer) <= (uint32_t)ai_watchdog_seconds * 1000U) {
-        ai_set_agent_control(!ai_agent_control_active, AI_LAYER_M5_TAP);
-    } else {
-        ai_unavailable_feedback_active = true;
-        ai_unavailable_feedback_timer  = timer_read32();
-    }
-}
-
-static void ai_m5_reset(tap_dance_state_t *state, void *user_data) {
-    if (!ai_m5_fn_active) {
-        return;
-    }
-
-    layer_off(FN);
-    if (ai_m5_restore_agent && ai_agent_control_active && ai_handshake_active) {
-        layer_on(AGENT);
-    }
-    ai_m5_fn_active     = false;
-    ai_m5_restore_agent = false;
-}
-
-tap_dance_action_t tap_dance_actions[] = {
-    [TD_AGENT_M5] = ACTION_TAP_DANCE_FN_ADVANCED(NULL, ai_m5_finished, ai_m5_reset),
-};
-
 void matrix_scan_user(void) {
     if (ai_handshake_active && timer_elapsed32(ai_watchdog_timer) > (uint32_t)ai_watchdog_seconds * 1000U) {
         ai_expire_connection();
@@ -446,33 +439,55 @@ void matrix_scan_user(void) {
     }
 }
 
+static uint8_t ai_scale8(uint8_t value, uint8_t scale) {
+    return ((uint16_t)value * scale) / 255U;
+}
+
+static uint8_t ai_pulse_value(void) {
+    uint8_t phase    = (uint8_t)(timer_read() >> 3);
+    uint8_t triangle = phase < 128 ? phase * 2 : (255 - phase) * 2;
+    return 24 + ai_scale8(triangle, 231);
+}
+
+static void ai_set_slot_color(uint8_t led, uint8_t state) {
+    uint8_t pulse = ai_pulse_value();
+    switch (state) {
+        case 2:
+            rgb_matrix_set_color(led, 0, 0, pulse);
+            break;
+        case 3:
+        case 4: {
+            uint8_t flash = timer_read() & 0x100 ? 255 : 0;
+            rgb_matrix_set_color(led, flash, 0, 0);
+            break;
+        }
+        case 5:
+            rgb_matrix_set_color(led, pulse, ai_scale8(pulse, 96), 0);
+            break;
+        case 6:
+            rgb_matrix_set_color(led, 0, 255, 0);
+            break;
+        default:
+            rgb_matrix_set_color(led, 0, 0, 0);
+            break;
+    }
+}
+
 bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
-    if (AI_LED_M5 >= led_min && AI_LED_M5 < led_max) {
-        if (ai_agent_control_active) {
-            rgb_matrix_set_color(AI_LED_M5, 0, 180, 255);
+    if (AI_LED_CONTROL >= led_min && AI_LED_CONTROL < led_max) {
+        if (ai_agent_control_active && !ai_fn_active) {
+            rgb_matrix_set_color(AI_LED_CONTROL, 0, 180, 255);
         } else if (ai_unavailable_feedback_active) {
-            rgb_matrix_set_color(AI_LED_M5, 255, 96, 0);
+            rgb_matrix_set_color(AI_LED_CONTROL, 255, 96, 0);
         }
     }
 
-    if (ai_agent_control_active && AI_LED_SLOT_1 >= led_min && AI_LED_SLOT_1 < led_max) {
-        switch (ai_slot_states[0]) {
-            case 2:
-                rgb_matrix_set_color(AI_LED_SLOT_1, 0, 0, 255);
-                break;
-            case 3:
-            case 4:
-                rgb_matrix_set_color(AI_LED_SLOT_1, 255, 0, 0);
-                break;
-            case 5:
-                rgb_matrix_set_color(AI_LED_SLOT_1, 255, 96, 0);
-                break;
-            case 6:
-                rgb_matrix_set_color(AI_LED_SLOT_1, 0, 255, 0);
-                break;
-            default:
-                rgb_matrix_set_color(AI_LED_SLOT_1, 0, 0, 0);
-                break;
+    if (ai_agent_control_active && !ai_fn_active) {
+        for (uint8_t slot = 0; slot < AI_SLOT_COUNT; ++slot) {
+            uint8_t led = ai_slot_leds[slot];
+            if (led >= led_min && led < led_max) {
+                ai_set_slot_color(led, ai_slot_states[slot]);
+            }
         }
     }
     return true;
@@ -485,8 +500,8 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         MC_1,    KC_NUM,  KC_PSLS, KC_PAST, KC_PMNS,
         MC_2,    KC_P7,   KC_P8,   KC_P9,   KC_PPLS,
         MC_3,    KC_P4,   KC_P5,   KC_P6,
-        MC_4,    KC_P1,   KC_P2,   KC_P3,
-        TD(TD_AGENT_M5), KC_P0,    KC_PDOT, KC_PENT),
+        AI_TOGGLE, KC_P1, KC_P2,   KC_P3,
+        AI_FN,   KC_P0,            KC_PDOT, KC_PENT),
 
     [FN] = LAYOUT_tenkey_27(
         UG_TOGG, BT_HST1, BT_HST2, BT_HST3, P2P4G,
@@ -501,8 +516,8 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         KC_NO,   KC_NO,   KC_NO,      KC_NO,     AI_DENY,
         KC_NO,   AI_SLOT_7, AI_SLOT_8, AI_SLOT_9, AI_ALLOW,
         KC_NO,   AI_SLOT_4, AI_SLOT_5, AI_SLOT_6,
-        KC_NO,   AI_SLOT_1, AI_SLOT_2, AI_SLOT_3,
-        TD(TD_AGENT_M5), AI_SLOT_10,   KC_NO,     AI_JUMP),
+        AI_TOGGLE, AI_SLOT_1, AI_SLOT_2, AI_SLOT_3,
+        AI_FN,     AI_SLOT_10,          KC_NO,     AI_JUMP),
 };
 
 #if defined(ENCODER_MAP_ENABLE)

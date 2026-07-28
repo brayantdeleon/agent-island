@@ -37,8 +37,8 @@ hardware.
 
 When the optional integration is enabled and compatible firmware is present:
 
-1. Tapping M5 enters or exits Agent Control. Holding M5 retains the stock
-   momentary Fn behavior.
+1. Tapping M4 enters or exits Agent Control. M5 retains the stock momentary
+   Fn behavior.
 2. Digits `1` through `9` address slots 1 through 9; `0` addresses slot 10.
 3. Pressing a populated digit selects that agent and reveals its card in
    Agent Island. It does not jump or authorize by itself.
@@ -58,8 +58,8 @@ When the optional integration is enabled and compatible firmware is present:
 
 | Input | Agent Control behavior |
 |---|---|
-| M5 tap | Enter or exit Agent Control |
-| M5 hold/chord | Momentary stock Fn layer; do not toggle Agent Control |
+| M4 tap | Enter or exit Agent Control |
+| M5 hold | Momentary stock Fn layer |
 | `1`-`9` | Select slots 1-9 and reveal the corresponding Agent Island card |
 | `0` | Select slot 10 |
 | Enter | Jump to the selected agent |
@@ -71,8 +71,8 @@ While Agent Control is active, the digit, Enter, `+`, and `-` positions emit
 Raw HID intents only. They must not also type their ordinary keycodes into the
 frontmost application.
 
-M5 may enter Agent Control only after a fresh, compatible handshake. If Agent
-Island is unavailable, an M5 tap gives brief amber feedback and leaves the
+M4 may enter Agent Control only after a fresh, compatible handshake. If Agent
+Island is unavailable, an M4 tap gives brief amber feedback and leaves the
 base layer active.
 
 ## Lighting Contract
@@ -91,7 +91,7 @@ Selection gives a brief white acknowledgement and then returns to the phase
 color. Accepted device actions give brief green feedback; rejected or stale
 actions give brief amber feedback.
 
-The M5 LED indicates the control layer. Cyan means Agent Control is active.
+The M4 LED indicates the control layer. Cyan means Agent Control is active.
 Purple means more eligible sessions exist than the ten hardware slots.
 
 Project state in this priority order:
@@ -151,7 +151,7 @@ Keep three concerns separate:
    - a fake transport for deterministic tests
 
 3. **K0 Max firmware**
-   - Agent Control layer and dual-role M5 behavior
+   - dedicated M4 control behavior and stock momentary M5 Fn behavior
    - Raw HID protocol endpoint
    - in-RAM slot and selection state
    - local RGB animation and feedback
@@ -213,7 +213,7 @@ verification, updates this plan, and ends in a focused commit.
 ### Round 1 — Design and protocol contract
 
 - [x] Confirm the physical K0 Max layout and LED indices.
-- [x] Lock M5, digit, Enter, `+`, and `-` behavior.
+- [x] Lock M4, M5, digit, Enter, `+`, and `-` behavior.
 - [x] Define slot stability, overflow, and completion expiry.
 - [x] Define the versioned Raw HID packet contract.
 - [x] Record authorization and fail-safe invariants.
@@ -224,13 +224,14 @@ without implementing app or firmware behavior.
 
 ### Round 2 — Bidirectional hardware spike
 
-- [ ] Record and test the stock-firmware recovery/DFU path before flashing.
+- [x] Record and test the stock-firmware recovery/DFU path before flashing.
 - [x] Build a minimal custom firmware image from the pinned source.
 - [x] Build a diagnostic macOS host probe outside the production coordinator.
-- [ ] Set the `1` LED to blue from the host.
-- [ ] Receive one digit selection and one action-key intent from firmware.
-- [ ] Verify heartbeat expiry clears state and exits Agent Control.
-- [ ] Test USB first, then record the same results for the 2.4 GHz receiver.
+- [x] Set the `1` LED to a local blue pulse from host-projected state.
+- [x] Receive one digit selection and one action-key intent from firmware.
+- [x] Verify heartbeat expiry clears state and exits Agent Control.
+- [x] Test USB first; explicitly defer 2.4 GHz because the available receiver
+  is USB-A and the test Mac has no USB-A port or adapter.
 - [ ] Reopen Keychron Launcher and confirm ordinary VIA operations still work.
 
 Exit criterion: one LED and one key work bidirectionally on USB, factory
@@ -249,17 +250,28 @@ On 2026-07-25, refreshed on 2026-07-28:
   `07bfc38a4b11b8dac7ab758dfc5868b4229499ca` with QMK CLI 1.2.0 and
   `arm-none-eabi-gcc` 15.2.0.
 - The current diagnostic source digest/build ID is
-  `12ec1c09fbf0168f148cb8862e61cddf31fce95c467fdab45c08afbe88fbef82`
-  / `0x12ec1c09`. The built image is 73,552 bytes; stock is 71,104 bytes.
+  `4103537d7ed1e99951264b39259cf7ad109a6c623dc1c674b5ff0d3bffc11368`
+  / `0x4103537d`. The built image is 73,188 bytes; stock is 71,104 bytes.
 - The probe's CRC-8/ATM golden `HELLO` vector passed with CRC `0x97`.
 - After rebasing the spike onto `origin/main` at `26b13d4`, both firmware
   images and the macOS probe rebuilt successfully and the temporary Keychron
   source checkout remained clean.
 - A fresh read-only stock probe again received Keychron protocol version 2
-  and command set 2. A subsequent 120-second non-writing DFU watch did not
-  observe `0483:DF11`; the keyboard continued responding on stock firmware
-  and no custom image was flashed. Physical Esc-at-plug-in recovery, the
-  bidirectional USB exercise, 2.4 GHz, and Launcher coexistence remain open.
+  and command set 2. Physical Esc-at-plug-in recovery then enumerated the
+  STM32 bootloader as `0483:DF11`; a normal reconnect returned to stock
+  firmware before the first custom image was written.
+- The diagnostic image flashed successfully over DFU. Its USB exercise
+  advertised build `0x4103537d` and reported `yes` for handshake, layer,
+  selection, action, and watchdog evidence. Hardware observation confirmed
+  that M4 entered Agent Control, `1` pulsed blue, digit LEDs `2` through `0`
+  were off, and the ordinary RGB effect returned after watchdog expiry.
+- The diagnostic selection and Enter action were logged and acknowledged
+  only; no Agent Island session action or approval was dispatched.
+- The 2.4 GHz receiver test is deferred because the receiver is USB-A and the
+  test Mac has no compatible port or adapter. Wireless support remains
+  unclaimed.
+- Keychron Launcher coexistence remains open pending the browser's native
+  WebHID device-selection step.
 
 Build, recovery, flash, probe, and restore instructions live in
 [`Hardware/KeychronK0Max/README.md`](../../../Hardware/KeychronK0Max/README.md).
@@ -293,7 +305,8 @@ survives unplug/replug and app restart without stale lights.
 
 ### Round 5 — Complete firmware behavior
 
-- [ ] Implement the dual-role M5 state machine.
+- [ ] Implement the dedicated M4 control behavior and momentary M5 Fn
+  behavior.
 - [ ] Implement all ten LED states and local animations.
 - [ ] Implement selection, jump, allow-once, and deny intents.
 - [ ] Implement action acknowledgements and local feedback.
@@ -390,7 +403,7 @@ disposable, non-destructive test requests until stale-request cases pass.
 |---|---|
 | 2.4 GHz may not support unsolicited device-to-host Raw HID consistently | Round 2 must prove it; otherwise ship USB first and evaluate polling separately |
 | Launcher may contend for the same Raw HID interface | Filter the reserved family and test simultaneous access before claiming coexistence |
-| M5 tap/hold may feel laggy or toggle accidentally | Tune and hardware-test the tapping term; a chord always resolves to Fn |
+| Reserving M4 removes one stock macro position | Keep M5 as immediate momentary Fn and make the reserved M4 behavior explicit in the integration UI and firmware notes |
 | Firmware update can temporarily brick normal use | Prove and document stock recovery before the first custom flash |
 | External hardware could approve the wrong request after a race | Bind action through the bridge to the exact permission request identity |
 | Animated RGB reduces wireless battery life | Animate locally, avoid host-rate flashing, measure and document battery impact |

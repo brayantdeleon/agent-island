@@ -39,9 +39,9 @@ through `0xAB`. This custom firmware locally reserves `0xAC` for Agent Island.
 That value is not an upstream allocation and must be re-audited before moving
 the firmware baseline.
 
-The stock keymap implements the physical M5 key as `MO(FN)`. Custom firmware
-replaces that position with a dual-role state machine: a tap toggles Agent
-Control, while a hold or chord retains momentary Fn behavior.
+The stock keymap implements physical M4 as macro position `MC_4` and M5 as
+`MO(FN)`. Custom firmware reserves M4 as the Agent Control toggle and retains
+M5 as an immediate momentary Fn key.
 
 ## Physical Slot And LED Map
 
@@ -64,6 +64,7 @@ Control and feedback LEDs:
 
 | Key | Matrix | RGB LED index |
 |---|---|---:|
+| M4 / Agent Control | `[4,0]` | 18 |
 | M5 / Fn | `[5,0]` | 22 |
 | `-` | `[1,4]` | 8 |
 | `+` | `[2,4]` | 13 |
@@ -358,7 +359,7 @@ Payload:
 
 Reason:
 
-- `0`: M5 tap
+- `0`: M4 tap
 - `1`: watchdog expiry
 - `2`: host disconnect
 - `3`: firmware reset
@@ -397,7 +398,8 @@ tokens.
   Agent Control.
 - Agent Control colors override only the number keys and control-feedback keys
   required by this contract.
-- M1-M4 and the encoder remain reserved for future versions.
+- M1-M3 and the encoder remain reserved for future versions; M4 is the
+  dedicated Agent Control toggle.
 
 ## Compatibility And Coexistence
 

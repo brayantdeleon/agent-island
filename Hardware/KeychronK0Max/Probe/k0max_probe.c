@@ -398,7 +398,7 @@ static int exercise_diagnostic_firmware(probe_context_t *context, int active_sec
     }
 
     printf("\nManual input window (%d seconds):\n", active_seconds);
-    printf("  1. Tap M5. M5 should turn cyan and key 1 should turn blue.\n");
+    printf("  1. Tap M4. M4 should turn cyan, key 1 should pulse blue, and the other digit LEDs should turn off.\n");
     printf("  2. Press 1, then press Enter. The probe only logs and acknowledges them.\n");
     printf("  3. Do not use + or - with a real agent; this probe never dispatches approvals.\n\n");
 

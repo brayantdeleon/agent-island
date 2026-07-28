@@ -38,19 +38,20 @@ Keychron's readme at the pinned commit still shows
 `keychron/k0_max`. The build script uses the target reported by
 `qmk list-keyboards`.
 
-The overlay preserves ordinary VIA-backed Base and Fn mappings. The physical
-M5 position is reserved for the required tap/hold behavior, and physical
-Agent Control positions are resolved independently of VIA EEPROM mappings:
+The overlay preserves ordinary VIA-backed Base and Fn mappings except that
+the physical M4 position is reserved for Agent Control. Physical Agent
+Control positions are resolved independently of VIA EEPROM mappings:
 
-- M5 tap toggles Agent Control after a fresh handshake.
-- M5 hold or chord exposes the stock momentary Fn layer.
+- M4 toggles Agent Control after a fresh handshake.
+- M5 retains its stock momentary Fn behavior.
 - Digits emit anonymous slot-selection intents.
 - Enter emits jump, `+` emits allow-once, and `-` emits deny intents after a
   diagnostic selection acknowledgement.
 - Other key and encoder positions emit nothing while Agent Control is active.
 
-Round 2 renders only the `1` LED and the M5 status LED. The complete ten-key
-animation behavior belongs to Round 5.
+Round 2 drives the M4 status LED and all ten digit LEDs. The diagnostic host
+sets slot `1` to running, so `1` pulses blue while the other digit LEDs are
+forced off. Complete production feedback behavior still belongs to Round 5.
 
 ## Build
 
@@ -135,7 +136,8 @@ Reconnect in Cable mode and run:
 
 During the manual input window:
 
-1. Tap M5. M5 should turn cyan and `1` should turn blue.
+1. Tap M4. M4 should turn cyan, `1` should pulse blue, and the other digit
+   LEDs should turn off.
 2. Press `1`, then Enter.
 3. Wait after the probe announces that heartbeat has stopped.
 
