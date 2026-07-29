@@ -458,6 +458,16 @@ On 2026-07-28:
   firmware build `0xa41cfb54`. It completed a real handshake, sent running
   and recently-completed snapshots as two generations, exposed `K0 · 1`,
   and then cleared and stopped the transport without enabling device actions.
+- Follow-up firmware build `0x19fb67fd` changed recently completed slots to a
+  full-off green pulse, deepened all smooth pulse troughs to zero, and masks
+  every non-agent LED while Agent Control is active. Its source digest is
+  `19fb67fd954709bd27cd179b18fa652d8c7a2b2f1d787f65aa8ceabef7e8bcd7`;
+  the flashed artifact SHA-256 is
+  `5ba6d275ffdafbb0f45d6da247e83797589daf14a129566f0a4700565602a4af`.
+  The firmware compiled from the clean pinned checkout, flashed through the
+  proven DFU path, and reported the exact build over the production protocol.
+  Manual testing with real AppModel state confirmed black non-agent keys,
+  full-dark green/blue/amber troughs, and preserved momentary M5 RGB restore.
 
 ### Round 7 — Selection and navigation
 

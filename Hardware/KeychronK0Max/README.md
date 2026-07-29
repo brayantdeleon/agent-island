@@ -214,14 +214,24 @@ line passed, the visual gallery and M5 behavior matched the contract, and
 post-watchdog M4 unavailable feedback left ordinary number entry active.
 The 2.4 GHz transport remains deferred and unclaimed.
 
+The follow-up presentation build `0x19fb67fd` was flashed and verified on USB
+the same day. Its source digest is
+`19fb67fd954709bd27cd179b18fa652d8c7a2b2f1d787f65aa8ceabef7e8bcd7`
+and its firmware SHA-256 is
+`5ba6d275ffdafbb0f45d6da247e83797589daf14a129566f0a4700565602a4af`.
+The production app handshake reported that exact build. Manual verification
+confirmed that non-agent LEDs remain black, completed slots pulse green to
+fully off, blue and amber share the deeper trough, and M5 still restores the
+ordinary RGB effect while held.
+
 ## Round 6 read-only app integration
 
-With firmware build `0xa41cfb54` connected in Cable mode:
+With firmware build `0x19fb67fd` connected in Cable mode:
 
 1. Open Agent Island Settings → General.
 2. Enable **Keychron K0 Max** under **Agent Control Keyboard**.
 3. Confirm the status shows **Connected**, **USB**, protocol **v1.0**, and
-   firmware **0xA41CFB54**.
+   firmware **0x19FB67FD**.
 4. Open the island and confirm assigned sessions show `K0 · 1` through
    `K0 · 0` badges.
 5. Tap M4 and compare the digit lighting with current session phases.
