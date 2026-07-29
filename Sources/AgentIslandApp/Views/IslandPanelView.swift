@@ -481,39 +481,61 @@ struct IslandPanelView: View {
 
     private var expandedSessionSurface: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            HStack(spacing: 0) {
-                expandedTaskNavigation(referenceDate: context.date)
-                    .frame(width: 300)
-                    .fixedSize(horizontal: true, vertical: false)
+            GeometryReader { geometry in
+                let widths = Self.expandedPaneWidths(
+                    availableWidth: geometry.size.width
+                )
 
-                Rectangle()
-                    .fill(.white.opacity(0.07))
-                    .frame(width: 1)
+                HStack(spacing: 0) {
+                    expandedTaskNavigation(referenceDate: context.date)
+                        .frame(width: widths.navigation)
 
-                Group {
-                    if let session = model.expandedSelectedSession {
-                        expandedTaskDetail(
-                            session,
-                            referenceDate: context.date
-                        )
-                    } else {
-                        emptyState
-                            .padding(24)
+                    Rectangle()
+                        .fill(.white.opacity(0.07))
+                        .frame(width: widths.separator)
+
+                    Group {
+                        if let session = model.expandedSelectedSession {
+                            expandedTaskDetail(
+                                session,
+                                referenceDate: context.date
+                            )
+                        } else {
+                            emptyState
+                                .padding(24)
+                        }
                     }
+                    .frame(width: widths.detail)
+                    .frame(maxHeight: .infinity)
+                    .clipped()
                 }
-                // The history pane contains provider identifiers that can be
-                // wider than the available screen space. Make this side the
-                // compressible HStack child so its ideal width cannot push
-                // both outer edges beyond the island's clipping shape.
                 .frame(
-                    minWidth: 0,
-                    maxWidth: .infinity,
-                    maxHeight: .infinity
+                    width: geometry.size.width,
+                    height: geometry.size.height,
+                    alignment: .leading
                 )
                 .clipped()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    nonisolated static func expandedPaneWidths(
+        availableWidth: CGFloat
+    ) -> (
+        navigation: CGFloat,
+        separator: CGFloat,
+        detail: CGFloat
+    ) {
+        let totalWidth = max(0, availableWidth)
+        let separatorWidth = min(1, totalWidth)
+        let contentWidth = max(0, totalWidth - separatorWidth)
+        let navigationWidth = min(300, max(0, contentWidth - 360))
+
+        return (
+            navigation: navigationWidth,
+            separator: separatorWidth,
+            detail: contentWidth - navigationWidth
+        )
     }
 
     private func expandedTaskNavigation(

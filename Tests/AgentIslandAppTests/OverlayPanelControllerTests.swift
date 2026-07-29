@@ -184,6 +184,20 @@ struct OverlayPanelControllerTests {
         #expect(size.height <= visibleFrame.height)
     }
 
+    @Test(arguments: [CGFloat(1_044), CGFloat(732), CGFloat(500)])
+    func expandedPanesNeverExceedAvailableWidth(availableWidth: CGFloat) {
+        let widths = IslandPanelView.expandedPaneWidths(
+            availableWidth: availableWidth
+        )
+
+        #expect(
+            widths.navigation + widths.separator + widths.detail
+                == availableWidth
+        )
+        #expect(widths.navigation <= 300)
+        #expect(widths.detail >= 360)
+    }
+
     @Test @MainActor
     func selectedCollapsedSessionDoesNotReserveExpandedDetailHeight() {
         let now = Date()
