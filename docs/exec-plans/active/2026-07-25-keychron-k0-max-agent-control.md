@@ -232,7 +232,7 @@ without implementing app or firmware behavior.
 - [x] Verify heartbeat expiry clears state and exits Agent Control.
 - [x] Test USB first; explicitly defer 2.4 GHz because the available receiver
   is USB-A and the test Mac has no USB-A port or adapter.
-- [ ] Reopen Keychron Launcher and confirm ordinary VIA operations still work.
+- [x] Reopen Keychron Launcher and confirm ordinary VIA operations still work.
 
 Exit criterion: one LED and one key work bidirectionally on USB, factory
 recovery is proven, and 2.4 GHz support is either proven or explicitly
@@ -266,12 +266,19 @@ On 2026-07-25, refreshed on 2026-07-28:
   that M4 entered Agent Control, `1` pulsed blue, digit LEDs `2` through `0`
   were off, and the ordinary RGB effect returned after watchdog expiry.
 - The diagnostic selection and Enter action were logged and acknowledged
-  only; no Agent Island session action or approval was dispatched.
+  only; no Agent Island session action or approval was dispatched. After
+  watchdog exit, a physical `1` press again produced an ordinary numpad
+  keystroke.
 - The 2.4 GHz receiver test is deferred because the receiver is USB-A and the
   test Mac has no compatible port or adapter. Wireless support remains
   unclaimed.
-- Keychron Launcher coexistence remains open pending the browser's native
-  WebHID device-selection step.
+- Keychron Launcher 1.4.2 connected as `Keychron K0 Max RGB`, read all four
+  VIA layers, and preserved the dedicated M4/M5 custom keycodes. A reversible
+  brightness write changed `10` to `9` and restored `10`.
+- With Launcher still connected, a second diagnostic exercise again reported
+  `yes` for handshake, layer, selection, action, and watchdog evidence. The
+  reserved `0xAC` family therefore coexisted with ordinary VIA traffic in the
+  tested USB configuration.
 
 Build, recovery, flash, probe, and restore instructions live in
 [`Hardware/KeychronK0Max/README.md`](../../../Hardware/KeychronK0Max/README.md).
