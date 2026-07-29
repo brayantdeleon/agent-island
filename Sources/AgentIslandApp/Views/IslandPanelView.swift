@@ -484,6 +484,7 @@ struct IslandPanelView: View {
             HStack(spacing: 0) {
                 expandedTaskNavigation(referenceDate: context.date)
                     .frame(width: 300)
+                    .fixedSize(horizontal: true, vertical: false)
 
                 Rectangle()
                     .fill(.white.opacity(0.07))
@@ -500,7 +501,16 @@ struct IslandPanelView: View {
                             .padding(24)
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // The history pane contains provider identifiers that can be
+                // wider than the available screen space. Make this side the
+                // compressible HStack child so its ideal width cannot push
+                // both outer edges beyond the island's clipping shape.
+                .frame(
+                    minWidth: 0,
+                    maxWidth: .infinity,
+                    maxHeight: .infinity
+                )
+                .clipped()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -805,8 +815,10 @@ struct IslandPanelView: View {
             Text(value)
                 .font(.system(size: 11.5))
                 .foregroundStyle(V6Palette.paper.opacity(0.72))
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .textSelection(.enabled)
-            Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
