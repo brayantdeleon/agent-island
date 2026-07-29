@@ -527,8 +527,9 @@ On 2026-07-28:
   Focused tests cover the nine-slot overflow boundary and closing/reopening
   the island with `0` after an agent selection.
 
-Manual USB confirmation of the `0` toggle and dashed selected-card border
-remains required before the Round 7 exit criterion is complete.
+- Manual USB testing confirmed that `0` closes and reopens the island and that
+  a number-key selection displays the dashed border around the exact selected
+  card. This completes the Round 7 exit criterion.
 
 ### Round 8 — Guarded approval and denial
 
