@@ -2247,10 +2247,13 @@ private struct IslandSessionRow: View {
         Button {
             guard isInteractive else { return }
             let isExpanded = !isOpen
-            withAnimation(.easeInOut(duration: 0.2)) {
-                detailOverride = isExpanded
+            if let onDetailPresentationChange {
+                onDetailPresentationChange(isExpanded)
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    detailOverride = isExpanded
+                }
             }
-            onDetailPresentationChange?(isExpanded)
         } label: {
             Image(systemName: "chevron.down")
                 .font(.system(size: 10, weight: .bold))
