@@ -429,6 +429,202 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
+    func approvalNotificationReopensRememberedCollapsedDetail() throws {
+        let harness = makeHarness(enabled: true)
+        let previousSuppression =
+            harness.model.suppressFrontmostNotifications
+        defer {
+            harness.model.suppressFrontmostNotifications =
+                previousSuppression
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        harness.model.suppressFrontmostNotifications = false
+
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "approval",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        _ = try connectAndSelectFirstSlot(harness)
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == false
+        )
+        harness.model.notchClose()
+
+        harness.model.applyTrackedEvent(
+            .permissionRequested(
+                PermissionRequested(
+                    sessionID: "approval",
+                    request: PermissionRequest(
+                        title: "Edit",
+                        summary: "Edit a file",
+                        affectedPath: "/tmp/file"
+                    ),
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == true
+        )
+        #expect(harness.model.notchOpenReason == .notification)
+        #expect(
+            harness.model.islandSurface
+                == .sessionList(actionableSessionID: "approval")
+        )
+
+        harness.model.expandNotificationToSessionList()
+
+        #expect(harness.model.notchOpenReason == .click)
+        #expect(
+            harness.model.islandSurface
+                == .sessionList(actionableSessionID: "approval")
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == true
+        )
+    }
+
+    @Test
+    func completionNotificationReopensRememberedCollapsedDetail() throws {
+        let harness = makeHarness(enabled: true)
+        let previousSuppression =
+            harness.model.suppressFrontmostNotifications
+        defer {
+            harness.model.suppressFrontmostNotifications =
+                previousSuppression
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        harness.model.suppressFrontmostNotifications = false
+
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "completed",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        _ = try connectAndSelectFirstSlot(harness)
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["completed"]?
+                .isExpanded == false
+        )
+        harness.model.notchClose()
+
+        harness.model.applyTrackedEvent(
+            .sessionCompleted(
+                SessionCompleted(
+                    sessionID: "completed",
+                    summary: "Finished.",
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["completed"]?
+                .isExpanded == true
+        )
+        #expect(harness.model.notchOpenReason == .notification)
+        #expect(
+            harness.model.islandSurface
+                == .sessionList(actionableSessionID: "completed")
+        )
+
+        harness.model.expandNotificationToSessionList()
+
+        #expect(harness.model.notchOpenReason == .click)
+        #expect(
+            harness.model.islandSurface
+                == .sessionList(actionableSessionID: "completed")
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["completed"]?
+                .isExpanded == true
+        )
+    }
+
+    @Test
+    func statusGroupsSortByAscendingKeyboardSlotWithOverflowLast() {
+        let harness = makeHarness(enabled: true)
+        let previousGroup = harness.model.islandSessionGroup
+        let previousSort = harness.model.islandSessionSort
+        defer {
+            harness.model.islandSessionGroup = previousGroup
+            harness.model.islandSessionSort = previousSort
+            harness.model.agentControlKeyboardEnabled = false
+        }
+
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: (0..<10).map { index in
+                makeSession(
+                    id: "session-\(index)",
+                    firstSeenAt: now.addingTimeInterval(
+                        TimeInterval(index)
+                    ),
+                    updatedAt: now.addingTimeInterval(
+                        TimeInterval(index)
+                    ),
+                    phase: .running
+                )
+            }
+        )
+        harness.model.islandSessionSort = .lastUpdate
+        harness.model.islandSessionGroup = .state
+
+        let sections = harness.model.islandSessionSections(at: now)
+
+        #expect(sections.map(\.id) == ["state-running"])
+        #expect(
+            sections[0].sessions.map(\.id)
+                == (0..<10).map { "session-\($0)" }
+        )
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "session-0",
+                at: now
+            ) == "K0 · 1"
+        )
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "session-8",
+                at: now
+            ) == "K0 · 9"
+        )
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "session-9",
+                at: now
+            ) == nil
+        )
+    }
+
+    @Test
     func zeroClosesAndReopensTheIslandWithoutSelectingAnAgent() throws {
         let harness = makeHarness(enabled: true)
         defer {

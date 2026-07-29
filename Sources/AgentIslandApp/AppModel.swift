@@ -922,7 +922,13 @@ final class AppModel {
                 )
             ]
         case .state:
-            return stateGroupedSections(for: sessions, at: referenceDate)
+            return stateGroupedSections(
+                for: sortStateGroupedSessionsByAgentControlSlot(
+                    sessions,
+                    at: referenceDate
+                ),
+                at: referenceDate
+            )
         case .agent:
             return AgentTool.allCases.compactMap { tool in
                 let list = sessions.filter { $0.tool == tool }
@@ -1067,6 +1073,43 @@ final class AppModel {
             guard !list.isEmpty else { return nil }
             return IslandSessionSection(id: "state-\(definition.id)", title: definition.title, sessions: list)
         }
+    }
+
+    private func sortStateGroupedSessionsByAgentControlSlot(
+        _ sessions: [AgentSession],
+        at referenceDate: Date
+    ) -> [AgentSession] {
+        guard agentControlKeyboardEnabled else {
+            return sessions
+        }
+
+        let slotIndexBySessionID = Dictionary(
+            uniqueKeysWithValues:
+                agentControlSlotProjection(at: referenceDate)
+                    .assignedSlots
+                    .map { ($0.sessionID, $0.index) }
+        )
+
+        return sessions.enumerated().sorted { lhs, rhs in
+            let lhsIndex = slotIndexBySessionID[lhs.element.id]
+            let rhsIndex = slotIndexBySessionID[rhs.element.id]
+
+            switch (lhsIndex, rhsIndex) {
+            case let (lhsIndex?, rhsIndex?):
+                if lhsIndex != rhsIndex {
+                    return lhsIndex < rhsIndex
+                }
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                break
+            }
+
+            return lhs.offset < rhs.offset
+        }
+        .map(\.element)
     }
 
     private func projectGroupName(for session: AgentSession) -> String {
@@ -2112,15 +2155,25 @@ final class AppModel {
     func ensureOverlayPanel() { overlay.ensureOverlayPanel() }
     func showOverlay() { overlay.showOverlay() }
     func hideOverlay() { overlay.hideOverlay() }
-    func expandNotificationToSessionList(clearExpansion: Bool = false) {
-        overlay.expandNotificationToSessionList(clearExpansion: clearExpansion)
+    func expandNotificationToSessionList() {
+        overlay.expandNotificationToSessionList()
     }
     func refreshOverlayDisplayConfiguration() { overlay.refreshOverlayDisplayConfiguration() }
     func refreshOverlayPlacement() { overlay.refreshOverlayPlacement() }
     private func refreshOverlayPlacementIfVisible() { overlay.refreshOverlayPlacementIfVisible() }
     func notePointerInsideIslandSurface() { overlay.notePointerInsideIslandSurface() }
     func handlePointerExitedIslandSurface() { overlay.handlePointerExitedIslandSurface() }
-    private func presentNotificationSurface(_ surface: IslandSurface) { overlay.presentNotificationSurface(surface) }
+    private func presentNotificationSurface(_ surface: IslandSurface) {
+        if let sessionID = surface.sessionID,
+           let session = state.session(id: sessionID),
+           session.phase == .waitingForApproval || session.phase == .completed {
+            requestAgentControlDetailPresentation(
+                for: sessionID,
+                isExpanded: true
+            )
+        }
+        overlay.presentNotificationSurface(surface)
+    }
     private func reconcileIslandSurfaceAfterStateChange() { overlay.reconcileIslandSurfaceAfterStateChange() }
     private func dismissNotificationSurfaceIfPresent(for sessionID: String) { overlay.dismissNotificationSurfaceIfPresent(for: sessionID) }
     private func dismissOverlayForJump() { overlay.dismissOverlayForJump() }

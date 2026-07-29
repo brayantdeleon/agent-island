@@ -640,7 +640,7 @@ struct IslandPanelView: View {
                     onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
                     onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                         ? { model.replyToSession(session, text: $0) } : nil,
-                    onJump: { model.jumpToSession(session) },
+                    onJump: { model.expandNotificationToSessionList() },
                     onHide: model.isSessionHidden(session)
                         ? nil : { model.hideSession(session) },
                     onUnhide: model.isSessionHidden(session)
@@ -651,8 +651,7 @@ struct IslandPanelView: View {
                 let visibleSessionCount = model.islandListSessions.count
                 if visibleSessionCount > 1 {
                     Button {
-                        let isCompletion = session.phase == .completed
-                        model.expandNotificationToSessionList(clearExpansion: isCompletion)
+                        model.expandNotificationToSessionList()
                     } label: {
                         Text(model.lang.t("island.showAll", visibleSessionCount))
                             .font(.system(size: 10.5, weight: .medium))
