@@ -23,6 +23,12 @@ private struct AgentControlSelectionContext {
     let expiresAt: Date
 }
 
+struct AgentControlDetailPresentationRequest: Equatable {
+    let sessionID: String
+    let generation: UInt64
+    let isExpanded: Bool
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -91,6 +97,9 @@ final class AppModel {
     private var agentControlSelectionExpiryTask: Task<Void, Never>?
 
     @ObservationIgnored
+    private var agentControlDetailExpansionGeneration: UInt64 = 0
+
+    @ObservationIgnored
     private let agentControlSelectionTokenGenerator: () -> UInt64
 
     @ObservationIgnored
@@ -113,6 +122,8 @@ final class AppModel {
 
     var selectedSessionID: String?
     private(set) var agentControlSelectedSessionID: String?
+    private(set) var agentControlDetailPresentationRequests:
+        [String: AgentControlDetailPresentationRequest] = [:]
     let hooks = HookInstallationCoordinator()
     let overlay = OverlayUICoordinator()
     let discovery: SessionDiscoveryCoordinator
@@ -1199,6 +1210,7 @@ final class AppModel {
         agentControlSnapshotRefreshTask?.cancel()
         agentControlSnapshotRefreshTask = nil
         clearAgentControlSelection()
+        agentControlDetailPresentationRequests.removeAll()
         guard isAgentControlDeviceIntegrationStarted else { return }
 
         // Clear immediately while the connection is still live. Firmware's
@@ -1279,6 +1291,7 @@ final class AppModel {
         slotIndex: UInt8,
         snapshotGeneration: UInt16
     ) {
+        let previouslySelectedSessionID = agentControlSelectedSessionID
         clearAgentControlSelection()
 
         guard Int(slotIndex) < AgentControlProtocolV1.slotCount else {
@@ -1384,10 +1397,36 @@ final class AppModel {
 
         setAgentControlSelection(selection)
         select(sessionID: session.id)
+        let rememberedDetailState =
+            agentControlDetailPresentationRequests[session.id]?.isExpanded
+                ?? false
+        let expandsDetail = previouslySelectedSessionID == session.id
+            ? !rememberedDetailState
+            : rememberedDetailState
+        requestAgentControlDetailPresentation(
+            for: session.id,
+            isExpanded: expandsDetail
+        )
         notchOpen(
             reason: .click,
             surface: .sessionList(actionableSessionID: session.id)
         )
+    }
+
+    private func requestAgentControlDetailPresentation(
+        for sessionID: String,
+        isExpanded: Bool
+    ) {
+        agentControlDetailExpansionGeneration &+= 1
+        if agentControlDetailExpansionGeneration == 0 {
+            agentControlDetailExpansionGeneration = 1
+        }
+        agentControlDetailPresentationRequests[sessionID] =
+            AgentControlDetailPresentationRequest(
+                sessionID: sessionID,
+                generation: agentControlDetailExpansionGeneration,
+                isExpanded: isExpanded
+            )
     }
 
     private func handleAgentControlIslandToggle(

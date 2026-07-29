@@ -221,6 +221,214 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
+    func repeatedSelectedDigitPressesToggleItsDetailPresentation() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "first",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+        let snapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(snapshot.payload, at: 8)
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 1,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+
+        #expect(harness.model.agentControlSelectedSessionID == "first")
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["first"]
+                == AgentControlDetailPresentationRequest(
+                    sessionID: "first",
+                    generation: 1,
+                    isExpanded: false
+                )
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 2,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["first"]
+                == AgentControlDetailPresentationRequest(
+                    sessionID: "first",
+                    generation: 2,
+                    isExpanded: true
+                )
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 3,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["first"]
+                == AgentControlDetailPresentationRequest(
+                    sessionID: "first",
+                    generation: 3,
+                    isExpanded: false
+                )
+        )
+        #expect(harness.model.agentControlSelectedSessionID == "first")
+        #expect(harness.model.notchStatus == .opened)
+        #expect(
+            harness.model.islandSurface
+                == .sessionList(actionableSessionID: "first")
+        )
+    }
+
+    @Test
+    func detailStatesSurviveSwitchingSessionsAndIslandReopening() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "first",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+                makeSession(
+                    id: "second",
+                    firstSeenAt: now.addingTimeInterval(1),
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+        let snapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(snapshot.payload, at: 8)
+
+        for (sequence, slotIndex) in [
+            (UInt16(1), UInt8(0)),
+            (UInt16(2), UInt8(0)),
+            (UInt16(3), UInt8(1)),
+            (UInt16(4), UInt8(1)),
+        ] {
+            harness.transport.emit(
+                .report(
+                    try slotSelectionReport(
+                        sequence: sequence,
+                        slotIndex: slotIndex,
+                        generation: generation
+                    )
+                )
+            )
+        }
+
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["first"]?
+                .isExpanded == true
+        )
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["second"]?
+                .isExpanded == true
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 5,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.notchStatus == .closed)
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["first"]?
+                .isExpanded == true
+        )
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["second"]?
+                .isExpanded == true
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 6,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.selectedSessionID == "first")
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["first"]?
+                .isExpanded == true
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 7,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["first"]?
+                .isExpanded == false
+        )
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["second"]?
+                .isExpanded == true
+        )
+    }
+
+    @Test
     func zeroClosesAndReopensTheIslandWithoutSelectingAnAgent() throws {
         let harness = makeHarness(enabled: true)
         defer {

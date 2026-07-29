@@ -537,6 +537,12 @@ struct IslandPanelView: View {
         model.islandSurface.sessionID
     }
 
+    private func agentControlDetailPresentationRequest(
+        for sessionID: String
+    ) -> AgentControlDetailPresentationRequest? {
+        model.agentControlDetailPresentationRequests[sessionID]
+    }
+
     /// Whether the panel was opened by a notification (show only actionable session + footer).
     private var isNotificationMode: Bool {
         model.notchOpenReason == .notification && actionableSessionID != nil
@@ -621,6 +627,10 @@ struct IslandPanelView: View {
                     isActionable: true,
                     isHardwareSelected:
                         session.id == model.agentControlSelectedSessionID,
+                    detailPresentationRequest:
+                        agentControlDetailPresentationRequest(
+                            for: session.id
+                        ),
                     useDrawingGroup: model.notchStatus == .opened,
                     isInteractive: model.notchStatus == .opened,
                     presentation: .notification,
@@ -674,6 +684,10 @@ struct IslandPanelView: View {
                                 isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
                                 isHardwareSelected:
                                     session.id == model.agentControlSelectedSessionID,
+                                detailPresentationRequest:
+                                    agentControlDetailPresentationRequest(
+                                        for: session.id
+                                    ),
                                 useDrawingGroup: model.notchStatus == .opened,
                                 isInteractive: model.notchStatus == .opened,
                                 sideInset: sessionListSideInset,
@@ -736,6 +750,10 @@ struct IslandPanelView: View {
                         isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
                         isHardwareSelected:
                             session.id == model.agentControlSelectedSessionID,
+                        detailPresentationRequest:
+                            agentControlDetailPresentationRequest(
+                                for: session.id
+                            ),
                         useDrawingGroup: model.notchStatus == .opened,
                         isInteractive: model.notchStatus == .opened,
                         sideInset: sessionListSideInset,
@@ -1332,6 +1350,7 @@ private struct IslandSessionRow: View {
     var completedStaleThreshold: TimeInterval = AgentSession.staleCompletedDisplayThreshold
     var isActionable: Bool = false
     var isHardwareSelected: Bool = false
+    var detailPresentationRequest: AgentControlDetailPresentationRequest?
     var useDrawingGroup: Bool = true
     var isInteractive: Bool = true
     var presentation: IslandSessionRowPresentation = .list
@@ -1424,6 +1443,18 @@ private struct IslandSessionRow: View {
             if !interactive {
                 detailOverride = nil
             }
+        }
+        .onAppear {
+            applyDetailPresentationRequest(
+                detailPresentationRequest,
+                animated: false
+            )
+        }
+        .onChange(of: detailPresentationRequest) { _, request in
+            applyDetailPresentationRequest(
+                request,
+                animated: true
+            )
         }
         .contextMenu {
             if let onHide {
@@ -2153,6 +2184,20 @@ private struct IslandSessionRow: View {
     private func handlePrimaryTap() {
         guard isInteractive else { return }
         onJump()
+    }
+
+    private func applyDetailPresentationRequest(
+        _ request: AgentControlDetailPresentationRequest?,
+        animated: Bool
+    ) {
+        guard let request else { return }
+        if animated {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                detailOverride = request.isExpanded
+            }
+        } else {
+            detailOverride = request.isExpanded
+        }
     }
 
     private func detailToggleButton(isOpen: Bool) -> some View {
