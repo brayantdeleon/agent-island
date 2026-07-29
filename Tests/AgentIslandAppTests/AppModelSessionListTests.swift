@@ -1134,6 +1134,66 @@ struct AppModelSessionListTests {
     }
 
     @Test
+    func externallyResolvedApprovalCollapsesItsExpandedDetail() {
+        let now = Date(timeIntervalSince1970: 2_500)
+        let model = AppModel()
+        model.suppressFrontmostNotifications = false
+        model.state = SessionState(
+            sessions: [
+                listSession(
+                    id: "external-approval",
+                    phase: .running,
+                    updatedAt: now
+                ),
+            ]
+        )
+
+        model.applyTrackedEvent(
+            .permissionRequested(
+                PermissionRequested(
+                    sessionID: "external-approval",
+                    request: PermissionRequest(
+                        title: "Edit",
+                        summary: "Edit a file",
+                        affectedPath: "/tmp/file"
+                    ),
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        #expect(
+            model.agentControlDetailPresentationRequests[
+                "external-approval"
+            ]?.isExpanded == true
+        )
+
+        model.applyTrackedEvent(
+            .actionableStateResolved(
+                ActionableStateResolved(
+                    sessionID: "external-approval",
+                    summary: "Approval handled elsewhere.",
+                    timestamp: now.addingTimeInterval(2)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        #expect(
+            model.state.session(id: "external-approval")?.phase
+                == .running
+        )
+        #expect(
+            model.agentControlDetailPresentationRequests[
+                "external-approval"
+            ]?.isExpanded == false
+        )
+    }
+
+    @Test
     func hoverOpenedSessionListAutoCollapsesOnPointerExit() {
         let model = AppModel()
         model.notchStatus = .opened

@@ -60,7 +60,7 @@ struct AgentControlAppIntegrationTests {
             harness.model.agentControlHardwareBadgeLabel(
                 for: "running",
                 at: now
-            ) == "K0 · 1"
+            ) == nil
         )
 
         harness.model.startAgentControlDeviceIntegrationIfNeeded()
@@ -90,6 +90,13 @@ struct AgentControlAppIntegrationTests {
         )
         #expect(snapshot.payload[10] == 0)
         #expect(harness.model.agentControlDeviceDiagnostics.state == .ready)
+        #expect(harness.model.agentControlKeyboardModeActive)
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "running",
+                at: now
+            ) == "K0 · 1"
+        )
         #expect(
             harness.model.agentControlDeviceDiagnostics
                 .firmwareBuildIdentifier == 0xA41C_FB54
@@ -114,6 +121,111 @@ struct AgentControlAppIntegrationTests {
                 at: now
             ) == nil
         )
+    }
+
+    @Test
+    func connectionAutomaticallyControlsKeyboardModeWithoutChangingPointerDetail() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        let device = try #require(
+            harness.transport.automaticallyConnectedDevice
+        )
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "completed",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .completed
+                ),
+            ]
+        )
+        harness.model.setSessionDetailExpanded(
+            true,
+            for: "completed"
+        )
+
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        var hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        #expect(harness.model.agentControlKeyboardModeActive)
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "completed",
+                at: now
+            ) == "K0 · 1"
+        )
+
+        harness.transport.emit(
+            .disconnected(
+                device: device,
+                matchingDeviceCount: 0
+            )
+        )
+
+        #expect(!harness.model.agentControlKeyboardModeActive)
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "completed",
+                at: now
+            ) == nil
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["completed"]?
+                .isExpanded == true
+        )
+
+        harness.transport.emit(
+            .connected(
+                device: device,
+                matchingDeviceCount: 1
+            )
+        )
+        hello = try AgentControlPacketCodec.decode(
+            try #require(
+                harness.transport.sentReports.last {
+                    (try? AgentControlPacketCodec.decode($0).messageType)
+                        == .hello
+                }
+            )
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        #expect(harness.model.agentControlKeyboardModeActive)
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["completed"]?
+                .isExpanded == true
+        )
+    }
+
+    @Test
+    func keyboardDiscoveryDefaultsOnButStillAllowsExplicitOptOut() {
+        let suiteName =
+            "agent-island-control-settings-tests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = AgentControlDeviceSettingsStore(defaults: defaults)
+
+        #expect(store.loadEnabled())
+
+        store.saveEnabled(false)
+
+        #expect(!store.loadEnabled())
     }
 
     @Test
@@ -426,6 +538,321 @@ struct AgentControlAppIntegrationTests {
             harness.model.agentControlDetailPresentationRequests["second"]?
                 .isExpanded == true
         )
+    }
+
+    @Test
+    func approvalNotificationReopensRememberedCollapsedDetail() throws {
+        let harness = makeHarness(enabled: true)
+        let previousSuppression =
+            harness.model.suppressFrontmostNotifications
+        defer {
+            harness.model.suppressFrontmostNotifications =
+                previousSuppression
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        harness.model.suppressFrontmostNotifications = false
+
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "approval",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        _ = try connectAndSelectFirstSlot(harness)
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == false
+        )
+        harness.model.notchClose()
+
+        harness.model.applyTrackedEvent(
+            .permissionRequested(
+                PermissionRequested(
+                    sessionID: "approval",
+                    request: PermissionRequest(
+                        title: "Edit",
+                        summary: "Edit a file",
+                        affectedPath: "/tmp/file"
+                    ),
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == true
+        )
+        #expect(harness.model.notchOpenReason == .notification)
+        #expect(
+            harness.model.islandSurface
+                == .sessionList(actionableSessionID: "approval")
+        )
+
+        harness.model.expandNotificationToSessionList()
+
+        #expect(harness.model.notchOpenReason == .click)
+        #expect(
+            harness.model.islandSurface
+                == .sessionList(actionableSessionID: "approval")
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == true
+        )
+
+        harness.model.approvePermission(
+            for: "approval",
+            action: .allowOnce
+        )
+
+        #expect(
+            harness.model.state.session(id: "approval")?.phase
+                == .running
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == false
+        )
+    }
+
+    @Test
+    func completionNotificationReopensRememberedCollapsedDetail() throws {
+        let harness = makeHarness(enabled: true)
+        let previousSuppression =
+            harness.model.suppressFrontmostNotifications
+        defer {
+            harness.model.suppressFrontmostNotifications =
+                previousSuppression
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        harness.model.suppressFrontmostNotifications = false
+
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "completed",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        _ = try connectAndSelectFirstSlot(harness)
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["completed"]?
+                .isExpanded == false
+        )
+        harness.model.notchClose()
+
+        harness.model.applyTrackedEvent(
+            .sessionCompleted(
+                SessionCompleted(
+                    sessionID: "completed",
+                    summary: "Finished.",
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["completed"]?
+                .isExpanded == true
+        )
+        #expect(harness.model.notchOpenReason == .notification)
+        #expect(
+            harness.model.islandSurface
+                == .sessionList(actionableSessionID: "completed")
+        )
+
+        harness.model.expandNotificationToSessionList()
+
+        #expect(harness.model.notchOpenReason == .click)
+        #expect(
+            harness.model.islandSurface
+                == .sessionList(actionableSessionID: "completed")
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["completed"]?
+                .isExpanded == true
+        )
+    }
+
+    @Test
+    func statusGroupsSortByAscendingKeyboardSlotWithOverflowLast() throws {
+        let harness = makeHarness(enabled: true)
+        let previousGroup = harness.model.islandSessionGroup
+        let previousSort = harness.model.islandSessionSort
+        defer {
+            harness.model.islandSessionGroup = previousGroup
+            harness.model.islandSessionSort = previousSort
+            harness.model.agentControlKeyboardEnabled = false
+        }
+
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: (0..<10).map { index in
+                makeSession(
+                    id: "session-\(index)",
+                    firstSeenAt: now.addingTimeInterval(
+                        TimeInterval(index)
+                    ),
+                    updatedAt: now.addingTimeInterval(
+                        TimeInterval(index)
+                    ),
+                    phase: .running
+                )
+            }
+        )
+        harness.model.islandSessionSort = .lastUpdate
+        harness.model.islandSessionGroup = .state
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        let sections = harness.model.islandSessionSections(at: now)
+
+        #expect(sections.map(\.id) == ["state-running"])
+        #expect(
+            sections[0].sessions.map(\.id)
+                == (0..<10).map { "session-\($0)" }
+        )
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "session-0",
+                at: now
+            ) == "K0 · 1"
+        )
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "session-8",
+                at: now
+            ) == "K0 · 9"
+        )
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "session-9",
+                at: now
+            ) == nil
+        )
+    }
+
+    @Test
+    func manualCompactionMovesRemainingRunningSessionToFirstSlot() throws {
+        let harness = makeHarness(enabled: true)
+        let previousThreshold = harness.model.completedStaleThreshold
+        defer {
+            harness.model.completedStaleThreshold = previousThreshold
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        harness.model.completedStaleThreshold = .fiveMinutes
+
+        let start = Date(timeIntervalSince1970: 10_000)
+        harness.model.state = SessionState(
+            sessions: (0..<4).map { index in
+                makeSession(
+                    id: "session-\(index)",
+                    firstSeenAt: start.addingTimeInterval(
+                        TimeInterval(index)
+                    ),
+                    updatedAt: start.addingTimeInterval(
+                        TimeInterval(index)
+                    ),
+                    phase: .running
+                )
+            }
+        )
+        _ = harness.model.agentControlSlotProjection(
+            at: start.addingTimeInterval(4)
+        )
+        #expect(
+            harness.model.agentControlSlotProjection(
+                at: start.addingTimeInterval(4)
+            ).slot(for: "session-3")?.index == 3
+        )
+
+        let referenceDate = start.addingTimeInterval(606)
+        harness.model.state = SessionState(
+            sessions: (0..<4).map { index in
+                makeSession(
+                    id: "session-\(index)",
+                    firstSeenAt: start.addingTimeInterval(
+                        TimeInterval(index)
+                    ),
+                    updatedAt: index < 3
+                        ? start.addingTimeInterval(5)
+                        : referenceDate,
+                    phase: index < 3 ? .completed : .running
+                )
+            }
+        )
+
+        #expect(
+            harness.model.agentControlSlotProjection(
+                at: referenceDate
+            ).slot(for: "session-3")?.index == 3
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+        let snapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(snapshot.payload, at: 8)
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 1,
+                    slotIndex: 3,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.agentControlSelectedSessionID
+                == "session-3"
+        )
+
+        harness.model.compactAgentControlSlots(
+            at: referenceDate
+        )
+
+        #expect(
+            harness.model.agentControlSlotProjection(
+                at: referenceDate
+            ).slot(for: "session-3")?.index == 0
+        )
+        #expect(
+            AgentControlSlotAssignmentStore(
+                defaults: harness.defaults
+            ).load()["session-3"] == 0
+        )
+        #expect(harness.model.agentControlSelectedSessionID == nil)
     }
 
     @Test
@@ -872,12 +1299,21 @@ struct AgentControlAppIntegrationTests {
             ]
         )
         harness.model.isBridgeReady = true
-        let token = try connectAndSelectFirstSlot(harness)
+        _ = try connectAndSelectFirstSlot(harness)
+        let token = try selectFirstSlot(
+            harness,
+            sequence: 2
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == true
+        )
 
         harness.transport.emit(
             .report(
                 try actionReport(
-                    sequence: 2,
+                    sequence: 3,
                     action: .deny,
                     token: token
                 )
@@ -893,6 +1329,11 @@ struct AgentControlAppIntegrationTests {
         #expect(spy.calls.first?.resolution.isApproved == false)
         #expect(
             harness.model.state.session(id: "approval")?.phase == .completed
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == false
         )
     }
 

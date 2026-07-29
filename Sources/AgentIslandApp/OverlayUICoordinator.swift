@@ -170,6 +170,7 @@ final class OverlayUICoordinator {
                 self?.autoCollapseSurfaceHasBeenEntered = false
                 self?.isPointerInsideIslandSurface = false
                 self?.appModel?.measuredNotificationContentHeight = 0
+                self?.appModel?.measuredSessionRowsContentHeight = 0
             }
         )
     }
@@ -197,6 +198,7 @@ final class OverlayUICoordinator {
         // measurements from a previous notification don't mis-size the new one.
         if surface != islandSurface {
             appModel?.measuredNotificationContentHeight = 0
+            appModel?.measuredSessionRowsContentHeight = 0
         }
 
         islandSurface = surface
@@ -246,13 +248,9 @@ final class OverlayUICoordinator {
     func hideOverlay() { notchClose() }
 
     /// Transition from notification mode (single session) to full session list.
-    /// - Parameter clearExpansion: If true, clears the actionable session's expansion
-    ///   (used for completion notifications which are informational only).
-    func expandNotificationToSessionList(clearExpansion: Bool = false) {
-        if clearExpansion {
-            islandSurface = .sessionList()
-        }
-        // When not clearing, keep actionableSessionID so approval/question expansion persists
+    /// Keep the actionable session ID so the notified row stays expanded and
+    /// is scrolled into view in the full list.
+    func expandNotificationToSessionList() {
         notchOpenReason = .click
         notificationAutoCollapseTask?.cancel()
         notificationAutoCollapseTask = nil

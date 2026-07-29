@@ -10,6 +10,13 @@ private struct NotificationContentHeightKey: PreferenceKey {
     }
 }
 
+private struct SessionRowsContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private struct ContentHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -589,6 +596,15 @@ struct IslandPanelView: View {
                     ScrollViewReader { proxy in
                         ScrollView(.vertical) {
                             sessionRowsContent(referenceDate: referenceDate)
+                                .background(
+                                    GeometryReader { geometry in
+                                        Color.clear.preference(
+                                            key: SessionRowsContentHeightKey
+                                                .self,
+                                            value: geometry.size.height
+                                        )
+                                    }
+                                )
                         }
                         .scrollIndicators(.hidden)
                         .scrollBounceBehavior(.basedOnSize)
@@ -597,6 +613,14 @@ struct IslandPanelView: View {
                         }
                         .onChange(of: actionableSessionID) {
                             scrollToActionableSession(using: proxy)
+                        }
+                        .onPreferenceChange(
+                            SessionRowsContentHeightKey.self
+                        ) { height in
+                            if height > 0 {
+                                model.measuredSessionRowsContentHeight =
+                                    height
+                            }
                         }
                     }
 
@@ -626,7 +650,9 @@ struct IslandPanelView: View {
                     completedStaleThreshold: model.completedStaleThreshold.seconds,
                     isActionable: true,
                     isHardwareSelected:
-                        session.id == model.agentControlSelectedSessionID,
+                        model.agentControlKeyboardModeActive
+                            && session.id
+                                == model.agentControlSelectedSessionID,
                     detailPresentationRequest:
                         agentControlDetailPresentationRequest(
                             for: session.id
@@ -636,11 +662,17 @@ struct IslandPanelView: View {
                     presentation: .notification,
                     sideInset: sessionListSideInset,
                     lang: model.lang,
+                    onDetailPresentationChange: {
+                        model.setSessionDetailExpanded(
+                            $0,
+                            for: session.id
+                        )
+                    },
                     onApprove: { model.approvePermission(for: session.id, action: $0) },
                     onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
                     onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                         ? { model.replyToSession(session, text: $0) } : nil,
-                    onJump: { model.jumpToSession(session) },
+                    onJump: { model.expandNotificationToSessionList() },
                     onHide: model.isSessionHidden(session)
                         ? nil : { model.hideSession(session) },
                     onUnhide: model.isSessionHidden(session)
@@ -651,8 +683,7 @@ struct IslandPanelView: View {
                 let visibleSessionCount = model.islandListSessions.count
                 if visibleSessionCount > 1 {
                     Button {
-                        let isCompletion = session.phase == .completed
-                        model.expandNotificationToSessionList(clearExpansion: isCompletion)
+                        model.expandNotificationToSessionList()
                     } label: {
                         Text(model.lang.t("island.showAll", visibleSessionCount))
                             .font(.system(size: 10.5, weight: .medium))
@@ -683,7 +714,9 @@ struct IslandPanelView: View {
                                 completedStaleThreshold: model.completedStaleThreshold.seconds,
                                 isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
                                 isHardwareSelected:
-                                    session.id == model.agentControlSelectedSessionID,
+                                    model.agentControlKeyboardModeActive
+                                        && session.id
+                                            == model.agentControlSelectedSessionID,
                                 detailPresentationRequest:
                                     agentControlDetailPresentationRequest(
                                         for: session.id
@@ -692,6 +725,12 @@ struct IslandPanelView: View {
                                 isInteractive: model.notchStatus == .opened,
                                 sideInset: sessionListSideInset,
                                 lang: model.lang,
+                                onDetailPresentationChange: {
+                                    model.setSessionDetailExpanded(
+                                        $0,
+                                        for: session.id
+                                    )
+                                },
                                 onApprove: { model.approvePermission(for: session.id, action: $0) },
                                 onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
                                 onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
@@ -749,7 +788,9 @@ struct IslandPanelView: View {
                         completedStaleThreshold: model.completedStaleThreshold.seconds,
                         isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
                         isHardwareSelected:
-                            session.id == model.agentControlSelectedSessionID,
+                            model.agentControlKeyboardModeActive
+                                && session.id
+                                    == model.agentControlSelectedSessionID,
                         detailPresentationRequest:
                             agentControlDetailPresentationRequest(
                                 for: session.id
@@ -758,6 +799,12 @@ struct IslandPanelView: View {
                         isInteractive: model.notchStatus == .opened,
                         sideInset: sessionListSideInset,
                         lang: model.lang,
+                        onDetailPresentationChange: {
+                            model.setSessionDetailExpanded(
+                                $0,
+                                for: session.id
+                            )
+                        },
                         onApprove: { model.approvePermission(for: session.id, action: $0) },
                         onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
                         onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
@@ -829,11 +876,23 @@ struct IslandPanelView: View {
                             stateIndicator: model.islandSessionStateIndicator,
                             completedStaleThreshold: model.completedStaleThreshold.seconds,
                             isHardwareSelected:
-                                session.id == model.agentControlSelectedSessionID,
+                                model.agentControlKeyboardModeActive
+                                    && session.id
+                                        == model.agentControlSelectedSessionID,
+                            detailPresentationRequest:
+                                agentControlDetailPresentationRequest(
+                                    for: session.id
+                                ),
                             useDrawingGroup: model.notchStatus == .opened,
                             isInteractive: model.notchStatus == .opened,
                             sideInset: sessionListSideInset,
                             lang: model.lang,
+                            onDetailPresentationChange: {
+                                model.setSessionDetailExpanded(
+                                    $0,
+                                    for: session.id
+                                )
+                            },
                             onJump: { model.jumpToSession(session) },
                             onUnhide: { model.unhideSession(session) }
                         )
@@ -1342,6 +1401,33 @@ private enum IslandSessionRowPresentation {
     case notification
 }
 
+enum IslandSessionEmbeddedDetailPolicy {
+    static func shouldShow(
+        phase: SessionPhase,
+        completionHasExpandedBody: Bool,
+        runningDetailAvailable: Bool
+    ) -> Bool {
+        switch phase {
+        case .waitingForApproval, .waitingForAnswer:
+            true
+        case .completed:
+            completionHasExpandedBody
+        case .running:
+            runningDetailAvailable
+        }
+    }
+}
+
+enum IslandSessionDrawingGroupPolicy {
+    static func isEnabled(
+        requested: Bool,
+        isActionable: Bool,
+        showsDetail: Bool
+    ) -> Bool {
+        requested && !isActionable && !showsDetail
+    }
+}
+
 private struct IslandSessionRow: View {
     let session: AgentSession
     let referenceDate: Date
@@ -1356,6 +1442,7 @@ private struct IslandSessionRow: View {
     var presentation: IslandSessionRowPresentation = .list
     var sideInset: CGFloat = 16
     var lang: LanguageManager = .shared
+    var onDetailPresentationChange: ((Bool) -> Void)?
     var onApprove: ((ApprovalAction) -> Void)?
     var onAnswer: ((QuestionPromptResponse) -> Void)?
     var onReply: ((String) -> Void)?
@@ -1431,7 +1518,15 @@ private struct IslandSessionRow: View {
             }
         }
         .opacity(isStaleCompleted ? 0.7 : 1)
-        .modifier(ConditionalDrawingGroup(enabled: useDrawingGroup && !isActionable))
+        .modifier(
+            ConditionalDrawingGroup(
+                enabled: IslandSessionDrawingGroupPolicy.isEnabled(
+                    requested: useDrawingGroup,
+                    isActionable: isActionable,
+                    showsDetail: showsDetail
+                )
+            )
+        )
         .contentShape(Rectangle())
         .animation(.easeInOut(duration: 0.15), value: isHighlighted)
         .onTapGesture(perform: handlePrimaryTap)
@@ -1789,13 +1884,11 @@ private struct IslandSessionRow: View {
     }
 
     private var shouldShowEmbeddedDetailBody: Bool {
-        if session.phase.requiresAttention {
-            return true
-        }
-        if session.phase == .completed {
-            return isActionable && completionHasExpandedBody
-        }
-        return session.phase == .running && runningDetailText != nil
+        IslandSessionEmbeddedDetailPolicy.shouldShow(
+            phase: session.phase,
+            completionHasExpandedBody: completionHasExpandedBody,
+            runningDetailAvailable: runningDetailText != nil
+        )
     }
 
     private var completionHasExpandedBody: Bool {
@@ -2203,8 +2296,13 @@ private struct IslandSessionRow: View {
     private func detailToggleButton(isOpen: Bool) -> some View {
         Button {
             guard isInteractive else { return }
-            withAnimation(.easeInOut(duration: 0.2)) {
-                detailOverride = !isOpen
+            let isExpanded = !isOpen
+            if let onDetailPresentationChange {
+                onDetailPresentationChange(isExpanded)
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    detailOverride = isExpanded
+                }
             }
         } label: {
             Image(systemName: "chevron.down")
