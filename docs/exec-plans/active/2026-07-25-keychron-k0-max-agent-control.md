@@ -576,14 +576,23 @@ On 2026-07-28:
   tokens, feedback, and duplicate-sequence containment in Round 5, so Round 8
   requires no firmware change or reflash.
 - The complete CI harness passes localization linting, documentation checks,
-  473 Swift Testing tests, 27 XCTest tests, and a clean debug build. The
+  477 Swift Testing tests, 27 XCTest tests, and a clean debug build. The
   request-identity suites include exact command codec coverage plus bridge
   replacement, replay, question, and disconnect cases.
 - The non-interactive live USB gate passes against the connected K0 Max:
   production IOHID discovery, handshake, AppModel state projection, host
-  restart, and clearing snapshots all succeeded. The physical `+`/`-` test is
-  intentionally deferred until a person is present to select a disposable
-  request; no unplug/replug prompt was run unattended.
+  restart, and clearing snapshots all succeeded. No unplug/replug prompt was
+  run unattended.
+- On 2026-07-29, disposable synthetic permission requests completed the
+  physical USB action gate. A red-pulsing slot accepted exact numbered
+  selection; `+` returned an allow-once directive and `-` returned a deny
+  directive without executing a command or modifying a file.
+- Number selection also gained a hardware-native detail interaction: the
+  first press opens the island and highlights the exact thread, while
+  subsequent presses of that selected number toggle its detail disclosure.
+  Each numbered thread remembers its own disclosure state across selection
+  changes and closing/reopening the island with `0`. Manual multi-thread
+  testing confirmed the remembered open and closed states.
 
 ### Round 9 — Packaging and support
 
