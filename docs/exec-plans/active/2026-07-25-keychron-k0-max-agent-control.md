@@ -358,9 +358,10 @@ On 2026-07-28:
 - The opt-in live USB test passed against diagnostic firmware build
   `0x4103537d`: real IOHID discovery, handshake, snapshot, coordinator stop,
   a new host connection, and an empty clearing snapshot all completed.
-- The first manual unplug/replug test window timed out before a physical
-  disconnect was observed. The deterministic removal/reconnect path passes,
-  but the real removal-callback gate remains pending a repeated manual run.
+- The opt-in manual USB unplug/replug test passed. The real removal callback
+  returned the coordinator to searching, reconnect rediscovered the keyboard,
+  and a fresh handshake returned the coordinator to ready without restarting
+  the host process.
 
 The production coordinator is not started by `AppModel` in this round.
 Opt-in preference, visible device status, and real session snapshot wiring
