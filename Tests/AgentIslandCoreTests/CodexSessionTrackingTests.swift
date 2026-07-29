@@ -88,11 +88,19 @@ struct CodexSessionTrackingTests {
             phase: .waitingForApproval,
             updatedAt: .now
         )
+        let unattributedFixtureRecord = CodexTrackedSessionRecord(
+            sessionID: "session-1",
+            title: "Test",
+            summary: "Done",
+            phase: .completed,
+            updatedAt: .now
+        )
 
         #expect(liveRecord.shouldRestoreToLiveState)
         #expect(!demoRecord.shouldRestoreToLiveState)
         #expect(!legacyMockRecord.shouldRestoreToLiveState)
         #expect(!debugScenarioRecord.shouldRestoreToLiveState)
+        #expect(!unattributedFixtureRecord.shouldRestoreToLiveState)
     }
 
     @Test
@@ -1214,6 +1222,73 @@ struct CodexSessionTrackingTests {
     }
 
     @Test
+    func codexRolloutDiscoverySkipsInternalGuardianSessions() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "agent-island-discovery-guardian-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let rolloutDirectoryURL = rootURL.appendingPathComponent(
+            "2026/04/02",
+            isDirectory: true
+        )
+        let guardianURL = rolloutDirectoryURL.appendingPathComponent(
+            "rollout-guardian.jsonl"
+        )
+        let userThreadURL = rolloutDirectoryURL.appendingPathComponent(
+            "rollout-user-thread.jsonl"
+        )
+        let now = Date(timeIntervalSince1970: 1_743_555_200)
+
+        try FileManager.default.createDirectory(
+            at: rolloutDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try sessionMetaLine(
+            sessionID: "guardian-session",
+            timestamp: "2026-04-02T04:03:44.000Z",
+            cwd: "/Users/wangruobing/Personal/agent-island",
+            source: [
+                "subagent": [
+                    "other": "guardian",
+                ],
+            ]
+        )
+        .appending("\n")
+        .write(to: guardianURL, atomically: true, encoding: .utf8)
+        try sessionMetaLine(
+            sessionID: "user-session",
+            timestamp: "2026-04-02T04:03:45.000Z",
+            cwd: "/Users/wangruobing/Personal/agent-island"
+        )
+        .appending("\n")
+        .write(to: userThreadURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.modificationDate: now],
+            ofItemAtPath: guardianURL.path
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: now],
+            ofItemAtPath: userThreadURL.path
+        )
+
+        let discovery = CodexRolloutDiscovery(
+            rootURL: rootURL,
+            fileManager: .default,
+            maxAge: 86_400,
+            maxFiles: 10
+        )
+
+        let records = discovery.discoverRecentSessions(now: now)
+
+        #expect(records.map(\.sessionID) == ["user-session"])
+    }
+
+    @Test
     func codexRolloutDiscoveryStreamsRolloutsLargerThanReadChunk() throws {
         // Pins streaming behavior across read-chunk boundaries. The
         // discovery path used to slurp the whole rollout via
@@ -1392,7 +1467,8 @@ private func rolloutLine(
 private func sessionMetaLine(
     sessionID: String,
     timestamp: String,
-    cwd: String
+    cwd: String,
+    source: Any = "cli"
 ) -> String {
     rolloutLine(
         timestamp: timestamp,
@@ -1402,7 +1478,7 @@ private func sessionMetaLine(
             "timestamp": timestamp,
             "cwd": cwd,
             "originator": "codex-tui",
-            "source": "cli",
+            "source": source,
         ]
     )
 }

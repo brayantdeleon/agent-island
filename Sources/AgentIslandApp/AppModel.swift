@@ -114,7 +114,7 @@ final class AppModel {
     private(set) var agentControlSelectedSessionID: String?
     let hooks = HookInstallationCoordinator()
     let overlay = OverlayUICoordinator()
-    let discovery = SessionDiscoveryCoordinator()
+    let discovery: SessionDiscoveryCoordinator
     let monitoring = ProcessMonitoringCoordinator()
     let codexAppServer = CodexAppServerCoordinator()
     let updateChecker = UpdateChecker()
@@ -658,11 +658,13 @@ final class AppModel {
         agentControlSelectionTokenGenerator: @escaping () -> UInt64 = {
             UInt64.random(in: 1...UInt64.max)
         },
-        agentControlDateProvider: @escaping () -> Date = Date.init
+        agentControlDateProvider: @escaping () -> Date = Date.init,
+        discovery: SessionDiscoveryCoordinator = SessionDiscoveryCoordinator()
     ) {
         self.terminalJumpAction = terminalJumpAction
         self.isNotificationSessionAlreadyFrontmost = isNotificationSessionAlreadyFrontmost
         self.hiddenSessionStore = hiddenSessionStore
+        self.discovery = discovery
         self.agentControlSlotCoordinator = AgentControlSlotCoordinator(
             store: agentControlSlotAssignmentStore
         )
@@ -2171,12 +2173,16 @@ final class AppModel {
             monitoring.markSessionProcessAlive(for: event)
         }
         synchronizeSelection()
-        discovery.refreshCodexRolloutTracking()
         refreshOverlayPlacementIfVisible()
-        discovery.scheduleCodexSessionPersistence()
-        discovery.scheduleClaudeSessionPersistence()
-        discovery.scheduleOpenCodeSessionPersistence()
-        discovery.scheduleCursorSessionPersistence()
+        // Constructing or exercising an AppModel before startup must remain
+        // side-effect free; in particular, tests must not touch user registries.
+        if hasStarted {
+            discovery.refreshCodexRolloutTracking()
+            discovery.scheduleCodexSessionPersistence()
+            discovery.scheduleClaudeSessionPersistence()
+            discovery.scheduleOpenCodeSessionPersistence()
+            discovery.scheduleCursorSessionPersistence()
+        }
 
         // Push relevant events to the Watch/iPhone via the relay
         if let relay = watchRelay {

@@ -157,7 +157,14 @@ public extension CodexTrackedSessionRecord {
     }
 
     var shouldRestoreToLiveState: Bool {
-        origin != .demo && !LegacyMockSessionIDs.all.contains(sessionID)
+        let hasLiveSessionEvidence =
+            origin == .live
+            || jumpTarget != nil
+            || codexMetadata?.isEmpty == false
+
+        return hasLiveSessionEvidence
+            && origin != .demo
+            && !LegacyMockSessionIDs.all.contains(sessionID)
     }
 }
 
@@ -606,6 +613,11 @@ public final class CodexRolloutDiscovery: @unchecked Sendable {
         }
 
         let payload = object["payload"] as? [String: Any] ?? [:]
+        // Codex creates guardian subagents to assess tool safety. Their
+        // rollouts are internal implementation details, not user threads.
+        guard !isInternalGuardianSession(payload) else {
+            return nil
+        }
         guard let sessionID = payload["id"] as? String,
               !sessionID.isEmpty,
               let cwd = payload["cwd"] as? String,
@@ -620,6 +632,16 @@ public final class CodexRolloutDiscovery: @unchecked Sendable {
                 (payload["timestamp"] as? String) ?? (object["timestamp"] as? String)
             )
         )
+    }
+
+    private func isInternalGuardianSession(_ payload: [String: Any]) -> Bool {
+        guard let source = payload["source"] as? [String: Any],
+              let subagent = source["subagent"] as? [String: Any],
+              let role = subagent["other"] as? String else {
+            return false
+        }
+
+        return role.caseInsensitiveCompare("guardian") == .orderedSame
     }
 
     private func extractCompleteLines(from buffer: inout Data) -> [String] {
