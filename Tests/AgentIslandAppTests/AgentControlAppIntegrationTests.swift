@@ -498,6 +498,21 @@ struct AgentControlAppIntegrationTests {
                 .agentControlDetailPresentationRequests["approval"]?
                 .isExpanded == true
         )
+
+        harness.model.approvePermission(
+            for: "approval",
+            action: .allowOnce
+        )
+
+        #expect(
+            harness.model.state.session(id: "approval")?.phase
+                == .running
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == false
+        )
     }
 
     @Test
@@ -622,6 +637,103 @@ struct AgentControlAppIntegrationTests {
                 at: now
             ) == nil
         )
+    }
+
+    @Test
+    func manualCompactionMovesRemainingRunningSessionToFirstSlot() throws {
+        let harness = makeHarness(enabled: true)
+        let previousThreshold = harness.model.completedStaleThreshold
+        defer {
+            harness.model.completedStaleThreshold = previousThreshold
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        harness.model.completedStaleThreshold = .fiveMinutes
+
+        let start = Date(timeIntervalSince1970: 10_000)
+        harness.model.state = SessionState(
+            sessions: (0..<4).map { index in
+                makeSession(
+                    id: "session-\(index)",
+                    firstSeenAt: start.addingTimeInterval(
+                        TimeInterval(index)
+                    ),
+                    updatedAt: start.addingTimeInterval(
+                        TimeInterval(index)
+                    ),
+                    phase: .running
+                )
+            }
+        )
+        _ = harness.model.agentControlSlotProjection(
+            at: start.addingTimeInterval(4)
+        )
+        #expect(
+            harness.model.agentControlSlotProjection(
+                at: start.addingTimeInterval(4)
+            ).slot(for: "session-3")?.index == 3
+        )
+
+        let referenceDate = start.addingTimeInterval(606)
+        harness.model.state = SessionState(
+            sessions: (0..<4).map { index in
+                makeSession(
+                    id: "session-\(index)",
+                    firstSeenAt: start.addingTimeInterval(
+                        TimeInterval(index)
+                    ),
+                    updatedAt: index < 3
+                        ? start.addingTimeInterval(5)
+                        : referenceDate,
+                    phase: index < 3 ? .completed : .running
+                )
+            }
+        )
+
+        #expect(
+            harness.model.agentControlSlotProjection(
+                at: referenceDate
+            ).slot(for: "session-3")?.index == 3
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+        let snapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(snapshot.payload, at: 8)
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 1,
+                    slotIndex: 3,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.agentControlSelectedSessionID
+                == "session-3"
+        )
+
+        harness.model.compactAgentControlSlots(
+            at: referenceDate
+        )
+
+        #expect(
+            harness.model.agentControlSlotProjection(
+                at: referenceDate
+            ).slot(for: "session-3")?.index == 0
+        )
+        #expect(
+            AgentControlSlotAssignmentStore(
+                defaults: harness.defaults
+            ).load()["session-3"] == 0
+        )
+        #expect(harness.model.agentControlSelectedSessionID == nil)
     }
 
     @Test
@@ -1068,12 +1180,21 @@ struct AgentControlAppIntegrationTests {
             ]
         )
         harness.model.isBridgeReady = true
-        let token = try connectAndSelectFirstSlot(harness)
+        _ = try connectAndSelectFirstSlot(harness)
+        let token = try selectFirstSlot(
+            harness,
+            sequence: 2
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == true
+        )
 
         harness.transport.emit(
             .report(
                 try actionReport(
-                    sequence: 2,
+                    sequence: 3,
                     action: .deny,
                     token: token
                 )
@@ -1089,6 +1210,11 @@ struct AgentControlAppIntegrationTests {
         #expect(spy.calls.first?.resolution.isApproved == false)
         #expect(
             harness.model.state.session(id: "approval")?.phase == .completed
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["approval"]?
+                .isExpanded == false
         )
     }
 

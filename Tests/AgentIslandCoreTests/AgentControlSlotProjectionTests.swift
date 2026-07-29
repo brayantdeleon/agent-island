@@ -38,6 +38,33 @@ struct AgentControlSlotProjectionTests {
     }
 
     @Test
+    func explicitCompactionClosesGapsWithoutChangingRelativeOrder() {
+        let start = Date(timeIntervalSince1970: 2_500)
+        var allocator = AgentControlSlotAllocator()
+        let initial = [
+            candidate("A", at: start),
+            candidate("B", at: start.addingTimeInterval(1)),
+            candidate("C", at: start.addingTimeInterval(2)),
+            candidate("D", at: start.addingTimeInterval(3)),
+        ]
+        _ = allocator.reconcile(candidates: initial)
+
+        let remaining = [initial[1], initial[3]]
+        let stableProjection = allocator.reconcile(
+            candidates: remaining
+        )
+        #expect(slotMap(stableProjection) == ["B": 1, "D": 3])
+
+        let compactedProjection = allocator.compact(
+            candidates: Array(remaining.reversed())
+        )
+
+        #expect(slotMap(compactedProjection) == ["B": 0, "D": 1])
+        #expect(allocator.preferredSlots["B"] == 0)
+        #expect(allocator.preferredSlots["D"] == 1)
+    }
+
+    @Test
     func temporarilyMissingSessionReclaimsItsPreferredSlotWhenFree() {
         let start = Date(timeIntervalSince1970: 3_000)
         var allocator = AgentControlSlotAllocator()

@@ -125,7 +125,9 @@ derive their own presentations from the same stable ordering data.
   Island's existing surfacing rule.
 - At bulk startup, order newcomers by `firstSeenAt` and then session ID.
 - After startup, assign a newly observed session to the first free slot.
-- Do not renumber eligible live or recently completed sessions.
+- Do not renumber eligible live or recently completed sessions during routine
+  updates. The island's explicit refresh action may compact the currently
+  eligible assignments toward `1` while preserving their relative key order.
 - Persist assignments by stable session ID so app restart does not scramble
   the physical mapping.
 - Keep completed sessions green until the configured completed-stale
@@ -593,6 +595,10 @@ On 2026-07-28:
   Each numbered thread remembers its own disclosure state across selection
   changes and closing/reopening the island with `0`. Manual multi-thread
   testing confirmed the remembered open and closed states.
+- A presentation follow-up makes approval and completion notifications open
+  their detail automatically, then closes approval detail after allow or deny.
+  The explicit island refresh action also compacts gaps in the live K0 mapping
+  without introducing automatic renumbering during ordinary session updates.
 
 ### Round 9 — Packaging and support
 

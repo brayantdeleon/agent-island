@@ -1229,6 +1229,29 @@ final class AppModel {
         return "K0 · \(keyLabel)"
     }
 
+    /// Manual refresh is the explicit boundary where stable physical
+    /// assignments may be renumbered. Routine session updates continue to
+    /// preserve every active key.
+    func compactAgentControlSlots(
+        at referenceDate: Date = .now
+    ) {
+        guard agentControlKeyboardEnabled else {
+            return
+        }
+
+        clearAgentControlSelection()
+        _ = agentControlSlotCoordinator.compactAssignments(
+            for: surfacedSessions,
+            at: referenceDate,
+            completedStaleThreshold: completedStaleThreshold.seconds,
+            canResolveExactPermissionRequest: { [self] session in
+                canResolveAgentControlPermission(for: session)
+            }
+        )
+        updateAgentControlDeviceSnapshot(at: referenceDate)
+        refreshOverlayPlacementIfVisible()
+    }
+
     var agentControlDeviceDiagnostics: AgentControlDeviceDiagnostics {
         agentControlDeviceCoordinator.diagnostics
     }
@@ -1740,6 +1763,10 @@ final class AppModel {
             requestID: requestID,
             resolution: resolution
         )
+        requestAgentControlDetailPresentation(
+            for: session.id,
+            isExpanded: false
+        )
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
         clearAgentControlSelection()
@@ -2229,6 +2256,7 @@ final class AppModel {
     }
 
     func refreshSessionsManually() {
+        compactAgentControlSlots()
         discovery.refreshCodexAppSessions()
     }
 
@@ -2376,6 +2404,10 @@ final class AppModel {
             return
         }
 
+        requestAgentControlDetailPresentation(
+            for: session.id,
+            isExpanded: false
+        )
         dismissNotificationSurfaceIfPresent(for: session.id)
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
@@ -2467,6 +2499,14 @@ final class AppModel {
             guard case let .sessionCompleted(payload) = event else { return false }
             return state.session(id: payload.sessionID)?.phase == .completed
         }()
+        let resolvedPermissionSessionID: String? = {
+            guard case let .actionableStateResolved(payload) = event,
+                  state.session(id: payload.sessionID)?.phase
+                    == .waitingForApproval else {
+                return nil
+            }
+            return payload.sessionID
+        }()
 
         // Guard: don't let rollout events downgrade a session from completed
         // back to running. The bridge's sessionCompleted is authoritative; the
@@ -2492,6 +2532,12 @@ final class AppModel {
         }
 
         state.apply(event)
+        if let resolvedPermissionSessionID {
+            requestAgentControlDetailPresentation(
+                for: resolvedPermissionSessionID,
+                isExpanded: false
+            )
+        }
         reconcileIslandSurfaceAfterStateChange()
         if ingress == .bridge {
             monitoring.markSessionAttached(for: event)
