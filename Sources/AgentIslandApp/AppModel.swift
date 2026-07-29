@@ -886,6 +886,20 @@ final class AppModel {
         }
     }
 
+    /// Natural height of the rows inside the ordinary session-list scroller.
+    /// Using SwiftUI's measured value keeps the AppKit panel aligned with the
+    /// actual expanded detail body instead of a phase-based estimate.
+    var measuredSessionRowsContentHeight: CGFloat = 0 {
+        didSet {
+            let delta = abs(
+                measuredSessionRowsContentHeight - oldValue
+            )
+            if delta >= 2, measuredSessionRowsContentHeight > 0 {
+                overlay.refreshOverlayPlacementIfVisible()
+            }
+        }
+    }
+
     var surfacedSessions: [AgentSession] {
         sessionBuckets.primary.filter(shouldSurfaceSession)
     }

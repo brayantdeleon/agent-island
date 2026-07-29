@@ -170,6 +170,7 @@ final class OverlayUICoordinator {
                 self?.autoCollapseSurfaceHasBeenEntered = false
                 self?.isPointerInsideIslandSurface = false
                 self?.appModel?.measuredNotificationContentHeight = 0
+                self?.appModel?.measuredSessionRowsContentHeight = 0
             }
         )
     }
@@ -197,6 +198,7 @@ final class OverlayUICoordinator {
         // measurements from a previous notification don't mis-size the new one.
         if surface != islandSurface {
             appModel?.measuredNotificationContentHeight = 0
+            appModel?.measuredSessionRowsContentHeight = 0
         }
 
         islandSurface = surface

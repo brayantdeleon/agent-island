@@ -446,6 +446,10 @@ On 2026-07-28:
   compatible device completes its handshake and deactivate immediately on
   disconnect. Pointer selection and detail disclosure remain independent of
   that connection state.
+- Ordinary session-list panel sizing now follows the measured SwiftUI row
+  content after disclosure changes. Phase-based completion estimates remain a
+  first-frame fallback only, preventing expanded cursor or keyboard details
+  from reserving unused vertical space.
 - AppModel now converts the shared ten-slot projection into anonymous device
   snapshots on session, hidden-state, display-profile, and completion-window
   changes. A scheduled refresh turns recently completed slots off when the

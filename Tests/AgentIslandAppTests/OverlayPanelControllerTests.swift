@@ -204,6 +204,33 @@ struct OverlayPanelControllerTests {
         #expect(selectedExpandedHeight > selectedCollapsedHeight)
     }
 
+    @Test @MainActor
+    func ordinaryListUsesMeasuredRowsInsteadOfExpandedBodyEstimate() {
+        let model = AppModel()
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "measured-row",
+                    title: "Completed task",
+                    tool: .codex,
+                    phase: .completed,
+                    summary: String(repeating: "Long response. ", count: 80),
+                    updatedAt: .now
+                ),
+            ]
+        )
+        model.notchOpenReason = .click
+        model.islandSurface = .sessionList()
+        model.setSessionDetailExpanded(true, for: "measured-row")
+        model.measuredSessionRowsContentHeight = 180
+
+        let controller = OverlayPanelController()
+
+        #expect(
+            controller.openedContentHeight(for: model) == 230
+        )
+    }
+
     // MARK: - islandClosedHeight
 
     @Test

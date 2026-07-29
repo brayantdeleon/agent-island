@@ -10,6 +10,13 @@ private struct NotificationContentHeightKey: PreferenceKey {
     }
 }
 
+private struct SessionRowsContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private struct ContentHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -589,6 +596,15 @@ struct IslandPanelView: View {
                     ScrollViewReader { proxy in
                         ScrollView(.vertical) {
                             sessionRowsContent(referenceDate: referenceDate)
+                                .background(
+                                    GeometryReader { geometry in
+                                        Color.clear.preference(
+                                            key: SessionRowsContentHeightKey
+                                                .self,
+                                            value: geometry.size.height
+                                        )
+                                    }
+                                )
                         }
                         .scrollIndicators(.hidden)
                         .scrollBounceBehavior(.basedOnSize)
@@ -597,6 +613,14 @@ struct IslandPanelView: View {
                         }
                         .onChange(of: actionableSessionID) {
                             scrollToActionableSession(using: proxy)
+                        }
+                        .onPreferenceChange(
+                            SessionRowsContentHeightKey.self
+                        ) { height in
+                            if height > 0 {
+                                model.measuredSessionRowsContentHeight =
+                                    height
+                            }
                         }
                     }
 
