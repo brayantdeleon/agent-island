@@ -329,6 +329,11 @@ struct IslandPanelView: View {
         let bottomInset = 0.0
         let surfaceWidth = openedWidth + (horizontalInset * 2)
         let surfaceHeight = openedHeight + bottomInset
+        let bodyContentWidth = Self.openedBodyContentWidth(
+            openedWidth: openedWidth,
+            isExpanded: model.islandSurface.isExpanded,
+            usesNotchProfile: usesNotchAwareOpenedHeader
+        )
         let surfaceShape = OpenedIslandSurfaceShape(
             topProfile: usesNotchAwareOpenedHeader ? .notch : .topBar
         )
@@ -343,7 +348,7 @@ struct IslandPanelView: View {
                     .frame(height: closedNotchHeight)
 
                 openedContent
-                    .frame(width: openedWidth)
+                    .frame(width: bodyContentWidth)
                     .frame(maxHeight: max(0, openedHeight - closedNotchHeight), alignment: .top)
                     .clipped()
             }
@@ -357,6 +362,17 @@ struct IslandPanelView: View {
             }
         }
         .frame(width: surfaceWidth, height: surfaceHeight, alignment: .top)
+    }
+
+    nonisolated static func openedBodyContentWidth(
+        openedWidth: CGFloat,
+        isExpanded: Bool,
+        usesNotchProfile: Bool
+    ) -> CGFloat {
+        let shoulderInset = isExpanded && usesNotchProfile
+            ? NotchShape.openedTopRadius
+            : 0
+        return max(0, openedWidth - (shoulderInset * 2))
     }
 
     // MARK: - Closed state

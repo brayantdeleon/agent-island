@@ -198,6 +198,38 @@ struct OverlayPanelControllerTests {
         #expect(widths.detail >= 360)
     }
 
+    @Test
+    func expandedContentFitsInsideNotchShoulders() {
+        let openedWidth = CGFloat(1_044)
+        let bodyWidth = IslandPanelView.openedBodyContentWidth(
+            openedWidth: openedWidth,
+            isExpanded: true,
+            usesNotchProfile: true
+        )
+
+        #expect(bodyWidth == openedWidth - (NotchShape.openedTopRadius * 2))
+    }
+
+    @Test
+    func regularAndTopBarContentKeepTheFullOpenedWidth() {
+        let openedWidth = CGFloat(1_044)
+
+        #expect(
+            IslandPanelView.openedBodyContentWidth(
+                openedWidth: openedWidth,
+                isExpanded: false,
+                usesNotchProfile: true
+            ) == openedWidth
+        )
+        #expect(
+            IslandPanelView.openedBodyContentWidth(
+                openedWidth: openedWidth,
+                isExpanded: true,
+                usesNotchProfile: false
+            ) == openedWidth
+        )
+    }
+
     @Test @MainActor
     func selectedCollapsedSessionDoesNotReserveExpandedDetailHeight() {
         let now = Date()
