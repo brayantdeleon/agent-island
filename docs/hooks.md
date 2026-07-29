@@ -78,7 +78,7 @@ change. Not yet handled.
 
 ### Default managed installation
 
-The managed Codex hook installer (`CodexHookInstaller`) installs `SessionStart`, `UserPromptSubmit`, and `Stop` by default. This keeps lifecycle observation low-noise and leaves Codex's native approval policy and reviewer authoritative. `PermissionRequest` is installed only when the user explicitly enables keyboard approvals, because a blocking permission hook runs before Codex's native reviewer and would otherwise override modes such as **Approve for me**. Per-command `PreToolUse` / `PostToolUse` hooks remain opt-in because they can add terminal log noise.
+The managed Codex hook installer (`CodexHookInstaller`) installs `SessionStart`, `UserPromptSubmit`, and `Stop` by default. This keeps lifecycle observation low-noise and leaves Codex's native approval policy and reviewer authoritative. `PermissionRequest` is installed only when the user explicitly enables **Route Codex approvals through Agent Island**, because a blocking permission hook runs before Codex's native reviewer and would otherwise override modes such as **Approve for me**. This routing preference is separate from the general keyboard-approval capability. Per-command `PreToolUse` / `PostToolUse` hooks remain opt-in because they can add terminal log noise.
 
 The installer chooses the Codex hook feature flag that the local Codex CLI advertises. Newer Codex builds use `[features].hooks = true`; older builds use the legacy `[features].codex_hooks = true`. Status checks recognize both keys, and managed installs migrate between them when the local Codex version changes.
 
@@ -123,7 +123,7 @@ The app can block a command by writing this to stdout:
 
 #### `PermissionRequest`
 
-When keyboard approvals are enabled, the managed `PermissionRequest` hook has a 1-hour timeout so the user can approve or deny from the UI or keyboard. This opt-in routing replaces Codex's native approval reviewer for intercepted requests.
+When Codex approval routing is enabled, the managed `PermissionRequest` hook has a 1-hour timeout so the user can approve or deny from the UI or keyboard. This opt-in routing replaces Codex's native approval reviewer for intercepted requests.
 
 The same managed hook can cover Codex CLI and local Codex Desktop threads after
 Codex has loaded and trusted the active `~/.codex` hook configuration. Codex Desktop's

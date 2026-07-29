@@ -250,6 +250,29 @@ struct GeneralSettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                    if model.agentControlKeyboardApprovalsEnabled {
+                        Toggle(
+                            lang.t(
+                                "settings.general.agentControl.codexApprovalBroker"
+                            ),
+                            isOn: Binding(
+                                get: {
+                                    model.codexApprovalBrokerEnabled
+                                },
+                                set: {
+                                    model.codexApprovalBrokerEnabled = $0
+                                }
+                            )
+                        )
+                        Text(
+                            lang.t(
+                                "settings.general.agentControl.codexApprovalBrokerHelp"
+                            )
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+
                     LabeledContent(
                         lang.t("settings.general.agentControl.status"),
                         value: agentControlStatusTitle

@@ -46,6 +46,8 @@ final class AppModel {
     private static let legacyCompletedStaleThresholdDefaultsKey = "appearance.island.v8.completedStaleThreshold"
     private static let appearanceProfileSettingsDefaultsKey = "appearance.island.v8.settingsProfile"
     private static let islandCompactnessModeDefaultsKey = "appearance.island.compactnessMode"
+    private static let codexApprovalBrokerDefaultsKey =
+        "feature.codexApprovalBroker.enabled"
     private static let agentControlSelectionLifetimeSeconds: UInt8 = 15
 
     private static let syntheticClaudeSessionPrefix = "claude-process:"
@@ -381,14 +383,27 @@ final class AppModel {
             agentControlDeviceSettingsStore.saveApprovalActionsEnabled(
                 agentControlKeyboardApprovalsEnabled
             )
-            hooks.setCodexPermissionRequestBrokerEnabled(
-                agentControlKeyboardApprovalsEnabled
-            )
             clearAgentControlSelection()
             agentControlDeviceCoordinator.setApprovalActionsEnabled(
                 agentControlKeyboardApprovalsEnabled
             )
             updateAgentControlDeviceSnapshot()
+        }
+    }
+    var codexApprovalBrokerEnabled: Bool = false {
+        didSet {
+            guard hasFinishedInit,
+                  codexApprovalBrokerEnabled != oldValue else {
+                return
+            }
+
+            UserDefaults.standard.set(
+                codexApprovalBrokerEnabled,
+                forKey: Self.codexApprovalBrokerDefaultsKey
+            )
+            hooks.setCodexPermissionRequestBrokerEnabled(
+                codexApprovalBrokerEnabled
+            )
         }
     }
     var launchAtLoginEnabled: Bool = false {
@@ -799,8 +814,11 @@ final class AppModel {
             agentControlDeviceSettingsStore.loadEnabled()
         agentControlKeyboardApprovalsEnabled =
             agentControlDeviceSettingsStore.loadApprovalActionsEnabled()
+        codexApprovalBrokerEnabled = UserDefaults.standard.bool(
+            forKey: Self.codexApprovalBrokerDefaultsKey
+        )
         hooks.setCodexPermissionRequestBrokerEnabled(
-            agentControlKeyboardApprovalsEnabled
+            codexApprovalBrokerEnabled
         )
         agentControlDeviceCoordinator.setApprovalActionsEnabled(
             agentControlKeyboardApprovalsEnabled
