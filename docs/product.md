@@ -61,7 +61,7 @@ CLI coding agents are powerful, but they pull attention away from the editor and
 
 | Hardware | Status | Notes |
 |---|---|---|
-| **Keychron K0 Max** | Planned | Optional custom QMK firmware; ten agent-status slots, selection, jump, allow-once, and deny. USB is the first required transport; 2.4 GHz remains unclaimed until hardware verification, and Bluetooth is outside v1 scope. |
+| **Keychron K0 Max** | Planned | Optional custom QMK firmware; nine agent-status slots, `0` island toggle, selection, jump, allow-once, and deny. USB is the first required transport; 2.4 GHz remains unclaimed until hardware verification, and Bluetooth is outside v1 scope. |
 
 ## Success Criteria
 

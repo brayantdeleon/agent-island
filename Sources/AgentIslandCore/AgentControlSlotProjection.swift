@@ -72,11 +72,7 @@ public struct AgentControlSlot: Identifiable, Equatable, Sendable {
 
     /// Physical numpad label for this zero-based slot.
     public var keyLabel: String {
-        Self.keyLabel(for: index)
-    }
-
-    public static func keyLabel(for index: Int) -> String {
-        index == 9 ? "0" : String(index + 1)
+        String(index + 1)
     }
 }
 
@@ -106,7 +102,7 @@ public struct AgentControlSlotProjection: Equatable, Sendable {
     }
 }
 
-/// Pure ten-slot allocator.
+/// Pure nine-agent-slot allocator for physical keys 1–9.
 ///
 /// `activeSlots` protects live assignments from renumbering within a process.
 /// `preferredSlots` is the persisted history used to reclaim the same number
@@ -114,7 +110,7 @@ public struct AgentControlSlotProjection: Equatable, Sendable {
 /// do not reserve hardware capacity: a newcomer may use one, and a returning
 /// session falls back to the first free slot when its preference is occupied.
 public struct AgentControlSlotAllocator: Equatable, Sendable {
-    public static let capacity = 10
+    public static let capacity = AgentControlProtocolV1.agentSlotCount
 
     public private(set) var preferredSlots: [String: Int]
     private var activeSlots: [String: Int] = [:]

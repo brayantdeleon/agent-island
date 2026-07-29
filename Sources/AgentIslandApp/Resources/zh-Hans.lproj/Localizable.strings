@@ -50,7 +50,7 @@
 "settings.general.agentControl.firmware" = "固件";
 "settings.general.agentControl.unavailable" = "—";
 "settings.general.agentControl.requiresFirmware" = "需要安装 Agent Island 自定义固件。目前支持 USB；2.4 GHz 尚未验证。";
-"settings.general.agentControl.navigation" = "数字键用于选择并显示智能体；Enter 跳转到所选智能体。+ 和 - 仍处于禁用状态。";
+"settings.general.agentControl.navigation" = "按键 1–9 用于选择并显示智能体；0 用于打开或关闭灵动岛；Enter 用于跳转。+ 和 - 仍处于禁用状态。";
 "settings.general.agentControl.state.stopped" = "已停止";
 "settings.general.agentControl.state.searching" = "正在搜索";
 "settings.general.agentControl.state.handshaking" = "正在握手";

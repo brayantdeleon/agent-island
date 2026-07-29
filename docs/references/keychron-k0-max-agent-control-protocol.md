@@ -58,7 +58,12 @@ Protocol slot indices are zero-based; user-facing labels are not.
 | 6 | 7 | `[2,1]` | 10 |
 | 7 | 8 | `[2,2]` | 11 |
 | 8 | 9 | `[2,3]` | 12 |
-| 9 | 0 | `[5,1]` | 23 |
+| 9 | 0 (global island toggle) | `[5,1]` | 23 |
+
+Agent Island assigns sessions only to protocol slots 0-8 (`1`-`9`). Protocol
+slot 9 remains present in the ten-slot wire format, but the production host
+keeps its snapshot state unassigned and interprets its `SLOT_SELECTED` intent
+as a global open/close command.
 
 Control and feedback LEDs:
 
@@ -233,6 +238,10 @@ invalidates any token whose slot epoch no longer matches.
 Firmware performs animation locally. Repeated identical snapshots must not
 restart an animation cycle.
 
+The production Agent Island host sends `unassigned` for protocol slot 9
+(physical `0`). Standalone firmware diagnostics may populate it when testing
+all ten LED positions.
+
 ## `HEARTBEAT` (`0x03`)
 
 Payload:
@@ -245,7 +254,9 @@ Heartbeat carries no state and must not write EEPROM.
 
 ## `SLOT_SELECTED` (`0x82`)
 
-Sent when the user presses a digit while Agent Control is active.
+Sent when the user presses a digit while Agent Control is active. Slots 0-8
+select the agents on physical keys `1`-`9`. Slot 9 is the physical `0` key
+and requests that Agent Island toggle between open and closed.
 
 Payload:
 
@@ -258,6 +269,10 @@ Payload:
 Firmware does not change its authoritative selection until it receives a
 successful `SELECTION_ACK`. An unassigned slot may still be reported so the
 host can return explicit rejected feedback.
+
+For the slot-9 toggle, Agent Island returns an accepted acknowledgement with
+no allowed actions and a short-lived nonzero token. This reuses the existing
+white accepted feedback without making `0` an agent selection.
 
 ## `SELECTION_ACK` (`0x04`)
 

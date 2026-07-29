@@ -50,7 +50,7 @@
 "settings.general.agentControl.firmware" = "韌體";
 "settings.general.agentControl.unavailable" = "—";
 "settings.general.agentControl.requiresFirmware" = "需要安裝 Agent Island 自訂韌體。目前支援 USB；2.4 GHz 尚未驗證。";
-"settings.general.agentControl.navigation" = "數字鍵用於選取並顯示代理；Enter 跳轉至所選代理。+ 和 - 仍維持停用。";
+"settings.general.agentControl.navigation" = "按鍵 1–9 用於選取並顯示代理；0 用於開啟或關閉動態島；Enter 用於跳轉。+ 和 - 仍維持停用。";
 "settings.general.agentControl.state.stopped" = "已停止";
 "settings.general.agentControl.state.searching" = "正在搜尋";
 "settings.general.agentControl.state.handshaking" = "正在交握";

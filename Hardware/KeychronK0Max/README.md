@@ -3,9 +3,10 @@
 This directory contains the pinned Agent Control firmware overlay and macOS
 Raw HID diagnostic host for the Agent Island K0 Max integration. The firmware
 implements the keyboard-side protocol. The standalone diagnostic host does
-not connect to Agent Island sessions or dispatch real approvals; the Round 6
-app integration projects session state only and does not enable keyboard
-selection, navigation, or approval actions.
+not connect to Agent Island sessions or dispatch real approvals. The app
+assigns agents to `1`-`9`, uses `0` to open or close the island, and enables
+Enter navigation; approval actions remain disabled until their identity-bound
+Round 8 path is complete.
 
 The original Round 2 spike proved five things before application integration:
 
@@ -46,7 +47,8 @@ Control positions are resolved independently of VIA EEPROM mappings:
 
 - M4 toggles Agent Control after a fresh handshake.
 - M5 retains its stock momentary Fn behavior.
-- Digits emit anonymous slot-selection intents.
+- Digits emit anonymous slot-selection intents. The production app maps
+  `1`-`9` to agents and treats `0` as global island open/close.
 - Enter emits jump, `+` emits allow-once, and `-` emits deny intents after a
   diagnostic selection acknowledgement.
 - Other key and encoder positions emit nothing while Agent Control is active.
@@ -224,7 +226,7 @@ confirmed that non-agent LEDs remain black, completed slots pulse green to
 fully off, blue and amber share the deeper trough, and M5 still restores the
 ordinary RGB effect while held.
 
-## Round 6 read-only app integration
+## Round 6/7 app integration
 
 With firmware build `0x19fb67fd` connected in Cable mode:
 
@@ -233,13 +235,18 @@ With firmware build `0x19fb67fd` connected in Cable mode:
 3. Confirm the status shows **Connected**, **USB**, protocol **v1.0**, and
    firmware **0x19FB67FD**.
 4. Open the island and confirm assigned sessions show `K0 · 1` through
-   `K0 · 0` badges.
+   `K0 · 9` badges.
 5. Tap M4 and compare the digit lighting with current session phases.
+6. Press an assigned key from `1`-`9`; confirm its card is revealed with a
+   thin dashed border and no jump occurs yet.
+7. Press Enter within 15 seconds; confirm the exact session jump is
+   dispatched.
+8. Press `0`; confirm the island closes. Press `0` again; confirm it opens.
 
-Round 6 deliberately negotiates state snapshots only. Number-key selection,
-Enter jump, `+` allow-once, and `-` deny remain disabled in both the firmware
-capability gate and AppModel. Disabling the setting sends an empty snapshot
-before closing the transport; the firmware watchdog remains the fallback.
+The app negotiates state snapshots, selection, and jump. `+` allow-once and
+`-` deny remain disabled in both the firmware capability gate and AppModel.
+Disabling the setting sends an empty snapshot before closing the transport;
+the firmware watchdog remains the fallback.
 
 The opt-in production-USB gate exercises AppModel session projection through
 the real IOHID transport:
@@ -247,7 +254,7 @@ the real IOHID transport:
 ```sh
 AGENT_ISLAND_RUN_K0_MAX_HID_INTEGRATION=1 \
 swift test \
-  --filter K0MaxHIDTransportIntegrationTests/testLiveAppModelProjectsSessionStateReadOnly
+  --filter K0MaxHIDTransportIntegrationTests/testLiveAppModelProjectsSessionStateWithNavigationCapabilities
 ```
 
 This test is skipped during ordinary `swift test` runs.

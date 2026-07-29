@@ -87,6 +87,9 @@ final class AppModel {
     private var agentControlSelection: AgentControlSelectionContext?
 
     @ObservationIgnored
+    private var agentControlSelectionExpiryTask: Task<Void, Never>?
+
+    @ObservationIgnored
     private let agentControlSelectionTokenGenerator: () -> UInt64
 
     @ObservationIgnored
@@ -108,6 +111,7 @@ final class AppModel {
     }
 
     var selectedSessionID: String?
+    private(set) var agentControlSelectedSessionID: String?
     let hooks = HookInstallationCoordinator()
     let overlay = OverlayUICoordinator()
     let discovery = SessionDiscoveryCoordinator()
@@ -1133,7 +1137,7 @@ final class AppModel {
     private func stopAgentControlDeviceIntegration() {
         agentControlSnapshotRefreshTask?.cancel()
         agentControlSnapshotRefreshTask = nil
-        agentControlSelection = nil
+        clearAgentControlSelection()
         guard isAgentControlDeviceIntegrationStarted else { return }
 
         // Clear immediately while the connection is still live. Firmware's
@@ -1201,7 +1205,7 @@ final class AppModel {
             )
 
         case .layerChanged:
-            agentControlSelection = nil
+            clearAgentControlSelection()
 
         case .capabilities:
             break
@@ -1214,7 +1218,7 @@ final class AppModel {
         slotIndex: UInt8,
         snapshotGeneration: UInt16
     ) {
-        agentControlSelection = nil
+        clearAgentControlSelection()
 
         guard Int(slotIndex) < AgentControlProtocolV1.slotCount else {
             rejectAgentControlSelection(
@@ -1246,6 +1250,15 @@ final class AppModel {
         }
 
         let index = Int(slotIndex)
+        if slotIndex == AgentControlProtocolV1.toggleSlotIndex {
+            handleAgentControlIslandToggle(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                slotEpoch: snapshot.slotEpochs[index]
+            )
+            return
+        }
         guard let slot = snapshot.content.slots[index] else {
             rejectAgentControlSelection(
                 requestSequence: requestSequence,
@@ -1268,10 +1281,7 @@ final class AppModel {
         }
 
         let slotEpoch = snapshot.slotEpochs[index]
-        var selectionToken = agentControlSelectionTokenGenerator()
-        if selectionToken == 0 {
-            selectionToken = 1
-        }
+        let selectionToken = makeAgentControlSelectionToken()
         let allowedActions: AgentControlAllowedActionSet =
             canJumpToAgentControlSession(session) ? [.jump] : []
         let lifetimeSeconds = Self.agentControlSelectionLifetimeSeconds
@@ -1300,12 +1310,68 @@ final class AppModel {
             return
         }
 
-        agentControlSelection = selection
+        setAgentControlSelection(selection)
         select(sessionID: session.id)
         notchOpen(
             reason: .click,
             surface: .sessionList(actionableSessionID: session.id)
         )
+    }
+
+    private func handleAgentControlIslandToggle(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        slotEpoch: UInt16
+    ) {
+        guard agentControlDeviceCoordinator.sendSelectionAcknowledgement(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            result: .accepted,
+            slotEpoch: slotEpoch,
+            selectionToken: makeAgentControlSelectionToken(),
+            lifetimeSeconds: 1
+        ) else {
+            return
+        }
+        toggleOverlay()
+    }
+
+    private func makeAgentControlSelectionToken() -> UInt64 {
+        let token = agentControlSelectionTokenGenerator()
+        return token == 0 ? 1 : token
+    }
+
+    private func setAgentControlSelection(
+        _ selection: AgentControlSelectionContext
+    ) {
+        clearAgentControlSelection()
+        agentControlSelection = selection
+        agentControlSelectedSessionID = selection.sessionID
+        let delay = max(
+            selection.expiresAt.timeIntervalSince(agentControlDateProvider()),
+            0
+        )
+        agentControlSelectionExpiryTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+            guard self?.agentControlSelection?.selectionToken
+                    == selection.selectionToken else {
+                return
+            }
+            self?.clearAgentControlSelection()
+        }
+    }
+
+    private func clearAgentControlSelection() {
+        agentControlSelectionExpiryTask?.cancel()
+        agentControlSelectionExpiryTask = nil
+        agentControlSelection = nil
+        agentControlSelectedSessionID = nil
     }
 
     private func rejectAgentControlSelection(
@@ -1353,7 +1419,6 @@ final class AppModel {
               selection.slotIndex == slotIndex,
               selection.selectionToken == selectionToken,
               agentControlDateProvider() < selection.expiresAt else {
-            agentControlSelection = nil
             sendAgentControlActionResult(
                 requestSequence: requestSequence,
                 connectionNonce: connectionNonce,
@@ -1381,7 +1446,6 @@ final class AppModel {
               snapshot.slotEpochs[index] == selection.slotEpoch,
               snapshot.content.slots[index]?.identity
                 == selection.sessionID else {
-            agentControlSelection = nil
             sendAgentControlActionResult(
                 requestSequence: requestSequence,
                 connectionNonce: connectionNonce,
@@ -1394,7 +1458,6 @@ final class AppModel {
         guard let session = surfacedSessions.first(
             where: { $0.id == selection.sessionID }
         ) else {
-            agentControlSelection = nil
             sendAgentControlActionResult(
                 requestSequence: requestSequence,
                 connectionNonce: connectionNonce,
@@ -1435,7 +1498,10 @@ final class AppModel {
         action: AgentControlAction,
         result: AgentControlActionResult
     ) -> Bool {
-        agentControlDeviceCoordinator.sendActionResult(
+        if result != .acceptedForDispatch {
+            clearAgentControlSelection()
+        }
+        return agentControlDeviceCoordinator.sendActionResult(
             requestSequence: requestSequence,
             connectionNonce: connectionNonce,
             slotIndex: slotIndex,

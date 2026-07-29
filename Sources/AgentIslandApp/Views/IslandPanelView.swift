@@ -619,6 +619,8 @@ struct IslandPanelView: View {
                     stateIndicator: model.islandSessionStateIndicator,
                     completedStaleThreshold: model.completedStaleThreshold.seconds,
                     isActionable: true,
+                    isHardwareSelected:
+                        session.id == model.agentControlSelectedSessionID,
                     useDrawingGroup: model.notchStatus == .opened,
                     isInteractive: model.notchStatus == .opened,
                     presentation: .notification,
@@ -670,6 +672,8 @@ struct IslandPanelView: View {
                                 stateIndicator: model.islandSessionStateIndicator,
                                 completedStaleThreshold: model.completedStaleThreshold.seconds,
                                 isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
+                                isHardwareSelected:
+                                    session.id == model.agentControlSelectedSessionID,
                                 useDrawingGroup: model.notchStatus == .opened,
                                 isInteractive: model.notchStatus == .opened,
                                 sideInset: sessionListSideInset,
@@ -730,6 +734,8 @@ struct IslandPanelView: View {
                         stateIndicator: model.islandSessionStateIndicator,
                         completedStaleThreshold: model.completedStaleThreshold.seconds,
                         isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
+                        isHardwareSelected:
+                            session.id == model.agentControlSelectedSessionID,
                         useDrawingGroup: model.notchStatus == .opened,
                         isInteractive: model.notchStatus == .opened,
                         sideInset: sessionListSideInset,
@@ -804,6 +810,8 @@ struct IslandPanelView: View {
                             ),
                             stateIndicator: model.islandSessionStateIndicator,
                             completedStaleThreshold: model.completedStaleThreshold.seconds,
+                            isHardwareSelected:
+                                session.id == model.agentControlSelectedSessionID,
                             useDrawingGroup: model.notchStatus == .opened,
                             isInteractive: model.notchStatus == .opened,
                             sideInset: sessionListSideInset,
@@ -1323,6 +1331,7 @@ private struct IslandSessionRow: View {
     var stateIndicator: IslandSessionStateIndicator = .animatedDot
     var completedStaleThreshold: TimeInterval = AgentSession.staleCompletedDisplayThreshold
     var isActionable: Bool = false
+    var isHardwareSelected: Bool = false
     var useDrawingGroup: Bool = true
     var isInteractive: Bool = true
     var presentation: IslandSessionRowPresentation = .list
@@ -1384,6 +1393,22 @@ private struct IslandSessionRow: View {
                     .frame(width: 3)
                     .padding(.vertical, showsDetail ? 10 : 8)
                     .padding(.leading, 14)
+            }
+        }
+        .overlay {
+            if isHardwareSelected {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(
+                        .white.opacity(0.72),
+                        style: StrokeStyle(
+                            lineWidth: 1,
+                            lineCap: .round,
+                            dash: [4, 3]
+                        )
+                    )
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .allowsHitTesting(false)
             }
         }
         .opacity(isStaleCompleted ? 0.7 : 1)

@@ -125,6 +125,31 @@ struct AgentControlProjectionTests {
         #expect(projection.overflowCount == 0)
     }
 
+    @Test
+    func zeroIsReservedAndTheTenthAgentOverflows() {
+        let defaults = makeDefaults()
+        let model = makeModel(defaults: defaults)
+        let now = Date()
+        model.state = SessionState(
+            sessions: (0..<10).map { index in
+                makeSession(
+                    id: "session-\(index)",
+                    firstSeenAt: now.addingTimeInterval(Double(index)),
+                    updatedAt: now
+                )
+            }
+        )
+
+        let projection = model.agentControlSlotProjection(at: now)
+
+        #expect(projection.assignedSlots.count == 9)
+        #expect(projection.assignedSlots.map(\.keyLabel) == [
+            "1", "2", "3", "4", "5", "6", "7", "8", "9",
+        ])
+        #expect(projection.keyLabel(for: "session-9") == nil)
+        #expect(projection.overflowCount == 1)
+    }
+
     private func makeDefaults() -> UserDefaults {
         let suiteName = "agent-island-control-projection-tests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

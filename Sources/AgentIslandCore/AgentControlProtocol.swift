@@ -7,7 +7,11 @@ public enum AgentControlProtocolV1 {
     public static let minorVersion: UInt8 = 0
     public static let reportSize = 32
     public static let payloadCapacity = 22
+    /// The wire format retains all ten numpad digits.
     public static let slotCount = 10
+    /// Physical keys 1–9 are assignable agent slots. Key 0 is global control.
+    public static let agentSlotCount = 9
+    public static let toggleSlotIndex: UInt8 = 9
     public static let requestedWatchdogSeconds: UInt8 = 6
     public static let heartbeatInterval: TimeInterval = 2
 }

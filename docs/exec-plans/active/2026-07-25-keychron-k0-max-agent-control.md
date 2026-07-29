@@ -7,9 +7,10 @@
 ## Goal
 
 Add an optional Keychron K0 Max control surface to Agent Island. A dedicated
-keyboard layer will show ten stable agent slots on the number keys, let the
-user select an agent, jump to it, and resolve a current permission request
-without sending ordinary keystrokes to the frontmost application.
+keyboard layer will show nine stable agent slots on keys `1`-`9`, reserve `0`
+as a global island open/close control, let the user select an agent, jump to
+it, and resolve a current permission request without sending ordinary
+keystrokes to the frontmost application.
 
 The integration must remain local-first, preserve the K0 Max's normal and Fn
 behavior, fail back to an ordinary numpad when Agent Island is unavailable,
@@ -26,7 +27,7 @@ Agent Island already has the state needed for a hardware dashboard:
   requests and allow-once or deny decisions.
 - The closed-island agents grid already establishes stable
   first-observation ordering, but it is a nine-cell presentation with
-  overflow rather than a reusable ten-slot identity model.
+  overflow rather than a reusable stable-slot identity model.
 
 The K0 Max exposes per-key RGB and bidirectional Raw HID, but stock firmware
 does not know Agent Island's session state. Agent Island also has no device
@@ -39,7 +40,8 @@ When the optional integration is enabled and compatible firmware is present:
 
 1. Tapping M4 enters or exits Agent Control. M5 retains the stock momentary
    Fn behavior.
-2. Digits `1` through `9` address slots 1 through 9; `0` addresses slot 10.
+2. Digits `1` through `9` address agent slots 1 through 9; `0` opens or
+   closes Agent Island without selecting an agent.
 3. Pressing a populated digit selects that agent and reveals its card in
    Agent Island. It does not jump or authorize by itself.
 4. Enter jumps to the selected agent using Agent Island's existing
@@ -61,7 +63,7 @@ When the optional integration is enabled and compatible firmware is present:
 | M4 tap | Enter or exit Agent Control |
 | M5 hold | Momentary stock Fn layer |
 | `1`-`9` | Select slots 1-9 and reveal the corresponding Agent Island card |
-| `0` | Select slot 10 |
+| `0` | Open Agent Island when closed; close it when open |
 | Enter | Jump to the selected agent |
 | `+` | Allow the selected request once |
 | `-` | Deny the selected request |
@@ -92,7 +94,7 @@ color. Accepted device actions give brief green feedback; rejected or stale
 actions give brief amber feedback.
 
 The M4 LED indicates the control layer. Cyan means Agent Control is active.
-Purple means more eligible sessions exist than the ten hardware slots.
+Purple means more eligible sessions exist than the nine agent slots.
 All other LEDs are off while Agent Control is active. The smooth blue, amber,
 and green pulses reach fully off at their trough; M5 temporarily restores the
 user's ordinary Fn-layer RGB behavior while held.
@@ -116,7 +118,7 @@ The keyboard projection is not the closed-island grid itself. Introduce a
 shared, device-independent slot allocator and let the island grid and keyboard
 derive their own presentations from the same stable ordering data.
 
-- Capacity is ten.
+- Agent capacity is nine; physical `0` is reserved for global open/close.
 - Candidates are top-level, surfaced sessions. Individual subagents and
   realtime voice sessions are excluded from v1.
 - Hidden sessions with an approval request remain eligible, matching Agent
@@ -132,7 +134,7 @@ derive their own presentations from the same stable ordering data.
   that slot is free; otherwise use the first free slot.
 - Do not page or rotate slots automatically in v1. Sessions beyond capacity
   remain controllable in the app and set the overflow indication.
-- Show the assigned keyboard label (`1`-`9`, `0`) on the corresponding Agent
+- Show the assigned keyboard label (`1`-`9`) on the corresponding Agent
   Island card so the physical mapping is discoverable.
 
 ## Architecture
@@ -140,7 +142,7 @@ derive their own presentations from the same stable ordering data.
 Keep three concerns separate:
 
 1. **Projection and authorization model (`AgentIslandCore`)**
-   - stable ten-slot allocation
+   - stable nine-agent-slot allocation
    - session-to-light-state projection
    - packet value types and codec
    - opaque selection/action tokens
@@ -288,7 +290,7 @@ Build, recovery, flash, probe, and restore instructions live in
 
 ### Round 3 — Stable slot and projection model
 
-- [x] Add a pure ten-slot allocator and persisted assignment store.
+- [x] Add a pure stable-slot allocator and persisted assignment store.
 - [x] Add phase-to-device-state projection.
 - [x] Add overflow and completion-expiry behavior.
 - [x] Expose matching slot labels to Agent Island presentation state.
@@ -440,9 +442,10 @@ On 2026-07-28:
   snapshots on session, hidden-state, display-profile, and completion-window
   changes. A scheduled refresh turns recently completed slots off when the
   configured completion window expires even if no new hook event arrives.
-- Assigned session cards show `K0 · 1` through `K0 · 0` while the integration
-  is enabled. Disabling it sends an empty snapshot before closing the
-  transport, with the firmware watchdog retained as fallback cleanup.
+- At the Round 6 checkpoint, assigned session cards showed `K0 · 1` through
+  `K0 · 0`; Round 7 later reserved `0` for global island control. Disabling
+  the integration sends an empty snapshot before closing the transport, with
+  the firmware watchdog retained as fallback cleanup.
 - The host continues to advertise only `stateSnapshots`. AppModel registers
   no device-message handler, so injected selection, jump, allow-once, deny,
   and layer messages cannot select a session, mutate a request, dispatch a
@@ -507,16 +510,25 @@ On 2026-07-28:
   sequences and flags, exact multi-session selection, no-jump reveal,
   accepted Enter dispatch, stale snapshot rejection, same-color slot reuse,
   and the Round 7 approval boundary. The focused suites pass 26 tests.
-- The complete CI harness passes string linting, documentation checks, 460
+- The complete CI harness passes string linting, documentation checks, 462
   Swift Testing tests, 27 XCTest tests, and a clean debug build. Its ordinary
   run skips the three opt-in K0 Max hardware gates and the existing live
   Ghostty jump gate.
 - The opt-in AppModel-to-production-IOHID USB gate passes against the
   connected K0 Max with the Round 7 capability advertisement, including a
   real handshake plus running and completed state generations.
+- Manual multi-session testing confirmed exact card selection and Enter
+  jump behavior. Claude Desktop remains limited to app-level activation,
+  which is an accepted existing jump-target limitation for this round.
+- A follow-up reserves `1`-`9` for agent assignments and physical `0` for
+  global island open/close. The selected card now carries a thin dashed white
+  border for the lifetime of its navigation token; `0`, layer exit, stale
+  action rejection, or token expiry clears that hardware-selection emphasis.
+  Focused tests cover the nine-slot overflow boundary and closing/reopening
+  the island with `0` after an agent selection.
 
-Manual USB multi-session selection and jump remain required before the Round
-7 exit criterion is complete.
+Manual USB confirmation of the `0` toggle and dashed selected-card border
+remains required before the Round 7 exit criterion is complete.
 
 ### Round 8 — Guarded approval and denial
 

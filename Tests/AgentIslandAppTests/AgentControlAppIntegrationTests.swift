@@ -178,6 +178,7 @@ struct AgentControlAppIntegrationTests {
         )
         #expect(selectionResponse.payload[21] == 15)
         #expect(harness.model.selectedSessionID == "second")
+        #expect(harness.model.agentControlSelectedSessionID == "second")
         #expect(harness.model.notchStatus == .opened)
         #expect(harness.model.notchOpenReason == .click)
         #expect(
@@ -212,6 +213,91 @@ struct AgentControlAppIntegrationTests {
             harness.model.lastActionMessage == "Jumped to second."
         }
         #expect(harness.model.notchStatus == .closed)
+    }
+
+    @Test
+    func zeroClosesAndReopensTheIslandWithoutSelectingAnAgent() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "selected",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+        let snapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(snapshot.payload, at: 8)
+        #expect(snapshot.payload[20] == 0)
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 1,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.notchStatus == .opened)
+        #expect(harness.model.agentControlSelectedSessionID == "selected")
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 2,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        var response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(response.messageType == .selectionAcknowledgement)
+        #expect(response.sequence == 2)
+        #expect(response.flags == [.response])
+        #expect(
+            response.payload[9]
+                == AgentControlSelectionResult.accepted.rawValue
+        )
+        #expect(response.payload[20] == 0)
+        #expect(response.payload[21] == 1)
+        #expect(harness.model.notchStatus == .closed)
+        #expect(harness.model.agentControlSelectedSessionID == nil)
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 3,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(response.sequence == 3)
+        #expect(response.flags == [.response])
+        #expect(harness.model.notchStatus == .opened)
+        #expect(harness.model.islandSurface == .sessionList())
+        #expect(harness.model.agentControlSelectedSessionID == nil)
     }
 
     @Test

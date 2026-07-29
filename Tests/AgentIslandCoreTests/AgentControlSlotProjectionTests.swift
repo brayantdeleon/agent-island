@@ -96,13 +96,13 @@ struct AgentControlSlotProjectionTests {
         var allocator = AgentControlSlotAllocator()
 
         let full = allocator.reconcile(candidates: candidates)
-        #expect(full.assignedSlots.count == 10)
-        #expect(full.overflowCount == 2)
+        #expect(full.assignedSlots.count == 9)
+        #expect(full.overflowCount == 3)
 
         let afterRelease = allocator.reconcile(candidates: Array(candidates.dropFirst()))
-        #expect(afterRelease.slot(for: "session-10")?.index == 0)
+        #expect(afterRelease.slot(for: "session-9")?.index == 0)
         #expect(afterRelease.slot(for: "session-1")?.index == 1)
-        #expect(afterRelease.overflowCount == 1)
+        #expect(afterRelease.overflowCount == 2)
     }
 
     @Test
@@ -144,9 +144,19 @@ struct AgentControlSlotProjectionTests {
     }
 
     @Test
-    func physicalLabelsMapSlotsOneThroughNineThenZero() {
-        #expect((0..<AgentControlSlotAllocator.capacity).map(AgentControlSlot.keyLabel(for:))
-            == ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"])
+    func agentSlotsMapToKeysOneThroughNineAndReserveZero() {
+        let labels = (0..<AgentControlSlotAllocator.capacity).map {
+            AgentControlSlot(
+                index: $0,
+                sessionID: "session-\($0)",
+                lightState: .running
+            ).keyLabel
+        }
+        #expect(labels == ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
+        #expect(
+            AgentControlProtocolV1.toggleSlotIndex
+                == UInt8(AgentControlSlotAllocator.capacity)
+        )
     }
 
     private func candidate(
@@ -173,9 +183,9 @@ struct AgentControlSlotAssignmentStoreTests {
     func assignmentsRoundTripAndInvalidEntriesAreDiscarded() {
         let (store, defaults) = makeStore()
 
-        store.save(["A": 0, "B": 9, "": 4, "too-high": 10, "negative": -1])
+        store.save(["A": 0, "B": 8, "reserved-zero": 9, "": 4, "too-high": 10, "negative": -1])
 
-        #expect(store.load() == ["A": 0, "B": 9])
+        #expect(store.load() == ["A": 0, "B": 8])
         #expect(defaults.data(forKey: AgentControlSlotAssignmentStore.defaultsKey) != nil)
     }
 
