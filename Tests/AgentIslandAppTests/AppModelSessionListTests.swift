@@ -34,6 +34,53 @@ struct AppModelSessionListTests {
     }
 
     @Test
+    func trackedEventsBeforeStartupDoNotWriteSessionRegistries() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "agent-island-unstarted-model-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let registryURLs = [
+            rootURL.appendingPathComponent("codex.json"),
+            rootURL.appendingPathComponent("claude.json"),
+            rootURL.appendingPathComponent("opencode.json"),
+            rootURL.appendingPathComponent("cursor.json"),
+        ]
+        let discovery = SessionDiscoveryCoordinator(
+            codexSessionStore: CodexSessionStore(fileURL: registryURLs[0]),
+            claudeSessionRegistry: ClaudeSessionRegistry(fileURL: registryURLs[1]),
+            openCodeSessionRegistry: OpenCodeSessionRegistry(fileURL: registryURLs[2]),
+            cursorSessionRegistry: CursorSessionRegistry(fileURL: registryURLs[3])
+        )
+        let model = AppModel(discovery: discovery)
+
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        model.applyTrackedEvent(
+            .sessionStarted(
+                SessionStarted(
+                    sessionID: "session-1",
+                    title: "Test",
+                    tool: .codex,
+                    summary: "Done",
+                    timestamp: .now
+                )
+            ),
+            updateLastActionMessage: false
+        )
+
+        try await Task.sleep(for: .milliseconds(400))
+
+        #expect(
+            registryURLs.allSatisfy {
+                !FileManager.default.fileExists(atPath: $0.path)
+            }
+        )
+    }
+
+    @Test
     func islandListKeepsRecentCompletedSessionsAfterTheirProcessEnds() {
         let now = Date()
         let model = AppModel()

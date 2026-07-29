@@ -40,16 +40,16 @@ final class SessionDiscoveryCoordinator {
     var onAgentEvent: ((AgentEvent) -> Void)?
 
     @ObservationIgnored
-    private let codexSessionStore = CodexSessionStore()
+    private let codexSessionStore: CodexSessionStore
 
     @ObservationIgnored
-    private let claudeSessionRegistry = ClaudeSessionRegistry()
+    private let claudeSessionRegistry: ClaudeSessionRegistry
 
     @ObservationIgnored
-    private let openCodeSessionRegistry = OpenCodeSessionRegistry()
+    private let openCodeSessionRegistry: OpenCodeSessionRegistry
 
     @ObservationIgnored
-    private let cursorSessionRegistry = CursorSessionRegistry()
+    private let cursorSessionRegistry: CursorSessionRegistry
 
     @ObservationIgnored
     let codexRolloutWatcher = CodexRolloutWatcher()
@@ -77,6 +77,18 @@ final class SessionDiscoveryCoordinator {
 
     @ObservationIgnored
     private var cursorSessionPersistenceTask: Task<Void, Never>?
+
+    init(
+        codexSessionStore: CodexSessionStore = CodexSessionStore(),
+        claudeSessionRegistry: ClaudeSessionRegistry = ClaudeSessionRegistry(),
+        openCodeSessionRegistry: OpenCodeSessionRegistry = OpenCodeSessionRegistry(),
+        cursorSessionRegistry: CursorSessionRegistry = CursorSessionRegistry()
+    ) {
+        self.codexSessionStore = codexSessionStore
+        self.claudeSessionRegistry = claudeSessionRegistry
+        self.openCodeSessionRegistry = openCodeSessionRegistry
+        self.cursorSessionRegistry = cursorSessionRegistry
+    }
 
     private var state: SessionState {
         get { stateAccessor?() ?? SessionState() }
