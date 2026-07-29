@@ -80,6 +80,9 @@ final class AgentControlDeviceCoordinator {
     var onDeviceMessage: ((AgentControlDeviceEvent) -> Void)?
 
     @ObservationIgnored
+    var onConnectionReadinessChanged: ((Bool) -> Void)?
+
+    @ObservationIgnored
     private(set) var currentSnapshot: AgentControlDeviceSnapshot?
 
     @ObservationIgnored
@@ -179,7 +182,7 @@ final class AgentControlDeviceCoordinator {
         guard !isRunning else { return }
         isRunning = true
         isSleeping = false
-        diagnostics.state = .searching
+        setConnectionState(.searching)
         diagnostics.lastError = nil
         powerEventSource.start()
         startTransport()
@@ -193,7 +196,7 @@ final class AgentControlDeviceCoordinator {
         powerEventSource.stop()
         transport.stop()
         clearConnectionState()
-        diagnostics.state = .stopped
+        setConnectionState(.stopped)
         diagnostics.selectedDevice = nil
         diagnostics.matchingDeviceCount = 0
     }
@@ -227,7 +230,7 @@ final class AgentControlDeviceCoordinator {
         cancelConnectionTasks()
         transport.stop()
         clearConnectionState()
-        diagnostics.state = .sleeping
+        setConnectionState(.sleeping)
         diagnostics.selectedDevice = nil
         diagnostics.matchingDeviceCount = 0
     }
@@ -236,7 +239,7 @@ final class AgentControlDeviceCoordinator {
         guard isRunning, isSleeping else { return }
         isSleeping = false
         diagnostics.reconnectCount += 1
-        diagnostics.state = .searching
+        setConnectionState(.searching)
         startTransport()
     }
 
@@ -270,7 +273,7 @@ final class AgentControlDeviceCoordinator {
             clearConnectionState()
             diagnostics.selectedDevice = nil
             diagnostics.matchingDeviceCount = matchingDeviceCount
-            diagnostics.state = .searching
+            setConnectionState(.searching)
 
         case let .matchingDeviceCountChanged(count):
             diagnostics.matchingDeviceCount = count
@@ -286,7 +289,7 @@ final class AgentControlDeviceCoordinator {
     private func beginHandshake() {
         cancelConnectionTasks()
         clearConnectionState()
-        diagnostics.state = .handshaking
+        setConnectionState(.handshaking)
         diagnostics.lastError = nil
 
         var nonce = nonceGenerator()
@@ -352,7 +355,7 @@ final class AgentControlDeviceCoordinator {
             if case let .incompatibleMajorVersion(majorVersion) = error {
                 handshakeTimeoutTask?.cancel()
                 handshakeTimeoutTask = nil
-                diagnostics.state = .incompatible
+                setConnectionState(.incompatible)
                 diagnostics.lastError =
                     "Unsupported protocol major version \(majorVersion)."
                 return
@@ -446,14 +449,14 @@ final class AgentControlDeviceCoordinator {
         guard incompatibility == nil else {
             handshakeTimeoutTask?.cancel()
             handshakeTimeoutTask = nil
-            diagnostics.state = .incompatible
+            setConnectionState(.incompatible)
             diagnostics.lastError = incompatibility
             return
         }
 
         handshakeTimeoutTask?.cancel()
         handshakeTimeoutTask = nil
-        diagnostics.state = .ready
+        setConnectionState(.ready)
         diagnostics.activeTransport = capabilities.activeTransport
         diagnostics.protocolMinor = capabilities.protocolMinor
         diagnostics.effectiveWatchdogSeconds =
@@ -683,7 +686,7 @@ final class AgentControlDeviceCoordinator {
         cancelConnectionTasks()
         transport.stop()
         clearConnectionState()
-        diagnostics.state = .reconnecting
+        setConnectionState(.reconnecting)
         diagnostics.lastError = error.localizedDescription
 
         reconnectTask = Task { @MainActor [weak self] in
@@ -695,7 +698,7 @@ final class AgentControlDeviceCoordinator {
             guard let self, self.isRunning, !self.isSleeping else { return }
             self.reconnectTask = nil
             self.diagnostics.reconnectCount += 1
-            self.diagnostics.state = .searching
+            self.setConnectionState(.searching)
             self.startTransport()
         }
     }
@@ -740,6 +743,17 @@ final class AgentControlDeviceCoordinator {
         diagnostics.firmwareBuildIdentifier = nil
         diagnostics.snapshotGeneration = nil
         diagnostics.lastLayerEnabled = nil
+    }
+
+    private func setConnectionState(
+        _ state: AgentControlDeviceConnectionState
+    ) {
+        let wasReady = diagnostics.state == .ready
+        diagnostics.state = state
+        let isReady = state == .ready
+        if isReady != wasReady {
+            onConnectionReadinessChanged?(isReady)
+        }
     }
 }
 

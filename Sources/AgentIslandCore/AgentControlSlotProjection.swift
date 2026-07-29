@@ -159,6 +159,55 @@ public struct AgentControlSlotAllocator: Equatable, Sendable {
             occupiedSlots.insert(slot)
         }
 
+        return projection(
+            candidatesByID: candidatesByID,
+            candidateCount: orderedCandidates.count
+        )
+    }
+
+    /// Explicitly closes gaps while preserving the relative order of sessions
+    /// that already have active assignments. This is intentionally separate
+    /// from ``reconcile(candidates:)`` so routine state updates never cause a
+    /// physical key to change underneath the user.
+    public mutating func compact(
+        candidates: [AgentControlSlotCandidate]
+    ) -> AgentControlSlotProjection {
+        let candidatesByID = Self.uniqueCandidatesByID(candidates)
+        let orderedCandidates = candidatesByID.values.sorted(by: Self.candidateOrder)
+        let eligibleIDs = Set(candidatesByID.keys)
+        let assignedCandidates = activeSlots
+            .filter { eligibleIDs.contains($0.key) }
+            .sorted { lhs, rhs in
+                if lhs.value != rhs.value {
+                    return lhs.value < rhs.value
+                }
+                return lhs.key < rhs.key
+            }
+            .compactMap { candidatesByID[$0.key] }
+        let assignedIDs = Set(assignedCandidates.map(\.sessionID))
+        let compactionOrder = assignedCandidates
+            + orderedCandidates.filter {
+                !assignedIDs.contains($0.sessionID)
+            }
+
+        activeSlots.removeAll(keepingCapacity: true)
+        for (index, candidate) in compactionOrder
+            .prefix(Self.capacity)
+            .enumerated() {
+            activeSlots[candidate.sessionID] = index
+            preferredSlots[candidate.sessionID] = index
+        }
+
+        return projection(
+            candidatesByID: candidatesByID,
+            candidateCount: orderedCandidates.count
+        )
+    }
+
+    private func projection(
+        candidatesByID: [String: AgentControlSlotCandidate],
+        candidateCount: Int
+    ) -> AgentControlSlotProjection {
         var slots = [AgentControlSlot?](repeating: nil, count: Self.capacity)
         for (sessionID, index) in activeSlots {
             guard let candidate = candidatesByID[sessionID] else { continue }
@@ -171,7 +220,7 @@ public struct AgentControlSlotAllocator: Equatable, Sendable {
 
         return AgentControlSlotProjection(
             slots: slots,
-            overflowCount: max(orderedCandidates.count - activeSlots.count, 0)
+            overflowCount: max(candidateCount - activeSlots.count, 0)
         )
     }
 

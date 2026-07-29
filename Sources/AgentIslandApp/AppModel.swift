@@ -920,6 +920,14 @@ final class AppModel {
         agentControlDeviceCoordinator.onDeviceMessage = { [weak self] event in
             self?.handleAgentControlDeviceEvent(event)
         }
+        agentControlDeviceCoordinator.onConnectionReadinessChanged = {
+            [weak self] isReady in
+            guard let self else { return }
+            if !isReady {
+                self.clearAgentControlSelection()
+            }
+            self.refreshOverlayPlacementIfVisible()
+        }
         refreshOverlayDisplayConfiguration()
         hasFinishedInit = true
     }
@@ -939,6 +947,20 @@ final class AppModel {
         didSet {
             let delta = abs(measuredNotificationContentHeight - oldValue)
             if delta >= 2, measuredNotificationContentHeight > 0 {
+                overlay.refreshOverlayPlacementIfVisible()
+            }
+        }
+    }
+
+    /// Natural height of the rows inside the ordinary session-list scroller.
+    /// Using SwiftUI's measured value keeps the AppKit panel aligned with the
+    /// actual expanded detail body instead of a phase-based estimate.
+    var measuredSessionRowsContentHeight: CGFloat = 0 {
+        didSet {
+            let delta = abs(
+                measuredSessionRowsContentHeight - oldValue
+            )
+            if delta >= 2, measuredSessionRowsContentHeight > 0 {
                 overlay.refreshOverlayPlacementIfVisible()
             }
         }
@@ -988,7 +1010,13 @@ final class AppModel {
                 )
             ]
         case .state:
-            return stateGroupedSections(for: sessions, at: referenceDate)
+            return stateGroupedSections(
+                for: sortStateGroupedSessionsByAgentControlSlot(
+                    sessions,
+                    at: referenceDate
+                ),
+                at: referenceDate
+            )
         case .agent:
             return AgentTool.allCases.compactMap { tool in
                 let list = sessions.filter { $0.tool == tool }
@@ -1172,6 +1200,43 @@ final class AppModel {
         }
     }
 
+    private func sortStateGroupedSessionsByAgentControlSlot(
+        _ sessions: [AgentSession],
+        at referenceDate: Date
+    ) -> [AgentSession] {
+        guard agentControlKeyboardModeActive else {
+            return sessions
+        }
+
+        let slotIndexBySessionID = Dictionary(
+            uniqueKeysWithValues:
+                agentControlSlotProjection(at: referenceDate)
+                    .assignedSlots
+                    .map { ($0.sessionID, $0.index) }
+        )
+
+        return sessions.enumerated().sorted { lhs, rhs in
+            let lhsIndex = slotIndexBySessionID[lhs.element.id]
+            let rhsIndex = slotIndexBySessionID[rhs.element.id]
+
+            switch (lhsIndex, rhsIndex) {
+            case let (lhsIndex?, rhsIndex?):
+                if lhsIndex != rhsIndex {
+                    return lhsIndex < rhsIndex
+                }
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                break
+            }
+
+            return lhs.offset < rhs.offset
+        }
+        .map(\.element)
+    }
+
     private func projectGroupName(for session: AgentSession) -> String {
         if let workspace = session.jumpTarget?.workspaceName.trimmingCharacters(in: .whitespacesAndNewlines),
            !workspace.isEmpty {
@@ -1279,7 +1344,7 @@ final class AppModel {
         for sessionID: String,
         at referenceDate: Date = .now
     ) -> String? {
-        guard agentControlKeyboardEnabled,
+        guard agentControlKeyboardModeActive,
               let keyLabel = agentControlSlotLabel(
                 for: sessionID,
                 at: referenceDate
@@ -1289,8 +1354,39 @@ final class AppModel {
         return "K0 · \(keyLabel)"
     }
 
+    /// Manual refresh is the explicit boundary where stable physical
+    /// assignments may be renumbered. Routine session updates continue to
+    /// preserve every active key.
+    func compactAgentControlSlots(
+        at referenceDate: Date = .now
+    ) {
+        guard agentControlKeyboardModeActive else {
+            return
+        }
+
+        clearAgentControlSelection()
+        _ = agentControlSlotCoordinator.compactAssignments(
+            for: surfacedSessions,
+            at: referenceDate,
+            completedStaleThreshold: completedStaleThreshold.seconds,
+            canResolveExactPermissionRequest: { [self] session in
+                canResolveAgentControlPermission(for: session)
+            }
+        )
+        updateAgentControlDeviceSnapshot(at: referenceDate)
+        refreshOverlayPlacementIfVisible()
+    }
+
     var agentControlDeviceDiagnostics: AgentControlDeviceDiagnostics {
         agentControlDeviceCoordinator.diagnostics
+    }
+
+    /// True only while a compatible keyboard has completed its handshake.
+    /// Device discovery can remain armed while this mode follows the physical
+    /// connection automatically.
+    var agentControlKeyboardModeActive: Bool {
+        agentControlKeyboardEnabled
+            && agentControlDeviceDiagnostics.state == .ready
     }
 
     /// Starts K0 Max state projection and navigation intent handling.
@@ -1313,7 +1409,6 @@ final class AppModel {
         agentControlSnapshotRefreshTask?.cancel()
         agentControlSnapshotRefreshTask = nil
         clearAgentControlSelection()
-        agentControlDetailPresentationRequests.removeAll()
         guard isAgentControlDeviceIntegrationStarted else { return }
 
         // Clear immediately while the connection is still live. Firmware's
@@ -1641,6 +1736,23 @@ final class AppModel {
         }
     }
 
+    func setSessionDetailExpanded(
+        _ isExpanded: Bool,
+        for sessionID: String
+    ) {
+        guard state.session(id: sessionID) != nil,
+              agentControlDetailPresentationRequests[sessionID]?.isExpanded
+                != isExpanded else {
+            return
+        }
+
+        requestAgentControlDetailPresentation(
+            for: sessionID,
+            isExpanded: isExpanded
+        )
+        refreshOverlayPlacementIfVisible()
+    }
+
     private func handleAgentControlIslandToggle(
         requestSequence: UInt16,
         connectionNonce: UInt64,
@@ -1945,6 +2057,10 @@ final class AppModel {
             sessionID: session.id,
             requestID: requestID,
             resolution: resolution
+        )
+        requestAgentControlDetailPresentation(
+            for: session.id,
+            isExpanded: false
         )
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
@@ -2318,7 +2434,7 @@ final class AppModel {
         case .minimal:
             return .singleTask(sessionID: sessionID)
         case .regular:
-            return notificationSurface
+            return .sessionList(actionableSessionID: sessionID)
         case .expanded:
             select(sessionID: sessionID)
             return .expanded(selectedSessionID: sessionID)
@@ -2606,8 +2722,8 @@ final class AppModel {
     func ensureOverlayPanel() { overlay.ensureOverlayPanel() }
     func showOverlay() { overlay.showOverlay() }
     func hideOverlay() { overlay.hideOverlay() }
-    func expandNotificationToSessionList(clearExpansion: Bool = false) {
-        overlay.expandNotificationToSessionList(clearExpansion: clearExpansion)
+    func expandNotificationToSessionList() {
+        overlay.expandNotificationToSessionList()
     }
     func refreshOverlayDisplayConfiguration() { overlay.refreshOverlayDisplayConfiguration() }
     func refreshOverlayPlacement() { overlay.refreshOverlayPlacement() }
@@ -2615,6 +2731,14 @@ final class AppModel {
     func notePointerInsideIslandSurface() { overlay.notePointerInsideIslandSurface() }
     func handlePointerExitedIslandSurface() { overlay.handlePointerExitedIslandSurface() }
     private func presentNotificationSurface(_ surface: IslandSurface) {
+        if let sessionID = surface.sessionID,
+           let session = state.session(id: sessionID),
+           session.phase == .waitingForApproval || session.phase == .completed {
+            requestAgentControlDetailPresentation(
+                for: sessionID,
+                isExpanded: true
+            )
+        }
         overlay.presentNotificationSurface(
             surface,
             as: presentationSurface(for: surface)
@@ -2679,6 +2803,7 @@ final class AppModel {
     }
 
     func refreshSessionsManually() {
+        compactAgentControlSlots()
         discovery.refreshCodexAppSessions()
     }
 
@@ -2831,6 +2956,11 @@ final class AppModel {
             return
         }
 
+        requestAgentControlDetailPresentation(
+            for: session.id,
+            isExpanded: false
+        )
+        dismissNotificationSurfaceIfPresent(for: session.id)
         clearAgentControlSelection()
         notchClose()
         synchronizeSelection()
@@ -2986,6 +3116,14 @@ final class AppModel {
             guard case let .sessionCompleted(payload) = event else { return false }
             return state.session(id: payload.sessionID)?.phase == .completed
         }()
+        let resolvedPermissionSessionID: String? = {
+            guard case let .actionableStateResolved(payload) = event,
+                  state.session(id: payload.sessionID)?.phase
+                    == .waitingForApproval else {
+                return nil
+            }
+            return payload.sessionID
+        }()
 
         // Guard: don't let rollout events downgrade a session from completed
         // back to running. The bridge's sessionCompleted is authoritative; the
@@ -3011,6 +3149,12 @@ final class AppModel {
         }
 
         state.apply(event)
+        if let resolvedPermissionSessionID {
+            requestAgentControlDetailPresentation(
+                for: resolvedPermissionSessionID,
+                isExpanded: false
+            )
+        }
         reconcileIslandSurfaceAfterStateChange()
         if ingress == .bridge {
             monitoring.markSessionAttached(for: event)

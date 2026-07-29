@@ -172,6 +172,7 @@ final class OverlayUICoordinator {
                 self?.autoCollapseSurfaceHasBeenEntered = false
                 self?.isPointerInsideIslandSurface = false
                 self?.appModel?.measuredNotificationContentHeight = 0
+                self?.appModel?.measuredSessionRowsContentHeight = 0
             }
         )
     }
@@ -199,6 +200,7 @@ final class OverlayUICoordinator {
         // measurements from a previous notification don't mis-size the new one.
         if surface != islandSurface {
             appModel?.measuredNotificationContentHeight = 0
+            appModel?.measuredSessionRowsContentHeight = 0
         }
 
         islandSurface = surface
@@ -249,13 +251,10 @@ final class OverlayUICoordinator {
     }
     func hideOverlay() { notchClose() }
 
-    /// Transition from notification mode (single session) to full session list.
-    /// - Parameter clearExpansion: If true, clears the actionable session's expansion
-    ///   (used for completion notifications which are informational only).
-    func expandNotificationToSessionList(clearExpansion: Bool = false) {
-        let actionableSessionID = clearExpansion
-            ? nil
-            : islandSurface.sessionID
+    /// Transition from notification mode (single session) to the full session
+    /// list while retaining and revealing the actionable row.
+    func expandNotificationToSessionList() {
+        let actionableSessionID = islandSurface.sessionID
         islandSurface = .sessionList(
             actionableSessionID: actionableSessionID
         )

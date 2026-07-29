@@ -145,7 +145,9 @@ derive their own presentations from the same stable ordering data.
   Island's existing surfacing rule.
 - At bulk startup, order newcomers by `firstSeenAt` and then session ID.
 - After startup, assign a newly observed session to the first free slot.
-- Do not renumber eligible live or recently completed sessions.
+- Do not renumber eligible live or recently completed sessions during routine
+  updates. The island's explicit refresh action may compact the currently
+  eligible assignments toward `1` while preserving their relative key order.
 - Persist assignments by stable session ID so app restart does not scramble
   the physical mapping.
 - Keep completed sessions green until the configured completed-stale
@@ -459,6 +461,15 @@ On 2026-07-28:
   with live connection state, transport, protocol, and firmware build
   diagnostics. The app starts the device coordinator only after its runtime
   starts and the preference is enabled.
+- A later interaction refinement defaults device discovery on while retaining
+  the explicit opt-out. Keyboard mode and K0 badges now activate only after a
+  compatible device completes its handshake and deactivate immediately on
+  disconnect. Pointer selection and detail disclosure remain independent of
+  that connection state.
+- Ordinary session-list panel sizing now follows the measured SwiftUI row
+  content after disclosure changes. Phase-based completion estimates remain a
+  first-frame fallback only, preventing expanded cursor or keyboard details
+  from reserving unused vertical space.
 - AppModel now converts the shared ten-slot projection into anonymous device
   snapshots on session, hidden-state, display-profile, and completion-window
   changes. A scheduled refresh turns recently completed slots off when the
@@ -613,6 +624,14 @@ On 2026-07-28:
   Each numbered thread remembers its own disclosure state across selection
   changes and closing/reopening the island with `0`. Manual multi-thread
   testing confirmed the remembered open and closed states.
+- A presentation follow-up makes approval and completion notifications open
+  their detail automatically, then closes approval detail after allow or deny.
+  The explicit island refresh action also compacts gaps in the live K0 mapping
+  without introducing automatic renumbering during ordinary session updates.
+- Row disclosure is now model-owned for both pointer and keyboard interaction.
+  Selecting a numbered session no longer reserves expanded-detail height, while
+  opening a completion row from either input exposes its full completion body
+  and gives the overlay the corresponding vertical space.
 
 ### Round 9 — Packaging and support
 

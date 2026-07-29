@@ -119,7 +119,7 @@ struct AppModelSessionListTests {
         )
         #expect(
             regularModel.islandSurface
-                == .notification(sessionID: session.id)
+                == .sessionList(actionableSessionID: session.id)
         )
         regularModel.notchClose()
     }
@@ -806,7 +806,10 @@ struct AppModelSessionListTests {
 
         #expect(model.notchStatus == .opened)
         #expect(model.notchOpenReason == .notification)
-        #expect(model.islandSurface == .notification(sessionID: session.id))
+        #expect(
+            model.islandSurface
+                == .sessionList(actionableSessionID: session.id)
+        )
         #expect(model.surfacedSessions.map(\.id) == [session.id])
         #expect(model.hiddenIslandSessions.isEmpty)
         #expect(model.shouldExposeEventFromHiddenSession(
@@ -889,13 +892,19 @@ struct AppModelSessionListTests {
         #expect(model.surfacedSessions.map(\.id) == [session.id])
         #expect(model.hiddenIslandSessions.isEmpty)
         #expect(model.notchStatus == .opened)
-        #expect(model.islandSurface == .notification(sessionID: session.id))
+        #expect(
+            model.islandSurface
+                == .sessionList(actionableSessionID: session.id)
+        )
 
         model.unhideSession(pending!)
 
         #expect(!model.isSessionHidden(model.state.session(id: session.id)!))
         #expect(model.activeIslandCardSession?.permissionRequest == request)
-        #expect(model.islandSurface == .notification(sessionID: session.id))
+        #expect(
+            model.islandSurface
+                == .sessionList(actionableSessionID: session.id)
+        )
     }
 
     @Test
@@ -1294,7 +1303,72 @@ struct AppModelSessionListTests {
 
         #expect(model.notchStatus == .opened)
         #expect(model.notchOpenReason == .notification)
-        #expect(model.islandSurface == .notification(sessionID: "background-session"))
+        #expect(
+            model.islandSurface
+                == .sessionList(
+                    actionableSessionID: "background-session"
+                )
+        )
+    }
+
+    @Test
+    func externallyResolvedApprovalCollapsesItsExpandedDetail() {
+        let now = Date(timeIntervalSince1970: 2_500)
+        let model = AppModel()
+        model.suppressFrontmostNotifications = false
+        model.state = SessionState(
+            sessions: [
+                listSession(
+                    id: "external-approval",
+                    phase: .running,
+                    updatedAt: now
+                ),
+            ]
+        )
+
+        model.applyTrackedEvent(
+            .permissionRequested(
+                PermissionRequested(
+                    sessionID: "external-approval",
+                    request: PermissionRequest(
+                        title: "Edit",
+                        summary: "Edit a file",
+                        affectedPath: "/tmp/file"
+                    ),
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        #expect(
+            model.agentControlDetailPresentationRequests[
+                "external-approval"
+            ]?.isExpanded == true
+        )
+
+        model.applyTrackedEvent(
+            .actionableStateResolved(
+                ActionableStateResolved(
+                    sessionID: "external-approval",
+                    summary: "Approval handled elsewhere.",
+                    timestamp: now.addingTimeInterval(2)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        #expect(
+            model.state.session(id: "external-approval")?.phase
+                == .running
+        )
+        #expect(
+            model.agentControlDetailPresentationRequests[
+                "external-approval"
+            ]?.isExpanded == false
+        )
     }
 
     @Test

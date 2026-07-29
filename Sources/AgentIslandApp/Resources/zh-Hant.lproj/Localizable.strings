@@ -43,7 +43,7 @@
 "settings.general.languageChinese" = "简体中文";
 "settings.general.languageTraditionalChinese" = "繁體中文";
 "settings.general.agentControl.section" = "代理控制鍵盤";
-"settings.general.agentControl.enable" = "啟用 Keychron K0 Max";
+"settings.general.agentControl.enable" = "自動使用 Keychron K0 Max";
 "settings.general.agentControl.approvals" = "啟用鍵盤核准";
 "settings.general.agentControl.approvalsHelp" = "此功能涉及安全，預設關閉。+ 僅允許一次，- 拒絕；操作僅適用於 15 秒選取時限內所選的確切請求。";
 "settings.general.agentControl.codexApprovalBroker" = "透過 Agent Island 處理 Codex 核准";
