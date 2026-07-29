@@ -580,11 +580,19 @@ struct IslandPanelView: View {
                 VStack(spacing: 0) {
                     sessionPanelHeader(referenceDate: referenceDate)
 
-                    ScrollView(.vertical) {
-                        sessionRowsContent(referenceDate: referenceDate)
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical) {
+                            sessionRowsContent(referenceDate: referenceDate)
+                        }
+                        .scrollIndicators(.hidden)
+                        .scrollBounceBehavior(.basedOnSize)
+                        .onAppear {
+                            scrollToActionableSession(using: proxy)
+                        }
+                        .onChange(of: actionableSessionID) {
+                            scrollToActionableSession(using: proxy)
+                        }
                     }
-                    .scrollIndicators(.hidden)
-                    .scrollBounceBehavior(.basedOnSize)
 
                     sessionPanelFooter
                 }
@@ -604,9 +612,15 @@ struct IslandPanelView: View {
                 IslandSessionRow(
                     session: session,
                     referenceDate: referenceDate,
+                    hardwareSlotBadge: model.agentControlHardwareBadgeLabel(
+                        for: session.id,
+                        at: referenceDate
+                    ),
                     stateIndicator: model.islandSessionStateIndicator,
                     completedStaleThreshold: model.completedStaleThreshold.seconds,
                     isActionable: true,
+                    isHardwareSelected:
+                        session.id == model.agentControlSelectedSessionID,
                     useDrawingGroup: model.notchStatus == .opened,
                     isInteractive: model.notchStatus == .opened,
                     presentation: .notification,
@@ -651,9 +665,15 @@ struct IslandPanelView: View {
                             IslandSessionRow(
                                 session: session,
                                 referenceDate: referenceDate,
+                                hardwareSlotBadge: model.agentControlHardwareBadgeLabel(
+                                    for: session.id,
+                                    at: referenceDate
+                                ),
                                 stateIndicator: model.islandSessionStateIndicator,
                                 completedStaleThreshold: model.completedStaleThreshold.seconds,
                                 isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
+                                isHardwareSelected:
+                                    session.id == model.agentControlSelectedSessionID,
                                 useDrawingGroup: model.notchStatus == .opened,
                                 isInteractive: model.notchStatus == .opened,
                                 sideInset: sessionListSideInset,
@@ -670,8 +690,8 @@ struct IslandPanelView: View {
                                     ? { model.unhideSession(session) } : nil
                             )
                         }
-                    }
                 }
+            }
 
                 hiddenSessionsSection(referenceDate: referenceDate)
             }
@@ -707,9 +727,15 @@ struct IslandPanelView: View {
                     IslandSessionRow(
                         session: session,
                         referenceDate: referenceDate,
+                        hardwareSlotBadge: model.agentControlHardwareBadgeLabel(
+                            for: session.id,
+                            at: referenceDate
+                        ),
                         stateIndicator: model.islandSessionStateIndicator,
                         completedStaleThreshold: model.completedStaleThreshold.seconds,
                         isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
+                        isHardwareSelected:
+                            session.id == model.agentControlSelectedSessionID,
                         useDrawingGroup: model.notchStatus == .opened,
                         isInteractive: model.notchStatus == .opened,
                         sideInset: sessionListSideInset,
@@ -725,11 +751,21 @@ struct IslandPanelView: View {
                         onUnhide: model.isSessionHidden(session)
                             ? { model.unhideSession(session) } : nil
                     )
+                    .id(session.id)
                 }
             }
         }
 
         hiddenSessionsSection(referenceDate: referenceDate)
+    }
+
+    private func scrollToActionableSession(
+        using proxy: ScrollViewProxy
+    ) {
+        guard let actionableSessionID else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            proxy.scrollTo(actionableSessionID, anchor: .center)
+        }
     }
 
     @ViewBuilder
@@ -768,8 +804,14 @@ struct IslandPanelView: View {
                         IslandSessionRow(
                             session: session,
                             referenceDate: referenceDate,
+                            hardwareSlotBadge: model.agentControlHardwareBadgeLabel(
+                                for: session.id,
+                                at: referenceDate
+                            ),
                             stateIndicator: model.islandSessionStateIndicator,
                             completedStaleThreshold: model.completedStaleThreshold.seconds,
+                            isHardwareSelected:
+                                session.id == model.agentControlSelectedSessionID,
                             useDrawingGroup: model.notchStatus == .opened,
                             isInteractive: model.notchStatus == .opened,
                             sideInset: sessionListSideInset,
@@ -1285,9 +1327,11 @@ private enum IslandSessionRowPresentation {
 private struct IslandSessionRow: View {
     let session: AgentSession
     let referenceDate: Date
+    var hardwareSlotBadge: String?
     var stateIndicator: IslandSessionStateIndicator = .animatedDot
     var completedStaleThreshold: TimeInterval = AgentSession.staleCompletedDisplayThreshold
     var isActionable: Bool = false
+    var isHardwareSelected: Bool = false
     var useDrawingGroup: Bool = true
     var isInteractive: Bool = true
     var presentation: IslandSessionRowPresentation = .list
@@ -1351,6 +1395,22 @@ private struct IslandSessionRow: View {
                     .padding(.leading, 14)
             }
         }
+        .overlay {
+            if isHardwareSelected {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(
+                        .white.opacity(0.72),
+                        style: StrokeStyle(
+                            lineWidth: 1,
+                            lineCap: .round,
+                            dash: [4, 3]
+                        )
+                    )
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .allowsHitTesting(false)
+            }
+        }
         .opacity(isStaleCompleted ? 0.7 : 1)
         .modifier(ConditionalDrawingGroup(enabled: useDrawingGroup && !isActionable))
         .contentShape(Rectangle())
@@ -1410,6 +1470,9 @@ private struct IslandSessionRow: View {
             Spacer(minLength: 10)
 
             HStack(spacing: 6) {
+                if let hardwareSlotBadge {
+                    sideBadge(hardwareSlotBadge)
+                }
                 agentBadge
                 if session.isRemote {
                     sideBadge("SSH")

@@ -15,7 +15,15 @@ final class OverlayUICoordinator {
     var isOverlayVisible: Bool { notchStatus != .closed }
 
     var overlayDisplayOptions: [OverlayDisplayOption] = []
-    var overlayPlacementDiagnostics: OverlayPlacementDiagnostics?
+    var overlayPlacementDiagnostics: OverlayPlacementDiagnostics? {
+        didSet {
+            guard overlayPlacementDiagnostics?.mode
+                    != oldValue?.mode else {
+                return
+            }
+            onPlacementDiagnosticsChanged?()
+        }
+    }
 
     var overlayDisplaySelectionID = OverlayDisplayOption.automaticID {
         didSet {
@@ -32,6 +40,9 @@ final class OverlayUICoordinator {
 
     @ObservationIgnored
     var onStatusMessage: ((String) -> Void)?
+
+    @ObservationIgnored
+    var onPlacementDiagnosticsChanged: (() -> Void)?
 
     @ObservationIgnored
     var activeIslandCardSessionAccessor: (() -> AgentSession?)?

@@ -219,9 +219,89 @@ struct GeneralSettingsPane: View {
                 ))
             }
 
+            Section(lang.t("settings.general.agentControl.section")) {
+                Toggle(
+                    lang.t("settings.general.agentControl.enable"),
+                    isOn: Binding(
+                        get: { model.agentControlKeyboardEnabled },
+                        set: { model.agentControlKeyboardEnabled = $0 }
+                    )
+                )
+
+                if model.agentControlKeyboardEnabled {
+                    LabeledContent(
+                        lang.t("settings.general.agentControl.status"),
+                        value: agentControlStatusTitle
+                    )
+                    .help(model.agentControlDeviceDiagnostics.summary)
+
+                    LabeledContent(
+                        lang.t("settings.general.agentControl.transport"),
+                        value: agentControlTransportTitle
+                    )
+
+                    LabeledContent(
+                        lang.t("settings.general.agentControl.protocol"),
+                        value: agentControlProtocolTitle
+                    )
+
+                    LabeledContent(
+                        lang.t("settings.general.agentControl.firmware"),
+                        value: agentControlFirmwareTitle
+                    )
+
+                    Text(lang.t("settings.general.agentControl.navigation"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(lang.t("settings.general.agentControl.requiresFirmware"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
         }
         .formStyle(.grouped)
         .navigationTitle(lang.t("settings.tab.general"))
+    }
+
+    private var agentControlStatusTitle: String {
+        lang.t(
+            "settings.general.agentControl.state."
+                + model.agentControlDeviceDiagnostics.state.rawValue
+        )
+    }
+
+    private var agentControlTransportTitle: String {
+        switch model.agentControlDeviceDiagnostics.activeTransport {
+        case .usb:
+            lang.t("settings.general.agentControl.transport.usb")
+        case .twoPointFourGHz:
+            lang.t("settings.general.agentControl.transport.2_4ghz")
+        case .bluetooth:
+            lang.t("settings.general.agentControl.transport.bluetooth")
+        case .unknown:
+            lang.t("settings.general.agentControl.transport.unknown")
+        case nil:
+            lang.t("settings.general.agentControl.unavailable")
+        }
+    }
+
+    private var agentControlProtocolTitle: String {
+        guard let minor =
+                model.agentControlDeviceDiagnostics.protocolMinor else {
+            return lang.t("settings.general.agentControl.unavailable")
+        }
+        return "v\(AgentControlProtocolV1.majorVersion).\(minor)"
+    }
+
+    private var agentControlFirmwareTitle: String {
+        guard let identifier =
+                model.agentControlDeviceDiagnostics
+                    .firmwareBuildIdentifier else {
+            return lang.t("settings.general.agentControl.unavailable")
+        }
+        return String(format: "0x%08X", identifier)
     }
 }
 

@@ -43,12 +43,13 @@ Keep all work incremental, reviewable, and reversible. Every meaningful round of
 
 ## Branching And Worktree Rules
 
-- Treat `/Users/wangruobing/Personal/agent-island` on `main` as the shared integration worktree.
+- This repository is standalone. Treat `origin` as its only canonical remote; do not add a fork/upstream remote or sync another repository without explicit user direction.
+- Treat the worktree where `main` is checked out as the shared integration worktree. Discover it with `git worktree list` instead of assuming a machine-specific path.
 - Never edit, commit, or push directly on `main`. All changes must go through a feature branch and PR before integration.
 - Use the shared `main` worktree only to inspect repository state, fetch, update with `git pull --ff-only`, and run final verification after PRs merge.
 - Create one worktree per branch and one branch per worktree. Never attach two worktrees to the same branch.
 - Create new worktrees from `origin/main`, not from a locally drifted feature branch.
-- Use sibling worktree paths named like `/Users/wangruobing/Personal/agent-island-<topic>`.
+- Put topic worktrees outside the integration checkout, using a sibling path such as `../agent-island-<topic>` or a task-specific writable temporary root.
 - Use branch names that match the workstream, such as `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, or `investigate/<topic>`.
 - Keep each worktree focused on one coherent slice with a narrow file ownership area when possible.
 - Rebase or merge the latest `origin/main` into the feature branch before integrating it back.
@@ -58,7 +59,7 @@ Keep all work incremental, reviewable, and reversible. Every meaningful round of
 - If multiple agents are working in parallel, assign each agent its own worktree instead of sharing one checkout.
 - All PRs must target `main`. Do not chain PRs through another feature branch unless the user explicitly requests that structure.
 
-See [docs/worktree-workflow.md](/Users/wangruobing/Personal/agent-island/docs/worktree-workflow.md) for the concrete commands and lifecycle.
+See [docs/worktree-workflow.md](docs/worktree-workflow.md) for the concrete commands and lifecycle.
 
 ## Product Boundaries
 

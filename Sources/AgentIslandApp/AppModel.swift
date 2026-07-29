@@ -12,6 +12,16 @@ extension Notification.Name {
     static let agentIslandSelectSetupTab = Notification.Name("agentIslandSelectSetupTab")
 }
 
+private struct AgentControlSelectionContext {
+    let connectionNonce: UInt64
+    let slotIndex: UInt8
+    let slotEpoch: UInt16
+    let sessionID: String
+    let selectionToken: UInt64
+    let allowedActions: AgentControlAllowedActionSet
+    let expiresAt: Date
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -27,11 +37,11 @@ final class AppModel {
     private static let legacyIslandSessionSortDefaultsKey = "appearance.island.v8.sessionSort"
     private static let legacyCompletedStaleThresholdDefaultsKey = "appearance.island.v8.completedStaleThreshold"
     private static let appearanceProfileSettingsDefaultsKey = "appearance.island.v8.settingsProfile"
+    private static let agentControlSelectionLifetimeSeconds: UInt8 = 15
 
     private static let syntheticClaudeSessionPrefix = "claude-process:"
     private static let liveSessionStalenessWindow: TimeInterval = 15 * 60
     private static let jumpOverlayDismissLeadTime: Duration = .milliseconds(20)
-    private static let agentsGridObservedSequenceLimit = 512
     /// The pointer must remain continuously inside the closed island before a
     /// passive hover may open it. This keeps ordinary menu-bar navigation from
     /// expanding the island while preserving immediate click-to-open behavior.
@@ -49,14 +59,41 @@ final class AppModel {
     var state = SessionState() {
         didSet {
             _cachedSessionBuckets = nil
-            pruneAgentsGridObservationTicketsIfNeeded()
             bridgeServer.updateStateSnapshot(state)
+            updateAgentControlDeviceSnapshot()
         }
     }
     @ObservationIgnored private var _cachedSessionBuckets: SessionBucketCache?
 
     @ObservationIgnored
     private let hiddenSessionStore: HiddenSessionStore
+
+    @ObservationIgnored
+    private let agentControlSlotCoordinator: AgentControlSlotCoordinator
+
+    @ObservationIgnored
+    private let agentControlDeviceCoordinator: AgentControlDeviceCoordinator
+
+    @ObservationIgnored
+    private let agentControlDeviceSettingsStore: AgentControlDeviceSettingsStore
+
+    @ObservationIgnored
+    private var agentControlSnapshotRefreshTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var isAgentControlDeviceIntegrationStarted = false
+
+    @ObservationIgnored
+    private var agentControlSelection: AgentControlSelectionContext?
+
+    @ObservationIgnored
+    private var agentControlSelectionExpiryTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private let agentControlSelectionTokenGenerator: () -> UInt64
+
+    @ObservationIgnored
+    private let agentControlDateProvider: () -> Date
 
     private var hiddenSessionIdentifiers: Set<HiddenSessionIdentifier> = []
 
@@ -73,15 +110,8 @@ final class AppModel {
         let validThrough: Date?
     }
 
-    /// Monotonic ticket assigned the first time a session ID shows up in the
-    /// closed-island's right-slot surfaced set. Drives the grid's display
-    /// order: newly-surfaced sessions always land at the end, and a session
-    /// that briefly leaves (e.g. attachment flip) keeps its old slot when it
-    /// returns. Persists for the process lifetime; session IDs are UUIDs so
-    /// accumulation over time is bounded in practice.
-    @ObservationIgnored private var _agentsGridObservedSequence: [String: Int] = [:]
-    @ObservationIgnored private var _agentsGridNextTicket: Int = 0
     var selectedSessionID: String?
+    private(set) var agentControlSelectedSessionID: String?
     let hooks = HookInstallationCoordinator()
     let overlay = OverlayUICoordinator()
     let discovery = SessionDiscoveryCoordinator()
@@ -285,6 +315,25 @@ final class AppModel {
             UserDefaults.standard.set(suppressFrontmostNotifications, forKey: Self.suppressFrontmostNotificationsDefaultsKey)
         }
     }
+    var agentControlKeyboardEnabled: Bool = false {
+        didSet {
+            guard hasFinishedInit,
+                  agentControlKeyboardEnabled != oldValue else {
+                return
+            }
+
+            agentControlDeviceSettingsStore.saveEnabled(
+                agentControlKeyboardEnabled
+            )
+            if agentControlKeyboardEnabled {
+                if hasStarted {
+                    startAgentControlDeviceIntegrationIfNeeded()
+                }
+            } else {
+                stopAgentControlDeviceIntegration()
+            }
+        }
+    }
     var launchAtLoginEnabled: Bool = false {
         didSet {
             guard !isApplyingLaunchAtLogin, hasFinishedInit, launchAtLoginEnabled != oldValue else { return }
@@ -417,6 +466,10 @@ final class AppModel {
             oldValue.sessionSort != newValue.sessionSort ||
             oldValue.completedStaleThreshold != newValue.completedStaleThreshold {
             _cachedSessionBuckets = nil
+        }
+        if oldValue.completedStaleThreshold
+            != newValue.completedStaleThreshold {
+            updateAgentControlDeviceSnapshot()
         }
         refreshOverlayPlacementIfVisible()
     }
@@ -598,11 +651,26 @@ final class AppModel {
         isNotificationSessionAlreadyFrontmost: @escaping @Sendable (AgentSession) async -> Bool = { session in
             await ForegroundTerminalSessionProbe().matches(session: session)
         },
-        hiddenSessionStore: HiddenSessionStore = .standard
+        hiddenSessionStore: HiddenSessionStore = .standard,
+        agentControlSlotAssignmentStore: AgentControlSlotAssignmentStore = .standard,
+        agentControlDeviceCoordinator: AgentControlDeviceCoordinator = AgentControlDeviceCoordinator(),
+        agentControlDeviceSettingsStore: AgentControlDeviceSettingsStore = .standard,
+        agentControlSelectionTokenGenerator: @escaping () -> UInt64 = {
+            UInt64.random(in: 1...UInt64.max)
+        },
+        agentControlDateProvider: @escaping () -> Date = Date.init
     ) {
         self.terminalJumpAction = terminalJumpAction
         self.isNotificationSessionAlreadyFrontmost = isNotificationSessionAlreadyFrontmost
         self.hiddenSessionStore = hiddenSessionStore
+        self.agentControlSlotCoordinator = AgentControlSlotCoordinator(
+            store: agentControlSlotAssignmentStore
+        )
+        self.agentControlDeviceCoordinator = agentControlDeviceCoordinator
+        self.agentControlDeviceSettingsStore = agentControlDeviceSettingsStore
+        self.agentControlSelectionTokenGenerator =
+            agentControlSelectionTokenGenerator
+        self.agentControlDateProvider = agentControlDateProvider
         self.hiddenSessionIdentifiers = hiddenSessionStore.load()
         UserDefaults.standard.register(defaults: [
             Self.showDockIconDefaultsKey: true,
@@ -621,6 +689,8 @@ final class AppModel {
             )
         }
         completionReplyEnabled = UserDefaults.standard.bool(forKey: Self.completionReplyEnabledDefaultsKey)
+        agentControlKeyboardEnabled =
+            agentControlDeviceSettingsStore.loadEnabled()
         launchAtLoginEnabled = LaunchAtLoginService.shared.isEnabled
         appearanceSettingsProfile = IslandAppearanceDisplayProfile(
             rawValue: UserDefaults.standard.string(forKey: Self.appearanceProfileSettingsDefaultsKey) ?? ""
@@ -633,6 +703,10 @@ final class AppModel {
         }
 
         overlay.appModel = self
+        overlay.onPlacementDiagnosticsChanged = { [weak self] in
+            self?._cachedSessionBuckets = nil
+            self?.updateAgentControlDeviceSnapshot()
+        }
         overlay.restoreDisplayPreference()
         overlay.startObservingDisplayChanges()
         overlay.onStatusMessage = { [weak self] message in
@@ -710,6 +784,9 @@ final class AppModel {
         }
         monitoring.onCodexAppMaintenanceTick = { [weak self] in
             self?.discovery.maintainCodexAppSessionsIfNeeded()
+        }
+        agentControlDeviceCoordinator.onDeviceMessage = { [weak self] event in
+            self?.handleAgentControlDeviceEvent(event)
         }
         refreshOverlayDisplayConfiguration()
         hasFinishedInit = true
@@ -879,6 +956,7 @@ final class AppModel {
         }
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
+        updateAgentControlDeviceSnapshot()
         lastActionMessage = "Hidden conversation: \(session.title)"
     }
 
@@ -893,6 +971,7 @@ final class AppModel {
         }
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
+        updateAgentControlDeviceSnapshot()
         lastActionMessage = "Unhidden conversation: \(session.title)"
     }
 
@@ -1007,7 +1086,475 @@ final class AppModel {
     /// Right-slot payload derived from the user's `islandRightSlot`
     /// preference and current live state. Returns nil when the preference
     /// is `.none` or there's nothing meaningful to show.
-    func islandClosedRightSlotContent() -> IslandRightSlotContent? {
+    func agentControlSlotProjection(
+        at referenceDate: Date = .now
+    ) -> AgentControlSlotProjection {
+        agentControlSlotCoordinator.projection(
+            for: surfacedSessions,
+            at: referenceDate,
+            completedStaleThreshold: completedStaleThreshold.seconds
+        )
+    }
+
+    func agentControlSlotLabel(
+        for sessionID: String,
+        at referenceDate: Date = .now
+    ) -> String? {
+        agentControlSlotProjection(at: referenceDate).keyLabel(for: sessionID)
+    }
+
+    func agentControlHardwareBadgeLabel(
+        for sessionID: String,
+        at referenceDate: Date = .now
+    ) -> String? {
+        guard agentControlKeyboardEnabled,
+              let keyLabel = agentControlSlotLabel(
+                for: sessionID,
+                at: referenceDate
+              ) else {
+            return nil
+        }
+        return "K0 · \(keyLabel)"
+    }
+
+    var agentControlDeviceDiagnostics: AgentControlDeviceDiagnostics {
+        agentControlDeviceCoordinator.diagnostics
+    }
+
+    /// Starts K0 Max state projection and navigation intent handling.
+    /// Kept internal for deterministic tests.
+    func startAgentControlDeviceIntegrationIfNeeded() {
+        guard agentControlKeyboardEnabled,
+              !isAgentControlDeviceIntegrationStarted else {
+            return
+        }
+
+        isAgentControlDeviceIntegrationStarted = true
+        updateAgentControlDeviceSnapshot()
+        agentControlDeviceCoordinator.start()
+    }
+
+    private func stopAgentControlDeviceIntegration() {
+        agentControlSnapshotRefreshTask?.cancel()
+        agentControlSnapshotRefreshTask = nil
+        clearAgentControlSelection()
+        guard isAgentControlDeviceIntegrationStarted else { return }
+
+        // Clear immediately while the connection is still live. Firmware's
+        // watchdog remains the fallback if the report cannot be delivered.
+        agentControlDeviceCoordinator.setSnapshot(.empty)
+        agentControlDeviceCoordinator.stop()
+        isAgentControlDeviceIntegrationStarted = false
+    }
+
+    private func updateAgentControlDeviceSnapshot(
+        at referenceDate: Date = .now
+    ) {
+        guard agentControlKeyboardEnabled,
+              isAgentControlDeviceIntegrationStarted else {
+            return
+        }
+
+        let projection = agentControlSlotProjection(at: referenceDate)
+        agentControlDeviceCoordinator.setSnapshot(
+            AgentControlSnapshotContent(
+                slots: projection.slots.map { slot in
+                    slot.map {
+                        AgentControlSnapshotSlot(
+                            identity: $0.sessionID,
+                            lightState: $0.lightState
+                        )
+                    }
+                },
+                overflowCount: projection.overflowCount
+            )
+        )
+        scheduleAgentControlCompletionExpiry(
+            after: referenceDate
+        )
+    }
+
+    private func handleAgentControlDeviceEvent(
+        _ event: AgentControlDeviceEvent
+    ) {
+        switch event.message {
+        case let .slotSelected(
+            connectionNonce,
+            slotIndex,
+            snapshotGeneration
+        ):
+            handleAgentControlSlotSelection(
+                requestSequence: event.sequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                snapshotGeneration: snapshotGeneration
+            )
+
+        case let .actionInvoked(
+            connectionNonce,
+            slotIndex,
+            action,
+            selectionToken
+        ):
+            handleAgentControlAction(
+                requestSequence: event.sequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                selectionToken: selectionToken
+            )
+
+        case .layerChanged:
+            clearAgentControlSelection()
+
+        case .capabilities:
+            break
+        }
+    }
+
+    private func handleAgentControlSlotSelection(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        snapshotGeneration: UInt16
+    ) {
+        clearAgentControlSelection()
+
+        guard Int(slotIndex) < AgentControlProtocolV1.slotCount else {
+            rejectAgentControlSelection(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                result: .unsupported
+            )
+            return
+        }
+        guard let snapshot = agentControlDeviceCoordinator.currentSnapshot,
+              snapshot.connectionNonce == connectionNonce else {
+            rejectAgentControlSelection(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                result: .appUnavailable
+            )
+            return
+        }
+        guard snapshot.generation == snapshotGeneration else {
+            rejectAgentControlSelection(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                result: .staleSnapshot
+            )
+            return
+        }
+
+        let index = Int(slotIndex)
+        if slotIndex == AgentControlProtocolV1.toggleSlotIndex {
+            handleAgentControlIslandToggle(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                slotEpoch: snapshot.slotEpochs[index]
+            )
+            return
+        }
+        guard let slot = snapshot.content.slots[index] else {
+            rejectAgentControlSelection(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                result: .unassigned
+            )
+            return
+        }
+        guard let session = surfacedSessions.first(
+            where: { $0.id == slot.identity }
+        ) else {
+            rejectAgentControlSelection(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                result: .sessionUnavailable
+            )
+            return
+        }
+
+        let slotEpoch = snapshot.slotEpochs[index]
+        let selectionToken = makeAgentControlSelectionToken()
+        let allowedActions: AgentControlAllowedActionSet =
+            canJumpToAgentControlSession(session) ? [.jump] : []
+        let lifetimeSeconds = Self.agentControlSelectionLifetimeSeconds
+        let selection = AgentControlSelectionContext(
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            slotEpoch: slotEpoch,
+            sessionID: session.id,
+            selectionToken: selectionToken,
+            allowedActions: allowedActions,
+            expiresAt: agentControlDateProvider().addingTimeInterval(
+                TimeInterval(lifetimeSeconds)
+            )
+        )
+
+        guard agentControlDeviceCoordinator.sendSelectionAcknowledgement(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            result: .accepted,
+            slotEpoch: slotEpoch,
+            selectionToken: selectionToken,
+            allowedActions: allowedActions,
+            lifetimeSeconds: lifetimeSeconds
+        ) else {
+            return
+        }
+
+        setAgentControlSelection(selection)
+        select(sessionID: session.id)
+        notchOpen(
+            reason: .click,
+            surface: .sessionList(actionableSessionID: session.id)
+        )
+    }
+
+    private func handleAgentControlIslandToggle(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        slotEpoch: UInt16
+    ) {
+        guard agentControlDeviceCoordinator.sendSelectionAcknowledgement(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            result: .accepted,
+            slotEpoch: slotEpoch,
+            selectionToken: makeAgentControlSelectionToken(),
+            lifetimeSeconds: 1
+        ) else {
+            return
+        }
+        toggleOverlay()
+    }
+
+    private func makeAgentControlSelectionToken() -> UInt64 {
+        let token = agentControlSelectionTokenGenerator()
+        return token == 0 ? 1 : token
+    }
+
+    private func setAgentControlSelection(
+        _ selection: AgentControlSelectionContext
+    ) {
+        clearAgentControlSelection()
+        agentControlSelection = selection
+        agentControlSelectedSessionID = selection.sessionID
+        let delay = max(
+            selection.expiresAt.timeIntervalSince(agentControlDateProvider()),
+            0
+        )
+        agentControlSelectionExpiryTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+            guard self?.agentControlSelection?.selectionToken
+                    == selection.selectionToken else {
+                return
+            }
+            self?.clearAgentControlSelection()
+        }
+    }
+
+    private func clearAgentControlSelection() {
+        agentControlSelectionExpiryTask?.cancel()
+        agentControlSelectionExpiryTask = nil
+        agentControlSelection = nil
+        agentControlSelectedSessionID = nil
+    }
+
+    private func rejectAgentControlSelection(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        result: AgentControlSelectionResult
+    ) {
+        agentControlDeviceCoordinator.sendSelectionAcknowledgement(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            result: result
+        )
+    }
+
+    private func handleAgentControlAction(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        action: AgentControlAction,
+        selectionToken: UInt64
+    ) {
+        guard action == .jump else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .unsupported
+            )
+            return
+        }
+        guard let selection = agentControlSelection else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .noValidSelection
+            )
+            return
+        }
+        guard selection.connectionNonce == connectionNonce,
+              selection.slotIndex == slotIndex,
+              selection.selectionToken == selectionToken,
+              agentControlDateProvider() < selection.expiresAt else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .staleOrUnknownToken
+            )
+            return
+        }
+        guard selection.allowedActions.contains(.jump) else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .actionUnavailable
+            )
+            return
+        }
+        let index = Int(slotIndex)
+        guard let snapshot = agentControlDeviceCoordinator.currentSnapshot,
+              snapshot.connectionNonce == connectionNonce,
+              index < snapshot.content.slots.count,
+              index < snapshot.slotEpochs.count,
+              snapshot.slotEpochs[index] == selection.slotEpoch,
+              snapshot.content.slots[index]?.identity
+                == selection.sessionID else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .slotUnassignedOrReused
+            )
+            return
+        }
+        guard let session = surfacedSessions.first(
+            where: { $0.id == selection.sessionID }
+        ) else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .slotUnassignedOrReused
+            )
+            return
+        }
+        guard canJumpToAgentControlSession(session) else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .transportUnavailable
+            )
+            return
+        }
+
+        guard sendAgentControlActionResult(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            action: action,
+            result: .acceptedForDispatch
+        ) else {
+            return
+        }
+        jumpToSession(session)
+    }
+
+    @discardableResult
+    private func sendAgentControlActionResult(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        action: AgentControlAction,
+        result: AgentControlActionResult
+    ) -> Bool {
+        if result != .acceptedForDispatch {
+            clearAgentControlSelection()
+        }
+        return agentControlDeviceCoordinator.sendActionResult(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            action: action,
+            result: result
+        )
+    }
+
+    private func canJumpToAgentControlSession(
+        _ session: AgentSession
+    ) -> Bool {
+        guard let jumpTarget = session.jumpTarget else { return false }
+        return jumpTarget.terminalApp.lowercased() != "unknown"
+    }
+
+    private func scheduleAgentControlCompletionExpiry(
+        after referenceDate: Date
+    ) {
+        agentControlSnapshotRefreshTask?.cancel()
+        agentControlSnapshotRefreshTask = nil
+
+        let threshold = completedStaleThreshold.seconds
+        guard threshold.isFinite else { return }
+
+        let nextExpiry = surfacedSessions.lazy
+            .filter { session in
+                session.phase == .completed
+                    && !session.isSubagentSession
+                    && !session.isRealtimeVoiceChatSession
+            }
+            .map { $0.updatedAt.addingTimeInterval(threshold) }
+            .filter { $0 > referenceDate }
+            .min()
+
+        guard let nextExpiry else { return }
+        let delay = max(
+            nextExpiry.timeIntervalSince(referenceDate) + 0.01,
+            0.01
+        )
+        agentControlSnapshotRefreshTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.updateAgentControlDeviceSnapshot()
+        }
+    }
+
+    func islandClosedRightSlotContent(
+        at referenceDate: Date = .now
+    ) -> IslandRightSlotContent? {
         let sessions = surfacedSessions
         switch islandRightSlot {
         case .none:
@@ -1017,70 +1564,41 @@ final class AppModel {
             guard n > 0 else { return nil }
             return .count(n)
         case .agents:
-            // Display order = order-of-first-observation-in-the-island. A
-            // session that later flips visibility (e.g. attachment churn,
-            // completed↔running) keeps its existing slot instead of being
-            // reshuffled by session.firstSeenAt, which tracks the historical
-            // event time and can be older than visible peers. Bulk-observing
-            // N sessions at once (e.g. at app launch) breaks the tie by
-            // session.firstSeenAt so historical order is preserved.
-            stampAgentsGridObservationTickets(for: sessions)
-            let ordered = sessions.sorted { a, b in
-                let ta = _agentsGridObservedSequence[a.id] ?? .max
-                let tb = _agentsGridObservedSequence[b.id] ?? .max
-                if ta != tb { return ta < tb }
-                return a.id < b.id
+            let projection = agentControlSlotProjection(at: referenceDate)
+            let sessionsByID = Dictionary(
+                uniqueKeysWithValues: sessions.map { ($0.id, $0) }
+            )
+            let orderedCells = projection.assignedSlots.compactMap { slot in
+                sessionsByID[slot.sessionID].map {
+                    Self.agentsGridCell(for: $0, lightState: slot.lightState)
+                }
             }
+            let totalCount = orderedCells.count + projection.overflowCount
             var cells: [AgentGridCell] = []
-            if ordered.count <= 9 {
-                cells = ordered.map(Self.agentsGridCell(for:))
+            if totalCount <= 9 {
+                cells = orderedCells
             } else {
-                cells = ordered.prefix(7).map(Self.agentsGridCell(for:))
-                cells.append(.overflow(ordered.count - 7))
+                cells = Array(orderedCells.prefix(7))
+                cells.append(.overflow(totalCount - 7))
             }
             return cells.isEmpty ? nil : .agents(cells)
         }
     }
 
-    private func stampAgentsGridObservationTickets(for sessions: [AgentSession]) {
-        let newcomers = sessions.filter { _agentsGridObservedSequence[$0.id] == nil }
-        guard !newcomers.isEmpty else { return }
-        let orderedNewcomers = newcomers.sorted { a, b in
-            if a.firstSeenAt != b.firstSeenAt { return a.firstSeenAt < b.firstSeenAt }
-            return a.id < b.id
-        }
-        for session in orderedNewcomers {
-            _agentsGridObservedSequence[session.id] = _agentsGridNextTicket
-            _agentsGridNextTicket += 1
-        }
-    }
-
-    private func pruneAgentsGridObservationTicketsIfNeeded() {
-        guard _agentsGridObservedSequence.count > Self.agentsGridObservedSequenceLimit else {
-            return
-        }
-
-        let liveIDs = Set(state.sessions.map(\.id))
-        let retainedHistoricalCapacity = max(Self.agentsGridObservedSequenceLimit - liveIDs.count, 0)
-        let retainedHistoricalIDs = _agentsGridObservedSequence
-            .filter { !liveIDs.contains($0.key) }
-            .sorted { $0.value > $1.value }
-            .prefix(retainedHistoricalCapacity)
-            .map(\.key)
-        let retainedIDs = liveIDs.union(retainedHistoricalIDs)
-        _agentsGridObservedSequence = _agentsGridObservedSequence.filter {
-            retainedIDs.contains($0.key)
-        }
-    }
-
-    private static func agentsGridCell(for session: AgentSession) -> AgentGridCell {
+    private static func agentsGridCell(
+        for session: AgentSession,
+        lightState: AgentControlLightState
+    ) -> AgentGridCell {
         let color = Color(hex: session.tool.brandColorHex) ?? .gray
         let state: AgentGridCellState
-        if session.phase.requiresAttention {
-            state = .waiting
-        } else if session.phase == .running {
+        switch lightState {
+        case .running:
             state = .running
-        } else {
+        case .waitingForActionableApproval,
+             .waitingForObservedApproval,
+             .waitingForAnswer:
+            state = .waiting
+        case .idle, .recentlyCompleted:
             state = .idle
         }
         return .session(color: color, state: state)
@@ -1202,6 +1720,7 @@ final class AppModel {
             return
         }
         hasStarted = true
+        startAgentControlDeviceIntegrationIfNeeded()
 
         if loadRuntimeState {
             isResolvingInitialLiveSessions = true

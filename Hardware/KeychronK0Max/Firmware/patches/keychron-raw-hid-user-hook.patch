@@ -1,0 +1,24 @@
+diff --git a/keyboards/keychron/common/keychron_raw_hid.c b/keyboards/keychron/common/keychron_raw_hid.c
+index 974614716..b6e24784f 100644
+--- a/keyboards/keychron/common/keychron_raw_hid.c
++++ b/keyboards/keychron/common/keychron_raw_hid.c
+@@ -131,2 +131,10 @@ void kc_raw_hid_send(uint8_t src, uint8_t *data, uint8_t len) {
++__attribute__((weak)) bool keychron_raw_hid_receive_user(uint8_t src, uint8_t *data, uint8_t length) {
++    return false;
++}
++
+ bool kc_raw_hid_rx(uint8_t src, uint8_t *data, uint8_t length) {
++    if (keychron_raw_hid_receive_user(src, data, length)) {
++        return true;
++    }
++
+ #    if defined(ANANLOG_MATRIX) && defined(VIA_ENABLE)
+     if (src == RAW_HID_SRC_USB && data[0] == id_get_keyboard_value && data[1] == id_switch_matrix_state) {
+         send_analog_matrix(data, length);
+diff --git a/keyboards/keychron/common/keychron_raw_hid.h b/keyboards/keychron/common/keychron_raw_hid.h
+index 84d08dd13..2f34057d8 100644
+--- a/keyboards/keychron/common/keychron_raw_hid.h
++++ b/keyboards/keychron/common/keychron_raw_hid.h
+@@ -88,1 +88,2 @@ enum {
+ void kc_raw_hid_send(uint8_t src, uint8_t *data, uint8_t len);
++bool keychron_raw_hid_receive_user(uint8_t src, uint8_t *data, uint8_t length);
