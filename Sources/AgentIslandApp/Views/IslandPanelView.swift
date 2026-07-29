@@ -636,13 +636,21 @@ struct IslandPanelView: View {
                         agentControlDetailPresentationRequest(
                             for: session.id
                         ),
+                    questionDraft: questionInteractionBinding(for: session),
                     useDrawingGroup: model.notchStatus == .opened,
                     isInteractive: model.notchStatus == .opened,
                     presentation: .notification,
                     sideInset: sessionListSideInset,
                     lang: model.lang,
                     onApprove: { model.approvePermission(for: session.id, action: $0) },
-                    onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
+                    onAnswer: {
+                        guard let promptID = session.questionPrompt?.id else { return }
+                        model.answerQuestion(
+                            for: session.id,
+                            promptID: promptID,
+                            answer: $0
+                        )
+                    },
                     onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                         ? { model.replyToSession(session, text: $0) } : nil,
                     onJump: { model.jumpToSession(session) },
@@ -693,12 +701,20 @@ struct IslandPanelView: View {
                                     agentControlDetailPresentationRequest(
                                         for: session.id
                                     ),
+                                questionDraft: questionInteractionBinding(for: session),
                                 useDrawingGroup: model.notchStatus == .opened,
                                 isInteractive: model.notchStatus == .opened,
                                 sideInset: sessionListSideInset,
                                 lang: model.lang,
                                 onApprove: { model.approvePermission(for: session.id, action: $0) },
-                                onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
+                                onAnswer: {
+                                    guard let promptID = session.questionPrompt?.id else { return }
+                                    model.answerQuestion(
+                                        for: session.id,
+                                        promptID: promptID,
+                                        answer: $0
+                                    )
+                                },
                                 onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                                     ? { model.replyToSession(session, text: $0) } : nil,
                                 onJump: { model.jumpToSession(session) },
@@ -759,12 +775,20 @@ struct IslandPanelView: View {
                             agentControlDetailPresentationRequest(
                                 for: session.id
                             ),
+                        questionDraft: questionInteractionBinding(for: session),
                         useDrawingGroup: model.notchStatus == .opened,
                         isInteractive: model.notchStatus == .opened,
                         sideInset: sessionListSideInset,
                         lang: model.lang,
                         onApprove: { model.approvePermission(for: session.id, action: $0) },
-                        onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
+                        onAnswer: {
+                            guard let promptID = session.questionPrompt?.id else { return }
+                            model.answerQuestion(
+                                for: session.id,
+                                promptID: promptID,
+                                answer: $0
+                            )
+                        },
                         onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                             ? { model.replyToSession(session, text: $0) } : nil,
                         onJump: { model.jumpToSession(session) },
@@ -789,6 +813,27 @@ struct IslandPanelView: View {
         withAnimation(.easeInOut(duration: 0.15)) {
             proxy.scrollTo(actionableSessionID, anchor: .center)
         }
+    }
+
+    private func questionInteractionBinding(
+        for session: AgentSession
+    ) -> Binding<QuestionInteractionDraft>? {
+        guard let prompt = session.questionPrompt else { return nil }
+        return Binding(
+            get: {
+                model.questionInteractionDraft(
+                    for: session.id,
+                    prompt: prompt
+                )
+            },
+            set: {
+                model.updateQuestionInteractionDraft(
+                    $0,
+                    for: session.id,
+                    promptID: prompt.id
+                )
+            }
+        )
     }
 
     @ViewBuilder
@@ -1356,6 +1401,7 @@ private struct IslandSessionRow: View {
     var isActionable: Bool = false
     var isHardwareSelected: Bool = false
     var detailPresentationRequest: AgentControlDetailPresentationRequest?
+    var questionDraft: Binding<QuestionInteractionDraft>?
     var useDrawingGroup: Bool = true
     var isInteractive: Bool = true
     var presentation: IslandSessionRowPresentation = .list
@@ -1898,6 +1944,7 @@ private struct IslandSessionRow: View {
     private var questionActionBody: some View {
         StructuredQuestionPromptView(
             prompt: session.questionPrompt,
+            sharedDraft: questionDraft,
             lang: lang,
             onAnswer: { onAnswer?($0) }
         )
@@ -2282,13 +2329,33 @@ private struct IslandSessionRow: View {
 
 private struct StructuredQuestionPromptView: View {
     let prompt: QuestionPrompt?
+    var sharedDraft: Binding<QuestionInteractionDraft>?
     var lang: LanguageManager = .shared
     let onAnswer: (QuestionPromptResponse) -> Void
 
-    @State private var selections: [String: Set<String>] = [:]
-    @State private var freeformTexts: [String: String] = [:]
-    @State private var typedReply: String = ""
+    @State private var localDraft: QuestionInteractionDraft
     @State private var hoveredOptionKey: String?
+
+    init(
+        prompt: QuestionPrompt?,
+        sharedDraft: Binding<QuestionInteractionDraft>? = nil,
+        lang: LanguageManager = .shared,
+        onAnswer: @escaping (QuestionPromptResponse) -> Void
+    ) {
+        self.prompt = prompt
+        self.sharedDraft = sharedDraft
+        self.lang = lang
+        self.onAnswer = onAnswer
+        _localDraft = State(
+            initialValue: QuestionInteractionDraft(
+                promptID: prompt?.id ?? UUID()
+            )
+        )
+    }
+
+    private var draft: Binding<QuestionInteractionDraft> {
+        sharedDraft ?? $localDraft
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2303,8 +2370,11 @@ private struct StructuredQuestionPromptView: View {
                 freeformAnswerBody
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(structuredQuestions, id: \.question) { question in
-                        questionRow(question)
+                    ForEach(
+                        Array(structuredQuestions.enumerated()),
+                        id: \.offset
+                    ) { questionIndex, question in
+                        questionRow(question, questionIndex: questionIndex)
                     }
                 }
 
@@ -2334,7 +2404,10 @@ private struct StructuredQuestionPromptView: View {
 
     /// Renders a single question with its header, text, and vertical option list.
     @ViewBuilder
-    private func questionRow(_ question: QuestionPromptItem) -> some View {
+    private func questionRow(
+        _ question: QuestionPromptItem,
+        questionIndex: Int
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if structuredQuestions.count > 1 {
                 Text(question.header)
@@ -2349,7 +2422,12 @@ private struct StructuredQuestionPromptView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(question.options.enumerated()), id: \.element.id) { index, option in
-                    optionRow(option, optionIndex: index, question: question)
+                    optionRow(
+                        option,
+                        optionIndex: index,
+                        question: question,
+                        questionIndex: questionIndex
+                    )
                 }
             }
         }
@@ -2361,15 +2439,26 @@ private struct StructuredQuestionPromptView: View {
     private func optionRow(
         _ option: QuestionOption,
         optionIndex: Int,
-        question: QuestionPromptItem
+        question: QuestionPromptItem,
+        questionIndex: Int
     ) -> some View {
-        let isSelected = selectedLabels(for: question).contains(option.label)
+        let isSelected = draft.wrappedValue
+            .selections[questionIndex, default: []]
+            .contains(option.id)
         let key = optionKey(for: question, option: option)
         let isHovered = hoveredOptionKey == key
+        let isKeyboardFocused =
+            draft.wrappedValue.focusedQuestionIndex == questionIndex
+            && draft.wrappedValue.focusedOptionIndex == optionIndex
         let showsFreeform = option.allowsFreeform && isSelected
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                toggle(option: option.label, for: question)
+                toggle(
+                    option: option,
+                    optionIndex: optionIndex,
+                    question: question,
+                    questionIndex: questionIndex
+                )
             } label: {
                 HStack(spacing: 10) {
                     Text("\(optionIndex + 1)")
@@ -2415,7 +2504,11 @@ private struct StructuredQuestionPromptView: View {
             if showsFreeform {
                 Divider()
                     .overlay(Color.white.opacity(0.08))
-                freeformField(for: option, question: question)
+                freeformField(
+                    for: option,
+                    question: question,
+                    questionIndex: questionIndex
+                )
             }
         }
         .background(
@@ -2424,7 +2517,15 @@ private struct StructuredQuestionPromptView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(optionStrokeColor(isSelected: isSelected, isHovered: isHovered))
+                .strokeBorder(
+                    isKeyboardFocused
+                        ? IslandDesignPalette.Status.waitingForAnswer
+                        : optionStrokeColor(
+                            isSelected: isSelected,
+                            isHovered: isHovered
+                        ),
+                    lineWidth: isKeyboardFocused ? 2 : 1
+                )
         )
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.12)) {
@@ -2434,17 +2535,26 @@ private struct StructuredQuestionPromptView: View {
     }
 
     @ViewBuilder
-    private func freeformField(for option: QuestionOption, question: QuestionPromptItem) -> some View {
-        let key = freeformKey(for: question, option: option)
+    private func freeformField(
+        for option: QuestionOption,
+        question: QuestionPromptItem,
+        questionIndex: Int
+    ) -> some View {
         ReplyTextField(
             placeholder: lang.t("question.otherPlaceholder"),
             text: Binding(
-                get: { freeformTexts[key] ?? "" },
-                set: { freeformTexts[key] = $0 }
+                get: { draft.wrappedValue.freeformTexts[option.id] ?? "" },
+                set: {
+                    var value = draft.wrappedValue
+                    value.freeformTexts[option.id] = $0
+                    draft.wrappedValue = value
+                }
             ),
+            shouldFocus:
+                draft.wrappedValue.focusedFreeformOptionID == option.id,
             onSubmit: {
-                if hasCompleteSelection {
-                    onAnswer(QuestionPromptResponse(answers: answerMap))
+                if let response = resolvedResponse {
+                    onAnswer(response)
                 }
             }
         )
@@ -2471,7 +2581,15 @@ private struct StructuredQuestionPromptView: View {
             HStack(spacing: 6) {
                 ReplyTextField(
                     placeholder: lang.t("question.otherPlaceholder"),
-                    text: $typedReply,
+                    text: Binding(
+                        get: { draft.wrappedValue.typedReply },
+                        set: {
+                            var value = draft.wrappedValue
+                            value.typedReply = $0
+                            draft.wrappedValue = value
+                        }
+                    ),
+                    shouldFocus: draft.wrappedValue.focusesOpenEndedText,
                     onSubmit: {
                         if canSubmit {
                             submitAnswer()
@@ -2504,11 +2622,20 @@ private struct StructuredQuestionPromptView: View {
             return []
         }
 
+        let identityDraft = QuestionInteractionDraft(promptID: prompt.id)
         return [
             QuestionPromptItem(
                 question: prompt.title,
                 header: lang.t("question.answerNeeded"),
-                options: prompt.options.map { QuestionOption(label: $0) }
+                options: prompt.options.enumerated().map { index, label in
+                    QuestionOption(
+                        id: identityDraft.legacyOptionID(
+                            promptID: prompt.id,
+                            index: index
+                        ),
+                        label: label
+                    )
+                }
             ),
         ]
     }
@@ -2530,18 +2657,9 @@ private struct StructuredQuestionPromptView: View {
         return questionTitle.caseInsensitiveCompare(promptTitle) != .orderedSame
     }
 
-    private var answerMap: [String: String] {
-        Dictionary(uniqueKeysWithValues: structuredQuestions.compactMap { question in
-            let values = resolvedAnswers(for: question)
-            guard !values.isEmpty else {
-                return nil
-            }
-            return (question.question, values.joined(separator: ", "))
-        })
-    }
-
     private var trimmedReply: String {
-        typedReply.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft.wrappedValue.typedReply
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var showsGlobalReplyField: Bool {
@@ -2551,21 +2669,11 @@ private struct StructuredQuestionPromptView: View {
     }
 
     private var primarySelectedAnswer: String? {
-        guard structuredQuestions.count == 1,
-              let question = structuredQuestions.first else {
-            return nil
-        }
-
-        let values = resolvedAnswers(for: question)
-        guard !values.isEmpty else {
-            return nil
-        }
-
-        return values.joined(separator: ", ")
+        resolvedResponse?.rawAnswer
     }
 
     private var canSubmit: Bool {
-        !trimmedReply.isEmpty || (!structuredQuestions.isEmpty && hasCompleteSelection)
+        resolvedResponse != nil
     }
 
     private var submitButtonTitle: String {
@@ -2581,58 +2689,13 @@ private struct StructuredQuestionPromptView: View {
     }
 
     private func submitAnswer() {
-        if !trimmedReply.isEmpty {
-            onAnswer(QuestionPromptResponse(answer: trimmedReply))
-            return
-        }
-
-        onAnswer(
-            QuestionPromptResponse(
-                rawAnswer: primarySelectedAnswer,
-                answers: answerMap
-            )
-        )
+        guard let response = resolvedResponse else { return }
+        onAnswer(response)
     }
 
-    private var hasCompleteSelection: Bool {
-        structuredQuestions.allSatisfy { question in
-            let selected = selectedLabels(for: question)
-            guard !selected.isEmpty else {
-                return false
-            }
-            // When a freeform option is selected, require non-empty text.
-            for option in question.options where option.allowsFreeform && selected.contains(option.label) {
-                if trimmedFreeform(for: question, option: option).isEmpty {
-                    return false
-                }
-            }
-            return true
-        }
-    }
-
-    private func selectedLabels(for question: QuestionPromptItem) -> Set<String> {
-        selections[question.question] ?? []
-    }
-
-    private func resolvedAnswers(for question: QuestionPromptItem) -> [String] {
-        let selected = selectedLabels(for: question)
-        guard !selected.isEmpty else { return [] }
-
-        let optionOrder = question.options
-        var answers: [String] = []
-        for option in optionOrder where selected.contains(option.label) {
-            if option.allowsFreeform {
-                let text = trimmedFreeform(for: question, option: option)
-                answers.append(text.isEmpty ? option.label : text)
-            } else {
-                answers.append(option.label)
-            }
-        }
-        return answers
-    }
-
-    private func freeformKey(for question: QuestionPromptItem, option: QuestionOption) -> String {
-        "\(question.question)|\(option.label)"
+    private var resolvedResponse: QuestionPromptResponse? {
+        guard let prompt else { return nil }
+        return draft.wrappedValue.response(for: prompt)
     }
 
     private func optionKey(for question: QuestionPromptItem, option: QuestionOption) -> String {
@@ -2659,30 +2722,34 @@ private struct StructuredQuestionPromptView: View {
         return .white.opacity(0.045)
     }
 
-    private func trimmedFreeform(for question: QuestionPromptItem, option: QuestionOption) -> String {
-        (freeformTexts[freeformKey(for: question, option: option)] ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func toggle(option: String, for question: QuestionPromptItem) {
-        var selected = selections[question.question] ?? []
-
+    private func toggle(
+        option: QuestionOption,
+        optionIndex: Int,
+        question: QuestionPromptItem,
+        questionIndex: Int
+    ) {
+        var value = draft.wrappedValue
+        var selected = value.selections[questionIndex, default: []]
         if question.multiSelect {
-            if selected.contains(option) {
-                selected.remove(option)
+            if selected.contains(option.id) {
+                selected.remove(option.id)
             } else {
-                selected.insert(option)
+                selected.insert(option.id)
             }
         } else {
-            if selected.contains(option) {
-                selected.removeAll()
-            } else {
-                selected = [option]
-            }
+            selected = [option.id]
         }
 
-        typedReply = ""
-        selections[question.question] = selected
+        value.focusedQuestionIndex = questionIndex
+        value.focusedOptionIndex = optionIndex
+        value.focusedFreeformOptionID =
+            option.allowsFreeform && selected.contains(option.id)
+                ? option.id
+                : nil
+        value.focusesOpenEndedText = false
+        value.typedReply = ""
+        value.selections[questionIndex] = selected
+        draft.wrappedValue = value
     }
 }
 
@@ -2694,6 +2761,7 @@ private struct StructuredQuestionPromptView: View {
 private struct ReplyTextField: NSViewRepresentable {
     var placeholder: String
     @Binding var text: String
+    var shouldFocus = false
     var onSubmit: () -> Void
 
     func makeNSView(context: Context) -> NSTextField {
@@ -2721,6 +2789,11 @@ private struct ReplyTextField: NSViewRepresentable {
             nsView.stringValue = text
         }
         context.coordinator.onSubmit = onSubmit
+        if shouldFocus, nsView.window?.firstResponder !== nsView.currentEditor() {
+            DispatchQueue.main.async {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {

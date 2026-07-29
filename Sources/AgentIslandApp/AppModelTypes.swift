@@ -37,6 +37,84 @@ enum IslandCompactnessMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+struct QuestionInteractionKey: Hashable, Sendable {
+    let sessionID: String
+    let promptID: UUID
+}
+
+struct QuestionInteractionDraft: Equatable, Sendable {
+    let promptID: UUID
+    var focusedQuestionIndex = 0
+    var focusedOptionIndex = 0
+    var selections: [Int: Set<UUID>] = [:]
+    var freeformTexts: [UUID: String] = [:]
+    var typedReply = ""
+    var focusedFreeformOptionID: UUID?
+    var focusesOpenEndedText = false
+
+    func response(for prompt: QuestionPrompt) -> QuestionPromptResponse? {
+        let reply = typedReply.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !reply.isEmpty {
+            return QuestionPromptResponse(answer: reply)
+        }
+        if prompt.questions.isEmpty {
+            guard !prompt.options.isEmpty,
+                  let selected = selections[0]?.first,
+                  let index = prompt.options.indices.first(where: {
+                      legacyOptionID(promptID: prompt.id, index: $0) == selected
+                  }) else {
+                return nil
+            }
+            return QuestionPromptResponse(answer: prompt.options[index])
+        }
+
+        var answers: [String: String] = [:]
+        for (questionIndex, question) in prompt.questions.enumerated() {
+            guard let selected = selections[questionIndex], !selected.isEmpty else {
+                return nil
+            }
+            let values = question.options.compactMap { option -> String? in
+                guard selected.contains(option.id) else { return nil }
+                if option.allowsFreeform {
+                    let value = freeformTexts[option.id, default: ""]
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    return value.isEmpty ? nil : value
+                }
+                return option.label
+            }
+            guard !values.isEmpty else { return nil }
+            answers[question.question] = values.joined(separator: ", ")
+        }
+        let rawAnswer = prompt.questions.count == 1
+            ? answers[prompt.questions[0].question]
+            : nil
+        return QuestionPromptResponse(rawAnswer: rawAnswer, answers: answers)
+    }
+
+    func optionID(
+        for prompt: QuestionPrompt,
+        questionIndex: Int,
+        optionIndex: Int
+    ) -> UUID? {
+        if prompt.questions.isEmpty {
+            guard prompt.options.indices.contains(optionIndex) else { return nil }
+            return legacyOptionID(promptID: prompt.id, index: optionIndex)
+        }
+        guard prompt.questions.indices.contains(questionIndex),
+              prompt.questions[questionIndex].options.indices.contains(optionIndex) else {
+            return nil
+        }
+        return prompt.questions[questionIndex].options[optionIndex].id
+    }
+
+    func legacyOptionID(promptID: UUID, index: Int) -> UUID {
+        var bytes = promptID.uuid
+        bytes.14 ^= UInt8(truncatingIfNeeded: index >> 8)
+        bytes.15 ^= UInt8(truncatingIfNeeded: index)
+        return UUID(uuid: bytes)
+    }
+}
+
 // MARK: - v6 island preferences
 
 /// What the closed island renders in the right slot. Chosen in the

@@ -244,7 +244,7 @@ Slot state:
 | `2` | `running` | Blue pulse | Select and jump |
 | `3` | `waitingApprovalActionable` | Fast red flash | Select, jump, allow once, deny |
 | `4` | `waitingApprovalObserved` | Fast red flash | Select and jump only |
-| `5` | `waitingAnswer` | Amber pulse | Select and jump only |
+| `5` | `waitingAnswer` | Purple pulse | Select, navigate, answer, and submit |
 | `6` | `completedRecent` | Green pulse with full-off trough | Select and jump if available |
 
 Snapshot generation increments whenever assignment identity or a projected
@@ -324,8 +324,9 @@ Allowed action bits:
 
 The token is random and nonzero. It is meaningful only to Agent Island and is
 bound internally to connection nonce, slot epoch, session ID, allowed action,
-expiration, and current permission request ID when approval actions are
-available.
+expiration, and the current interaction identity. Approval actions bind the
+current permission request ID; question actions bind the current question
+prompt ID.
 
 ## `ACTION_INVOKED` (`0x83`)
 
@@ -345,6 +346,15 @@ Action:
 - `1`: jump
 - `2`: allow once
 - `3`: deny
+- `4`: advance question option
+- `5`: select or toggle question option
+- `6`: submit question
+
+For a selected question, `-` advances the keyboard focus, `+` selects or
+toggles the focused option, and Enter submits the complete shared draft.
+Question actions take precedence over approval actions when their allowed
+bits are present. Quit-confirmation `-` and `+` controls take precedence over
+all selected-task actions.
 
 Firmware should suppress locally impossible actions using the allowed-action
 bits, but Agent Island must still perform complete validation for every
@@ -373,6 +383,8 @@ Result:
 - `7`: unsupported
 - `8`: app busy; user may retry
 - `9`: malformed or duplicate conflict
+- `10`: question response is incomplete
+- `11`: question prompt changed or expired
 
 `accepted for dispatch` does not mean the underlying agent completed the
 operation. Firmware gives brief accepted feedback, then follows the next
@@ -382,6 +394,11 @@ For allow-once and deny, Agent Island may return accepted only after the
 identity-bound bridge has accepted the exact expected permission request.
 That bridge match consumes at most one pending hook interaction; replaying
 the same device action or request UUID cannot authorize it twice.
+
+For question submission, Agent Island may return accepted only after the
+identity-bound bridge has accepted the exact expected question prompt ID.
+Incomplete drafts and replaced prompts keep the island and device selection
+open so the user can complete or recover the response.
 
 ## `GLOBAL_CONTROL_REQUESTED` (`0x85`)
 
@@ -444,8 +461,9 @@ Agent Island must validate, in order:
 4. current slot-to-session mapping;
 5. current session phase;
 6. current `PermissionRequest.id` for allow-once or deny;
-7. bridge availability;
-8. the same expected request identity inside the bridge immediately before
+7. current question prompt ID for question navigation, selection, or submit;
+8. bridge availability;
+9. the same expected request identity inside the bridge immediately before
    resolution.
 
 Failure at any step returns a nonzero action result and performs no jump or

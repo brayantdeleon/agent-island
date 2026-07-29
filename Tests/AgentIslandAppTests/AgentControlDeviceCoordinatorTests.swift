@@ -24,7 +24,7 @@ struct AgentControlDeviceCoordinatorTests {
         #expect(hello.sequence == 1)
         #expect(
             [UInt8](hello.payload)
-                == [1, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 6, 39, 0]
+                == [1, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 6, 0xE7, 0x01]
         )
 
         harness.transport.emit(

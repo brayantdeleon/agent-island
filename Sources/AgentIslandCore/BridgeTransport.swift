@@ -87,7 +87,11 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
         requestID: UUID,
         resolution: PermissionResolution
     )
-    case answerQuestion(sessionID: String, response: QuestionPromptResponse)
+    case answerQuestion(
+        sessionID: String,
+        promptID: UUID? = nil,
+        response: QuestionPromptResponse
+    )
     case processCodexHook(CodexHookPayload)
     case processClaudeHook(ClaudeHookPayload)
     case processOpenCodeHook(OpenCodeHookPayload)
@@ -100,6 +104,7 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
         case sessionID
         case prompt
         case requestID
+        case promptID
         case resolution
         case response
         case codexHook
@@ -142,6 +147,7 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
         case .answerQuestion:
             self = .answerQuestion(
                 sessionID: try container.decode(String.self, forKey: .sessionID),
+                promptID: try container.decodeIfPresent(UUID.self, forKey: .promptID),
                 response: try container.decode(QuestionPromptResponse.self, forKey: .response)
             )
         case .processCodexHook:
@@ -173,9 +179,10 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
             try container.encode(sessionID, forKey: .sessionID)
             try container.encode(requestID, forKey: .requestID)
             try container.encode(resolution, forKey: .resolution)
-        case let .answerQuestion(sessionID, response):
+        case let .answerQuestion(sessionID, promptID, response):
             try container.encode(CommandType.answerQuestion, forKey: .type)
             try container.encode(sessionID, forKey: .sessionID)
+            try container.encodeIfPresent(promptID, forKey: .promptID)
             try container.encode(response, forKey: .response)
         case let .processCodexHook(payload):
             try container.encode(CommandType.processCodexHook, forKey: .type)

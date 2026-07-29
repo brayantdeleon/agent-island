@@ -18,6 +18,7 @@ private struct AgentControlSelectionContext {
     let slotEpoch: UInt16
     let sessionID: String
     let permissionRequestID: UUID?
+    let questionPromptID: UUID?
     let selectionToken: UInt64
     let allowedActions: AgentControlAllowedActionSet
     let expiresAt: Date
@@ -67,6 +68,7 @@ final class AppModel {
     var state = SessionState() {
         didSet {
             _cachedSessionBuckets = nil
+            pruneQuestionInteractionDrafts()
             bridgeServer.updateStateSnapshot(state)
             updateAgentControlDeviceSnapshot()
         }
@@ -93,6 +95,9 @@ final class AppModel {
 
     @ObservationIgnored
     private var agentControlSelection: AgentControlSelectionContext?
+
+    private(set) var questionInteractionDrafts:
+        [QuestionInteractionKey: QuestionInteractionDraft] = [:]
 
     @ObservationIgnored
     private var agentControlSelectionExpiryTask: Task<Void, Never>?
@@ -593,8 +598,14 @@ final class AppModel {
 
         relay.onAnswerQuestion = { [weak self] sessionID, answer in
             Task { @MainActor [weak self] in
-                self?.answerQuestion(
+                guard let self,
+                      let promptID = self.state.session(id: sessionID)?
+                        .questionPrompt?.id else {
+                    return
+                }
+                self.answerQuestion(
                     for: sessionID,
+                    promptID: promptID,
                     answer: QuestionPromptResponse(answer: answer)
                 )
             }
@@ -635,6 +646,13 @@ final class AppModel {
         UUID,
         PermissionResolution
     ) -> BridgePermissionResolutionResult)?
+
+    @ObservationIgnored
+    private let injectedAgentControlQuestionResolver: ((
+        String,
+        UUID,
+        QuestionPromptResponse
+    ) -> BridgeQuestionResolutionResult)?
 
     @ObservationIgnored
     private var bridgeClient = LocalBridgeClient()
@@ -723,6 +741,11 @@ final class AppModel {
             UUID,
             PermissionResolution
         ) -> BridgePermissionResolutionResult)? = nil,
+        agentControlQuestionResolver: ((
+            String,
+            UUID,
+            QuestionPromptResponse
+        ) -> BridgeQuestionResolutionResult)? = nil,
         agentControlSelectionTokenGenerator: @escaping () -> UInt64 = {
             UInt64.random(in: 1...UInt64.max)
         },
@@ -740,6 +763,8 @@ final class AppModel {
         self.agentControlDeviceSettingsStore = agentControlDeviceSettingsStore
         self.injectedAgentControlPermissionResolver =
             agentControlPermissionResolver
+        self.injectedAgentControlQuestionResolver =
+            agentControlQuestionResolver
         self.agentControlSelectionTokenGenerator =
             agentControlSelectionTokenGenerator
         self.agentControlDateProvider = agentControlDateProvider
@@ -1435,6 +1460,23 @@ final class AppModel {
         } else {
             permissionRequestID = nil
         }
+        let questionPromptID: UUID?
+        if session.phase == .waitingForAnswer,
+           let prompt = session.questionPrompt {
+            questionPromptID = prompt.id
+            if prompt.questions.isEmpty && prompt.options.isEmpty {
+                allowedActions.insert(.submitQuestion)
+            } else {
+                allowedActions.formUnion([
+                    .nextQuestionOption,
+                    .selectQuestionOption,
+                    .submitQuestion,
+                ])
+            }
+            prepareQuestionInteraction(for: session.id, prompt: prompt)
+        } else {
+            questionPromptID = nil
+        }
         let lifetimeSeconds = Self.agentControlSelectionLifetimeSeconds
         let selection = AgentControlSelectionContext(
             connectionNonce: connectionNonce,
@@ -1442,6 +1484,7 @@ final class AppModel {
             slotEpoch: slotEpoch,
             sessionID: session.id,
             permissionRequestID: permissionRequestID,
+            questionPromptID: questionPromptID,
             selectionToken: selectionToken,
             allowedActions: allowedActions,
             expiresAt: agentControlDateProvider().addingTimeInterval(
@@ -1573,7 +1616,8 @@ final class AppModel {
         action: AgentControlAction,
         selectionToken: UInt64
     ) {
-        if action != .jump, !agentControlKeyboardApprovalsEnabled {
+        if (action == .allowOnce || action == .deny),
+           !agentControlKeyboardApprovalsEnabled {
             sendAgentControlActionResult(
                 requestSequence: requestSequence,
                 connectionNonce: connectionNonce,
@@ -1658,6 +1702,18 @@ final class AppModel {
 
         case .allowOnce, .deny:
             handleAgentControlPermissionResolution(
+                session,
+                selection: selection,
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action
+            )
+
+        case .nextQuestionOption,
+             .selectQuestionOption,
+             .submitQuestion:
+            handleAgentControlQuestionAction(
                 session,
                 selection: selection,
                 requestSequence: requestSequence,
@@ -1779,6 +1835,179 @@ final class AppModel {
         notchClose()
     }
 
+    private func handleAgentControlQuestionAction(
+        _ session: AgentSession,
+        selection: AgentControlSelectionContext,
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        action: AgentControlAction
+    ) {
+        guard session.phase == .waitingForAnswer,
+              let expectedPromptID = selection.questionPromptID,
+              let prompt = session.questionPrompt,
+              prompt.id == expectedPromptID else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .questionPromptChangedOrExpired
+            )
+            return
+        }
+
+        let key = QuestionInteractionKey(
+            sessionID: session.id,
+            promptID: prompt.id
+        )
+        var draft = questionInteractionDraft(for: session.id, prompt: prompt)
+
+        switch action {
+        case .nextQuestionOption:
+            advanceQuestionFocus(&draft, prompt: prompt)
+            questionInteractionDrafts[key] = draft
+        case .selectQuestionOption:
+            toggleFocusedQuestionOption(&draft, prompt: prompt)
+            questionInteractionDrafts[key] = draft
+        case .submitQuestion:
+            guard let response = draft.response(for: prompt) else {
+                lastActionMessage = "Choose an answer for every required question."
+                _ = sendAgentControlActionResult(
+                    requestSequence: requestSequence,
+                    connectionNonce: connectionNonce,
+                    slotIndex: slotIndex,
+                    action: action,
+                    result: .questionIncomplete
+                )
+                return
+            }
+            guard isBridgeReady else {
+                sendAgentControlActionResult(
+                    requestSequence: requestSequence,
+                    connectionNonce: connectionNonce,
+                    slotIndex: slotIndex,
+                    action: action,
+                    result: .transportUnavailable
+                )
+                return
+            }
+            let resolutionResult = injectedAgentControlQuestionResolver?(
+                session.id,
+                prompt.id,
+                response
+            ) ?? bridgeServer.resolveQuestion(
+                sessionID: session.id,
+                promptID: prompt.id,
+                response: response
+            )
+            guard resolutionResult == .resolved else {
+                sendAgentControlActionResult(
+                    requestSequence: requestSequence,
+                    connectionNonce: connectionNonce,
+                    slotIndex: slotIndex,
+                    action: action,
+                    result: resolutionResult == .promptIdentityMismatch
+                        ? .questionPromptChangedOrExpired
+                        : .transportUnavailable
+                )
+                return
+            }
+            state.answerQuestion(sessionID: session.id, response: response)
+            questionInteractionDrafts.removeValue(forKey: key)
+            synchronizeSelection()
+            refreshOverlayPlacementIfVisible()
+            clearAgentControlSelection()
+            guard sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .acceptedForDispatch
+            ) else {
+                return
+            }
+            notchClose()
+            lastActionMessage = "Sent answer for \(session.title)."
+        case .jump, .allowOnce, .deny:
+            return
+        }
+
+        if action != .submitQuestion {
+            _ = sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .acceptedForDispatch
+            )
+        }
+    }
+
+    private func advanceQuestionFocus(
+        _ draft: inout QuestionInteractionDraft,
+        prompt: QuestionPrompt
+    ) {
+        let counts = prompt.questions.isEmpty
+            ? [prompt.options.count]
+            : prompt.questions.map(\.options.count)
+        guard !counts.isEmpty, counts.contains(where: { $0 > 0 }) else {
+            draft.focusesOpenEndedText = true
+            return
+        }
+
+        var questionIndex = min(draft.focusedQuestionIndex, counts.count - 1)
+        var optionIndex = draft.focusedOptionIndex + 1
+        if optionIndex >= counts[questionIndex] {
+            repeat {
+                questionIndex = (questionIndex + 1) % counts.count
+            } while counts[questionIndex] == 0
+            optionIndex = 0
+        }
+        draft.focusedQuestionIndex = questionIndex
+        draft.focusedOptionIndex = optionIndex
+        draft.focusedFreeformOptionID = nil
+        draft.focusesOpenEndedText = false
+    }
+
+    private func toggleFocusedQuestionOption(
+        _ draft: inout QuestionInteractionDraft,
+        prompt: QuestionPrompt
+    ) {
+        let questionIndex = draft.focusedQuestionIndex
+        let optionIndex = draft.focusedOptionIndex
+        guard let optionID = draft.optionID(
+            for: prompt,
+            questionIndex: questionIndex,
+            optionIndex: optionIndex
+        ) else {
+            draft.focusesOpenEndedText = true
+            return
+        }
+
+        let isMultiSelect = prompt.questions.indices.contains(questionIndex)
+            && prompt.questions[questionIndex].multiSelect
+        var selected = draft.selections[questionIndex, default: []]
+        if isMultiSelect {
+            if selected.contains(optionID) {
+                selected.remove(optionID)
+            } else {
+                selected.insert(optionID)
+            }
+        } else {
+            selected = [optionID]
+        }
+        draft.selections[questionIndex] = selected
+        draft.typedReply = ""
+        let option = prompt.questions.indices.contains(questionIndex)
+            && prompt.questions[questionIndex].options.indices.contains(optionIndex)
+            ? prompt.questions[questionIndex].options[optionIndex]
+            : nil
+        draft.focusedFreeformOptionID =
+            option?.allowsFreeform == true ? optionID : nil
+        draft.focusesOpenEndedText = false
+    }
+
     private func allowedAction(
         for action: AgentControlAction
     ) -> AgentControlAllowedActionSet {
@@ -1789,6 +2018,12 @@ final class AppModel {
             .allowOnce
         case .deny:
             .deny
+        case .nextQuestionOption:
+            .nextQuestionOption
+        case .selectQuestionOption:
+            .selectQuestionOption
+        case .submitQuestion:
+            .submitQuestion
         }
     }
 
@@ -1800,7 +2035,8 @@ final class AppModel {
         action: AgentControlAction,
         result: AgentControlActionResult
     ) -> Bool {
-        if result != .acceptedForDispatch {
+        if result != .acceptedForDispatch,
+           result != .questionIncomplete {
             clearAgentControlSelection()
         }
         return agentControlDeviceCoordinator.sendActionResult(
@@ -2266,7 +2502,11 @@ final class AppModel {
         }
 
         send(
-            .answerQuestion(sessionID: session.id, response: QuestionPromptResponse(answer: answer)),
+            .answerQuestion(
+                sessionID: session.id,
+                promptID: session.questionPrompt?.id,
+                response: QuestionPromptResponse(answer: answer)
+            ),
             userMessage: "Sending answer \"\(answer)\" for \(session.title)."
         )
     }
@@ -2418,18 +2658,81 @@ final class AppModel {
         synchronizeSelection()
     }
 
-    func answerQuestion(for sessionID: String, answer: QuestionPromptResponse) {
-        guard let session = state.session(id: sessionID) else {
+    func questionInteractionDraft(
+        for sessionID: String,
+        prompt: QuestionPrompt
+    ) -> QuestionInteractionDraft {
+        prepareQuestionInteraction(for: sessionID, prompt: prompt)
+        return questionInteractionDrafts[
+            QuestionInteractionKey(sessionID: sessionID, promptID: prompt.id)
+        ]!
+    }
+
+    func updateQuestionInteractionDraft(
+        _ draft: QuestionInteractionDraft,
+        for sessionID: String,
+        promptID: UUID
+    ) {
+        guard draft.promptID == promptID,
+              state.session(id: sessionID)?.questionPrompt?.id == promptID else {
+            return
+        }
+        questionInteractionDrafts[
+            QuestionInteractionKey(sessionID: sessionID, promptID: promptID)
+        ] = draft
+    }
+
+    private func prepareQuestionInteraction(
+        for sessionID: String,
+        prompt: QuestionPrompt
+    ) {
+        let key = QuestionInteractionKey(
+            sessionID: sessionID,
+            promptID: prompt.id
+        )
+        guard questionInteractionDrafts[key] == nil else { return }
+        var draft = QuestionInteractionDraft(promptID: prompt.id)
+        draft.focusesOpenEndedText =
+            prompt.questions.isEmpty && prompt.options.isEmpty
+        questionInteractionDrafts[key] = draft
+    }
+
+    private func pruneQuestionInteractionDrafts() {
+        questionInteractionDrafts = questionInteractionDrafts.filter { key, _ in
+            state.session(id: key.sessionID)?.questionPrompt?.id == key.promptID
+        }
+    }
+
+    func answerQuestion(
+        for sessionID: String,
+        promptID: UUID,
+        answer: QuestionPromptResponse
+    ) {
+        guard let session = state.session(id: sessionID),
+              session.phase == .waitingForAnswer,
+              session.questionPrompt?.id == promptID else {
+            lastActionMessage = "That question is no longer active."
             return
         }
 
-        dismissNotificationSurfaceIfPresent(for: sessionID)
         state.answerQuestion(sessionID: session.id, response: answer)
+        questionInteractionDrafts.removeValue(
+            forKey: QuestionInteractionKey(
+                sessionID: sessionID,
+                promptID: promptID
+            )
+        )
+        clearAgentControlSelection()
+        notchClose()
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
 
         send(
-            .answerQuestion(sessionID: session.id, response: answer),
+            .answerQuestion(
+                sessionID: session.id,
+                promptID: promptID,
+                response: answer
+            ),
             userMessage: "Sending answer for \(session.title)."
         )
     }

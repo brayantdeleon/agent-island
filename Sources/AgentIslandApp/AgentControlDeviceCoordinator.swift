@@ -300,6 +300,9 @@ final class AgentControlDeviceCoordinator {
             .selection,
             .jump,
             .globalControls,
+            .questionNavigation,
+            .questionSelection,
+            .questionSubmission,
         ]
         if approvalActionsEnabled {
             capabilities.formUnion([.allowOnce, .deny])

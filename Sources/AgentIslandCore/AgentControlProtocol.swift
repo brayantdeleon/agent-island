@@ -302,6 +302,9 @@ public enum AgentControlAction: UInt8, Equatable, Sendable {
     case jump = 1
     case allowOnce = 2
     case deny = 3
+    case nextQuestionOption = 4
+    case selectQuestionOption = 5
+    case submitQuestion = 6
 }
 
 public struct AgentControlAllowedActionSet: OptionSet, Equatable, Sendable {
@@ -355,6 +358,8 @@ public enum AgentControlActionResult: UInt8, Equatable, Sendable {
     case unsupported = 7
     case appBusy = 8
     case malformedOrDuplicateConflict = 9
+    case questionIncomplete = 10
+    case questionPromptChangedOrExpired = 11
 }
 
 public enum AgentControlLayerChangeReason: UInt8, Equatable, Sendable {
