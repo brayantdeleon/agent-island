@@ -257,3 +257,37 @@ struct IslandSessionSection: Identifiable {
     let title: String
     let sessions: [AgentSession]
 }
+
+enum ProviderHistoryCoverage: String, Equatable, Sendable {
+    case partial
+    case unavailable
+
+    var label: String {
+        switch self {
+        case .partial:
+            "Partial history"
+        case .unavailable:
+            "History unavailable"
+        }
+    }
+}
+
+struct ProviderHistoryEntry: Identifiable, Equatable, Sendable {
+    enum Kind: String, Equatable, Sendable {
+        case user
+        case assistant
+        case activity
+    }
+
+    let id: String
+    let kind: Kind
+    let label: String
+    let text: String
+}
+
+struct ProviderHistoryMetadata: Equatable, Sendable {
+    let provider: AgentTool
+    let coverage: ProviderHistoryCoverage
+    let sourceDescription: String
+    let entries: [ProviderHistoryEntry]
+}

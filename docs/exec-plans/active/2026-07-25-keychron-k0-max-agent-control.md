@@ -90,6 +90,12 @@ existing list and remembered detail behavior. Expanded uses an explicit
 selected-task surface; digit presses replace the selection without hiding its
 detail pane, while pointer opening and `0` toggle that surface.
 
+Expanded presentation is a screen-clamped, read-only split pane. The left
+column retains the configured grouping and prefers K0 number order. The right
+column shows metadata and current approval/question context without controls,
+plus provider-backed task/conversation fields clearly labeled as partial or
+unavailable. It intentionally has no composer.
+
 ## Lighting Contract
 
 | Projected slot state | Number-key lighting |

@@ -300,6 +300,15 @@ Agent Island persists one presentation mode, defaulting to `regular`:
 - `expanded`: digits select tasks in the read-only split view without hiding
   the detail pane, and `0` or pointer opening toggles the expanded view.
 
+The expanded window is clamped to the target display's visible frame. Its
+left pane preserves the configured grouping and uses K0 slot order within
+groups when the keyboard integration is enabled. The right pane shows task
+metadata, current approval or question state, and only the provider-backed
+conversation fields currently available. Those fields are labeled `Partial
+history`; providers without any such data are labeled `History unavailable`.
+The expanded surface has no reply composer or approval/question mutation
+controls.
+
 Actionable notifications use an explicit notification surface in regular
 mode, a single-task surface in minimal mode, and an expanded surface with the
 relevant task selected in expanded mode. Presentation state does not change

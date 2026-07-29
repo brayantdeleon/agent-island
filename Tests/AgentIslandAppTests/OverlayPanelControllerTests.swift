@@ -152,6 +152,37 @@ struct OverlayPanelControllerTests {
         #expect(!OverlayPanelController.shouldActivatePanel(for: nil))
     }
 
+    @Test
+    func expandedPanelUsesPreferredSizeOnLargeScreens() {
+        let size = OverlayPanelController.expandedPanelSize(
+            visibleFrame: NSRect(
+                x: 0,
+                y: 24,
+                width: 1_512,
+                height: 945
+            )
+        )
+
+        #expect(size == CGSize(width: 1_080, height: 760))
+    }
+
+    @Test
+    func expandedPanelClampsToSmallScreenVisibleFrame() {
+        let visibleFrame = NSRect(
+            x: 0,
+            y: 24,
+            width: 800,
+            height: 600
+        )
+        let size = OverlayPanelController.expandedPanelSize(
+            visibleFrame: visibleFrame
+        )
+
+        #expect(size == CGSize(width: 768, height: 584))
+        #expect(size.width <= visibleFrame.width)
+        #expect(size.height <= visibleFrame.height)
+    }
+
     // MARK: - islandClosedHeight
 
     @Test

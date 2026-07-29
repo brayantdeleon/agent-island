@@ -5,6 +5,62 @@ import AgentIslandCore
 
 struct AgentSessionPresentationTests {
     @Test
+    func expandedHistoryLabelsTrackedProviderDataAsPartial() {
+        let longResponse = String(repeating: "Verified history detail. ", count: 80)
+        let session = AgentSession(
+            id: "history",
+            title: "Codex · history",
+            tool: .codex,
+            phase: .completed,
+            summary: "Done",
+            updatedAt: .now,
+            codexMetadata: CodexSessionMetadata(
+                transcriptPath: "/tmp/history.jsonl",
+                initialUserPrompt: "Build the expanded view.",
+                lastUserPrompt: "Verify long histories.",
+                lastAssistantMessage: longResponse,
+                currentTool: "exec_command",
+                currentCommandPreview: "swift test"
+            )
+        )
+
+        let metadata = session.providerHistoryMetadata
+        #expect(metadata.provider == .codex)
+        #expect(metadata.coverage == .partial)
+        #expect(metadata.entries.map(\.id) == [
+            "initial-user",
+            "latest-user",
+            "latest-assistant",
+            "current-activity",
+        ])
+        #expect(
+            metadata.entries[2].text
+                == longResponse.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+        )
+        #expect(metadata.sourceDescription.contains("earlier turns may be omitted"))
+    }
+
+    @Test
+    func expandedHistoryClearlyReportsUnavailableProviderData() {
+        let session = AgentSession(
+            id: "cursor-no-history",
+            title: "Cursor · task",
+            tool: .cursor,
+            phase: .running,
+            summary: "Working",
+            updatedAt: .now
+        )
+
+        let metadata = session.providerHistoryMetadata
+        #expect(metadata.provider == .cursor)
+        #expect(metadata.coverage == .unavailable)
+        #expect(metadata.entries.isEmpty)
+        #expect(metadata.sourceDescription.contains("has not exposed"))
+    }
+
+    @Test
     func completedSessionVisibilityIncludesExactlyOneHourButNotMore() {
         let now = Date(timeIntervalSince1970: 10_000)
         let exactlyOneHour = AgentSession(

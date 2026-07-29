@@ -488,6 +488,14 @@ struct AgentControlAppIntegrationTests {
             harness.model.islandSurface
                 == .expanded(selectedSessionID: "first")
         )
+        #expect(
+            Array(
+                harness.model.expandedIslandSessionSections()
+                    .flatMap(\.sessions)
+                    .map(\.id)
+                    .prefix(2)
+            ) == ["first", "second"]
+        )
 
         harness.transport.emit(
             .report(

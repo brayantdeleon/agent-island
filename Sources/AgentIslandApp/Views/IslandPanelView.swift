@@ -444,27 +444,466 @@ struct IslandPanelView: View {
         .accessibilityLabel(accessibilityLabel ?? systemName)
     }
 
+    @ViewBuilder
     private var openedContent: some View {
-        VStack(spacing: 8) {
-            if !model.hasAnyInstalledAgent {
-                installHooksHint
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
+        if model.islandSurface.isExpanded {
+            expandedSessionSurface
+        } else {
+            VStack(spacing: 8) {
+                if !model.hasAnyInstalledAgent {
+                    installHooksHint
+                        .padding(.horizontal, 18)
+                        .padding(.top, 8)
+                }
+
+                if model.shouldShowSessionBootstrapPlaceholder {
+                    sessionBootstrapPlaceholder
+                        .padding(.horizontal, 18)
+                        .padding(.top, 8)
+                } else if model.islandListSessions.isEmpty {
+                    emptyState
+                        .padding(.horizontal, 18)
+                        .padding(.top, 8)
+                } else {
+                    sessionList
+                }
+            }
+            .padding(.bottom, 0)
+        }
+    }
+
+    private var expandedSessionSurface: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            HStack(spacing: 0) {
+                expandedTaskNavigation(referenceDate: context.date)
+                    .frame(width: 300)
+
+                Rectangle()
+                    .fill(.white.opacity(0.07))
+                    .frame(width: 1)
+
+                Group {
+                    if let session = model.expandedSelectedSession {
+                        expandedTaskDetail(
+                            session,
+                            referenceDate: context.date
+                        )
+                    } else {
+                        emptyState
+                            .padding(24)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func expandedTaskNavigation(
+        referenceDate: Date
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("TASKS")
+                    .font(
+                        .system(
+                            size: 11,
+                            weight: .semibold,
+                            design: .monospaced
+                        )
+                    )
+                    .tracking(1.2)
+                    .foregroundStyle(V6Palette.paper.opacity(0.58))
+                Spacer()
+                Text("\(model.islandListSessions.count)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(V6Palette.paper.opacity(0.34))
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 38)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(.white.opacity(0.055))
+                    .frame(height: 1)
             }
 
-            if model.shouldShowSessionBootstrapPlaceholder {
-                sessionBootstrapPlaceholder
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
-            } else if model.islandListSessions.isEmpty {
-                emptyState
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
-            } else {
-                sessionList
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(
+                        model.expandedIslandSessionSections(
+                            at: referenceDate
+                        )
+                    ) { section in
+                        expandedSectionHeader(section)
+                        ForEach(section.sessions) { session in
+                            expandedTaskNavigationRow(
+                                session,
+                                referenceDate: referenceDate
+                            )
+                        }
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .background(Color.white.opacity(0.012))
+    }
+
+    private func expandedSectionHeader(
+        _ section: IslandSessionSection
+    ) -> some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(sectionTint(for: section))
+                .frame(width: 6, height: 6)
+            Text(sessionSectionTitle(for: section).uppercased())
+                .font(
+                    .system(
+                        size: 9.5,
+                        weight: .semibold,
+                        design: .monospaced
+                    )
+                )
+                .tracking(0.4)
+                .foregroundStyle(sectionLabelColor(for: section))
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 6)
+    }
+
+    private func expandedTaskNavigationRow(
+        _ session: AgentSession,
+        referenceDate: Date
+    ) -> some View {
+        let isSelected = model.expandedSelectedSession?.id == session.id
+        let tint = IslandDesignPalette.Status.tint(for: session.phase)
+        let slot = model.agentControlHardwareBadgeLabel(
+            for: session.id,
+            at: referenceDate
+        )
+
+        return Button {
+            model.selectExpandedSession(session.id)
+        } label: {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(tint)
+                    .frame(width: 7, height: 7)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(session.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(V6Palette.paper.opacity(0.9))
+                        .lineLimit(1)
+                    Text(session.spotlightStatusLabel)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(V6Palette.paper.opacity(0.42))
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                if let slot {
+                    Text(slot)
+                        .font(
+                            .system(
+                                size: 9,
+                                weight: .semibold,
+                                design: .monospaced
+                            )
+                        )
+                        .foregroundStyle(V6Palette.paper.opacity(0.5))
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 48)
+            .background(
+                isSelected
+                    ? Color.white.opacity(0.085)
+                    : Color.clear
+            )
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    Rectangle()
+                        .fill(tint)
+                        .frame(width: 2)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func expandedTaskDetail(
+        _ session: AgentSession,
+        referenceDate: Date
+    ) -> some View {
+        let history = session.providerHistoryMetadata
+
+        return ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(session.title)
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(V6Palette.paper.opacity(0.96))
+                        Text(
+                            "\(session.tool.displayName) · \(session.phase.displayName) · \(session.spotlightAgeBadge(at: referenceDate))"
+                        )
+                        .font(
+                            .system(
+                                size: 10.5,
+                                weight: .medium,
+                                design: .monospaced
+                            )
+                        )
+                        .foregroundStyle(
+                            IslandDesignPalette.Status.tint(
+                                for: session.phase
+                            ).opacity(0.84)
+                        )
+                    }
+                    Spacer()
+                    Text("READ ONLY")
+                        .font(
+                            .system(
+                                size: 9,
+                                weight: .bold,
+                                design: .monospaced
+                            )
+                        )
+                        .tracking(0.8)
+                        .foregroundStyle(V6Palette.paper.opacity(0.42))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            Color.white.opacity(0.06),
+                            in: Capsule()
+                        )
+                }
+
+                expandedMetadataGrid(session)
+                expandedActionableState(session)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("CONVERSATION / TASK HISTORY")
+                            .font(
+                                .system(
+                                    size: 10.5,
+                                    weight: .semibold,
+                                    design: .monospaced
+                                )
+                            )
+                            .tracking(0.5)
+                            .foregroundStyle(V6Palette.paper.opacity(0.62))
+                        Spacer()
+                        Text(history.coverage.label.uppercased())
+                            .font(
+                                .system(
+                                    size: 9,
+                                    weight: .bold,
+                                    design: .monospaced
+                                )
+                            )
+                            .foregroundStyle(
+                                history.coverage == .partial
+                                    ? IslandDesignPalette.Status.waitingForAnswer
+                                    : V6Palette.paper.opacity(0.34)
+                            )
+                    }
+
+                    Text(history.sourceDescription)
+                        .font(.system(size: 11))
+                        .foregroundStyle(V6Palette.paper.opacity(0.46))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if history.entries.isEmpty {
+                        Text(
+                            "No provider-backed conversation turns are available for this task."
+                        )
+                        .font(.system(size: 12))
+                        .foregroundStyle(V6Palette.paper.opacity(0.42))
+                        .padding(.vertical, 18)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .background(
+                            Color.white.opacity(0.025),
+                            in: RoundedRectangle(
+                                cornerRadius: 10,
+                                style: .continuous
+                            )
+                        )
+                    } else {
+                        ForEach(history.entries) { entry in
+                            expandedHistoryEntry(entry)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+            .padding(.bottom, 28)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private func expandedMetadataGrid(
+        _ session: AgentSession
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            expandedMetadataRow(
+                label: "Workspace",
+                value: session.jumpTarget?.workspaceName
+                    ?? "Not reported"
+            )
+            expandedMetadataRow(
+                label: "Terminal",
+                value: session.jumpTarget?.terminalApp
+                    ?? "Not attached"
+            )
+            expandedMetadataRow(
+                label: "Tracking",
+                value: session.spotlightTrackingLabel
+                    ?? "No transcript identifier"
+            )
+            if let tool = session.spotlightCurrentToolLabel {
+                expandedMetadataRow(label: "Current tool", value: tool)
             }
         }
-        .padding(.bottom, 0)
+        .padding(14)
+        .background(
+            Color.white.opacity(0.028),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+    }
+
+    private func expandedMetadataRow(
+        label: String,
+        value: String
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label.uppercased())
+                .font(
+                    .system(
+                        size: 9,
+                        weight: .semibold,
+                        design: .monospaced
+                    )
+                )
+                .foregroundStyle(V6Palette.paper.opacity(0.34))
+                .frame(width: 88, alignment: .leading)
+            Text(value)
+                .font(.system(size: 11.5))
+                .foregroundStyle(V6Palette.paper.opacity(0.72))
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func expandedActionableState(
+        _ session: AgentSession
+    ) -> some View {
+        if let request = session.permissionRequest {
+            expandedReadOnlyCallout(
+                title: "APPROVAL WAITING",
+                tint: IslandDesignPalette.Status.waitingForApproval
+            ) {
+                Text(request.summary)
+                if !request.affectedPath.isEmpty {
+                    Text(request.affectedPath)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(V6Palette.paper.opacity(0.48))
+                        .textSelection(.enabled)
+                }
+            }
+        } else if let prompt = session.questionPrompt {
+            expandedReadOnlyCallout(
+                title: "ANSWER WAITING",
+                tint: IslandDesignPalette.Status.waitingForAnswer
+            ) {
+                Text(prompt.title)
+                let options = prompt.questions.flatMap(\.options).map(\.label)
+                    + prompt.options
+                if !options.isEmpty {
+                    Text(options.joined(separator: "  ·  "))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(V6Palette.paper.opacity(0.5))
+                }
+            }
+        }
+    }
+
+    private func expandedReadOnlyCallout<Content: View>(
+        title: String,
+        tint: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(
+                    .system(
+                        size: 9.5,
+                        weight: .bold,
+                        design: .monospaced
+                    )
+                )
+                .tracking(0.5)
+                .foregroundStyle(tint.opacity(0.9))
+            content()
+                .font(.system(size: 12))
+                .foregroundStyle(V6Palette.paper.opacity(0.78))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            tint.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(tint.opacity(0.2), lineWidth: 1)
+        }
+    }
+
+    private func expandedHistoryEntry(
+        _ entry: ProviderHistoryEntry
+    ) -> some View {
+        let tint: Color = switch entry.kind {
+        case .user:
+            IslandDesignPalette.Status.running
+        case .assistant:
+            IslandDesignPalette.Status.completed
+        case .activity:
+            IslandDesignPalette.Status.waitingForAnswer
+        }
+
+        return VStack(alignment: .leading, spacing: 7) {
+            Text(entry.label.uppercased())
+                .font(
+                    .system(
+                        size: 9.5,
+                        weight: .semibold,
+                        design: .monospaced
+                    )
+                )
+                .foregroundStyle(tint.opacity(0.82))
+            Text(entry.text)
+                .font(.system(size: 12))
+                .foregroundStyle(V6Palette.paper.opacity(0.78))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.white.opacity(0.025),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
     }
 
     /// Persistent hint at the top of the expanded island while no agent

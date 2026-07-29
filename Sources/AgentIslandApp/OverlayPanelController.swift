@@ -428,6 +428,21 @@ final class OverlayPanelController {
             && point.y <= rect.maxY
     }
 
+    nonisolated static func expandedPanelSize(
+        visibleFrame: NSRect
+    ) -> CGSize {
+        CGSize(
+            width: min(
+                1_080,
+                max(0, visibleFrame.width - 32)
+            ),
+            height: min(
+                760,
+                max(0, visibleFrame.height - 16)
+            )
+        )
+    }
+
     /// Hit-area width of the v6 closed pill.
     ///
     /// - On a MacBook (physical notch present) the pill is locked to
@@ -479,6 +494,12 @@ final class OverlayPanelController {
             return CGSize(
                 width: openedPanelWidth(for: screen) + Self.openedContentWidthPadding + (insets.horizontal * 2),
                 height: screen.notchSize.height + Self.openedEmptyStateHeight + Self.openedContentBottomPadding + insets.bottom
+            )
+        }
+
+        if model.islandSurface.isExpanded {
+            return Self.expandedPanelSize(
+                visibleFrame: screen.visibleFrame
             )
         }
 

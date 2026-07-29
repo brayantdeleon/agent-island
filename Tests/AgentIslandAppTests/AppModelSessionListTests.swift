@@ -125,6 +125,79 @@ struct AppModelSessionListTests {
     }
 
     @Test
+    func expandedSelectionHandlesManySessionsApprovalsAndQuestions() {
+        let now = Date()
+        var sessions = (0..<10).map { index in
+            var session = listSession(
+                id: "session-\(index)",
+                phase: .running,
+                updatedAt: now.addingTimeInterval(
+                    TimeInterval(index)
+                )
+            )
+            session.isProcessAlive = true
+            return session
+        }
+        var approval = AgentSession(
+            id: "approval",
+            title: "Codex · approval",
+            tool: .codex,
+            attachmentState: .attached,
+            phase: .waitingForApproval,
+            summary: "Approval needed",
+            updatedAt: now,
+            permissionRequest: PermissionRequest(
+                title: "Edit",
+                summary: "Edit the expanded view",
+                affectedPath: "/tmp/IslandPanelView.swift"
+            )
+        )
+        approval.isProcessAlive = true
+        var question = AgentSession(
+            id: "question",
+            title: "Claude · question",
+            tool: .claudeCode,
+            attachmentState: .attached,
+            phase: .waitingForAnswer,
+            summary: "Answer needed",
+            updatedAt: now,
+            questionPrompt: QuestionPrompt(
+                title: "Which layout?",
+                options: ["Split", "Stacked"]
+            )
+        )
+        question.isProcessAlive = true
+        sessions.append(contentsOf: [approval, question])
+
+        let model = AppModel()
+        model.state = SessionState(sessions: sessions)
+        model.islandCompactnessMode = .expanded
+        model.islandSurface = .expanded(
+            selectedSessionID: approval.id
+        )
+
+        #expect(
+            model.expandedIslandSessionSections()
+                .flatMap(\.sessions)
+                .count == 12
+        )
+        #expect(
+            model.expandedSelectedSession?.permissionRequest?
+                .affectedPath == "/tmp/IslandPanelView.swift"
+        )
+
+        model.selectExpandedSession(question.id)
+        #expect(
+            model.islandSurface
+                == .expanded(selectedSessionID: question.id)
+        )
+        #expect(
+            model.expandedSelectedSession?.questionPrompt?
+                .options == ["Split", "Stacked"]
+        )
+    }
+
+    @Test
     func trackedEventsBeforeStartupDoNotWriteSessionRegistries() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(

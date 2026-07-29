@@ -983,6 +983,43 @@ final class AppModel {
         }
     }
 
+    func expandedIslandSessionSections(
+        at referenceDate: Date = .now
+    ) -> [IslandSessionSection] {
+        let sections = islandSessionSections(at: referenceDate)
+        guard agentControlKeyboardEnabled else {
+            return sections
+        }
+
+        let slotOrder = Dictionary(
+            uniqueKeysWithValues:
+                agentControlSlotProjection(at: referenceDate)
+                    .assignedSlots
+                    .map { ($0.sessionID, $0.index) }
+        )
+        return sections.map { section in
+            let originalOrder = Dictionary(
+                uniqueKeysWithValues:
+                    section.sessions.enumerated().map {
+                        ($0.element.id, $0.offset)
+                    }
+            )
+            return IslandSessionSection(
+                id: section.id,
+                title: section.title,
+                sessions: section.sessions.sorted { lhs, rhs in
+                    let lhsSlot = slotOrder[lhs.id] ?? Int.max
+                    let rhsSlot = slotOrder[rhs.id] ?? Int.max
+                    if lhsSlot != rhsSlot {
+                        return lhsSlot < rhsSlot
+                    }
+                    return originalOrder[lhs.id, default: 0]
+                        < originalOrder[rhs.id, default: 0]
+                }
+            )
+        }
+    }
+
     /// Counts behind the island's header chips.
     ///
     /// Lives on the model rather than in the view so it shares
@@ -2270,6 +2307,29 @@ final class AppModel {
         }
 
         return state.session(id: sessionID)
+    }
+
+    var expandedSelectedSession: AgentSession? {
+        let surfaceSessionID: String? = {
+            if case let .expanded(selectedSessionID) = islandSurface {
+                return selectedSessionID
+            }
+            return nil
+        }()
+        if let sessionID = surfaceSessionID ?? selectedSessionID,
+           let session = state.session(id: sessionID),
+           islandListSessions.contains(where: { $0.id == session.id }) {
+            return session
+        }
+        return islandListSessions.first
+    }
+
+    func selectExpandedSession(_ sessionID: String) {
+        guard islandListSessions.contains(where: { $0.id == sessionID }) else {
+            return
+        }
+        select(sessionID: sessionID)
+        islandSurface = .expanded(selectedSessionID: sessionID)
     }
 
     var hasAnySession: Bool {
