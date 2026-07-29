@@ -599,6 +599,10 @@ On 2026-07-28:
   their detail automatically, then closes approval detail after allow or deny.
   The explicit island refresh action also compacts gaps in the live K0 mapping
   without introducing automatic renumbering during ordinary session updates.
+- Row disclosure is now model-owned for both pointer and keyboard interaction.
+  Selecting a numbered session no longer reserves expanded-detail height, while
+  opening a completion row from either input exposes its full completion body
+  and gives the overlay the corresponding vertical space.
 
 ### Round 9 — Packaging and support
 

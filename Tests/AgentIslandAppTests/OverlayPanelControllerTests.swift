@@ -1,6 +1,7 @@
 import AppKit
 import Testing
 @testable import AgentIslandApp
+import AgentIslandCore
 
 struct OverlayPanelControllerTests {
     @Test
@@ -150,6 +151,57 @@ struct OverlayPanelControllerTests {
         #expect(!OverlayPanelController.shouldActivatePanel(for: .notification))
         #expect(!OverlayPanelController.shouldActivatePanel(for: .boot))
         #expect(!OverlayPanelController.shouldActivatePanel(for: nil))
+    }
+
+    @Test @MainActor
+    func selectedCollapsedSessionDoesNotReserveExpandedDetailHeight() {
+        let now = Date()
+        let sessionID = "selected-collapsed-panel-sizing"
+        let model = AppModel()
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: sessionID,
+                    title: "Completed task",
+                    tool: .codex,
+                    phase: .completed,
+                    summary: "A detailed completion response.",
+                    updatedAt: now,
+                    codexMetadata: CodexSessionMetadata(
+                        lastAssistantMessage: String(
+                            repeating: "Detailed completion line. ",
+                            count: 30
+                        )
+                    )
+                ),
+            ]
+        )
+        model.notchOpenReason = .click
+        model.islandSurface = .sessionList()
+
+        let controller = OverlayPanelController()
+        let ordinaryListHeight = controller.openedContentHeight(
+            for: model,
+            at: now
+        )
+
+        model.islandSurface = .sessionList(
+            actionableSessionID: sessionID
+        )
+        model.setSessionDetailExpanded(false, for: sessionID)
+        let selectedCollapsedHeight = controller.openedContentHeight(
+            for: model,
+            at: now
+        )
+
+        model.setSessionDetailExpanded(true, for: sessionID)
+        let selectedExpandedHeight = controller.openedContentHeight(
+            for: model,
+            at: now
+        )
+
+        #expect(selectedCollapsedHeight == ordinaryListHeight)
+        #expect(selectedExpandedHeight > selectedCollapsedHeight)
     }
 
     // MARK: - islandClosedHeight

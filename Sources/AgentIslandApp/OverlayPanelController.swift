@@ -512,8 +512,10 @@ final class OverlayPanelController {
         )
     }
 
-    private func openedContentHeight(for model: AppModel) -> CGFloat {
-        let now = Date.now
+    func openedContentHeight(
+        for model: AppModel,
+        at now: Date = .now
+    ) -> CGFloat {
         let visibleSessions = openedVisibleSessions(
             sessions: model.islandRenderedSessions
         )
@@ -543,18 +545,38 @@ final class OverlayPanelController {
             if let actionableID,
                let session = model.state.session(id: actionableID) {
                 let rowHeight = session.estimatedIslandRowHeight(at: now)
-                let bodyHeight = actionableBodyHeight(for: session, model: model)
+                let defaultsToExpanded = session
+                    .defaultsToExpandedNotificationDetails(
+                        isActionable: true
+                    )
+                let isExpanded =
+                    model.agentControlDetailPresentationRequests[
+                        actionableID
+                    ]?.isExpanded
+                        ?? defaultsToExpanded
+                let bodyHeight = isExpanded
+                    ? expandedDetailBodyHeight(
+                        for: session,
+                        model: model
+                    )
+                    : 0
                 return rowHeight + bodyHeight + Self.notificationEstimatedVerticalInsets
             }
             return 300
         }
 
         let rowHeights = visibleSessions.map { session -> CGFloat in
-            if session.id == actionableID {
-                return session.estimatedIslandRowHeight(at: now)
-                    + actionableBodyHeight(for: session, model: model)
+            let baseHeight = session.estimatedIslandRowHeight(at: now)
+            guard model.agentControlDetailPresentationRequests[
+                session.id
+            ]?.isExpanded == true else {
+                return baseHeight
             }
-            return session.estimatedIslandRowHeight(at: now)
+            return baseHeight
+                + expandedDetailBodyHeight(
+                    for: session,
+                    model: model
+                )
         }
 
         let rowsHeight = rowHeights.reduce(CGFloat.zero, +)
@@ -565,8 +587,11 @@ final class OverlayPanelController {
         return cappedListHeight + Self.openedContentVerticalInsets
     }
 
-    /// Additional height for the actionable session's inline action area.
-    private func actionableBodyHeight(for session: AgentSession, model: AppModel) -> CGFloat {
+    /// Additional height for a session whose disclosure is actually expanded.
+    private func expandedDetailBodyHeight(
+        for session: AgentSession,
+        model: AppModel
+    ) -> CGFloat {
         switch session.phase {
         case .waitingForApproval:
             return 118
@@ -575,7 +600,7 @@ final class OverlayPanelController {
         case .completed:
             return completionBodyHeight(for: session, model: model)
         case .running:
-            return 0
+            return 54
         }
     }
 

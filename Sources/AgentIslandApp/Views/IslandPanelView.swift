@@ -636,6 +636,12 @@ struct IslandPanelView: View {
                     presentation: .notification,
                     sideInset: sessionListSideInset,
                     lang: model.lang,
+                    onDetailPresentationChange: {
+                        model.setSessionDetailExpanded(
+                            $0,
+                            for: session.id
+                        )
+                    },
                     onApprove: { model.approvePermission(for: session.id, action: $0) },
                     onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
                     onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
@@ -691,6 +697,12 @@ struct IslandPanelView: View {
                                 isInteractive: model.notchStatus == .opened,
                                 sideInset: sessionListSideInset,
                                 lang: model.lang,
+                                onDetailPresentationChange: {
+                                    model.setSessionDetailExpanded(
+                                        $0,
+                                        for: session.id
+                                    )
+                                },
                                 onApprove: { model.approvePermission(for: session.id, action: $0) },
                                 onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
                                 onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
@@ -757,6 +769,12 @@ struct IslandPanelView: View {
                         isInteractive: model.notchStatus == .opened,
                         sideInset: sessionListSideInset,
                         lang: model.lang,
+                        onDetailPresentationChange: {
+                            model.setSessionDetailExpanded(
+                                $0,
+                                for: session.id
+                            )
+                        },
                         onApprove: { model.approvePermission(for: session.id, action: $0) },
                         onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
                         onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
@@ -829,10 +847,20 @@ struct IslandPanelView: View {
                             completedStaleThreshold: model.completedStaleThreshold.seconds,
                             isHardwareSelected:
                                 session.id == model.agentControlSelectedSessionID,
+                            detailPresentationRequest:
+                                agentControlDetailPresentationRequest(
+                                    for: session.id
+                                ),
                             useDrawingGroup: model.notchStatus == .opened,
                             isInteractive: model.notchStatus == .opened,
                             sideInset: sessionListSideInset,
                             lang: model.lang,
+                            onDetailPresentationChange: {
+                                model.setSessionDetailExpanded(
+                                    $0,
+                                    for: session.id
+                                )
+                            },
                             onJump: { model.jumpToSession(session) },
                             onUnhide: { model.unhideSession(session) }
                         )
@@ -1341,6 +1369,23 @@ private enum IslandSessionRowPresentation {
     case notification
 }
 
+enum IslandSessionEmbeddedDetailPolicy {
+    static func shouldShow(
+        phase: SessionPhase,
+        completionHasExpandedBody: Bool,
+        runningDetailAvailable: Bool
+    ) -> Bool {
+        switch phase {
+        case .waitingForApproval, .waitingForAnswer:
+            true
+        case .completed:
+            completionHasExpandedBody
+        case .running:
+            runningDetailAvailable
+        }
+    }
+}
+
 private struct IslandSessionRow: View {
     let session: AgentSession
     let referenceDate: Date
@@ -1355,6 +1400,7 @@ private struct IslandSessionRow: View {
     var presentation: IslandSessionRowPresentation = .list
     var sideInset: CGFloat = 16
     var lang: LanguageManager = .shared
+    var onDetailPresentationChange: ((Bool) -> Void)?
     var onApprove: ((ApprovalAction) -> Void)?
     var onAnswer: ((QuestionPromptResponse) -> Void)?
     var onReply: ((String) -> Void)?
@@ -1788,13 +1834,11 @@ private struct IslandSessionRow: View {
     }
 
     private var shouldShowEmbeddedDetailBody: Bool {
-        if session.phase.requiresAttention {
-            return true
-        }
-        if session.phase == .completed {
-            return isActionable && completionHasExpandedBody
-        }
-        return session.phase == .running && runningDetailText != nil
+        IslandSessionEmbeddedDetailPolicy.shouldShow(
+            phase: session.phase,
+            completionHasExpandedBody: completionHasExpandedBody,
+            runningDetailAvailable: runningDetailText != nil
+        )
     }
 
     private var completionHasExpandedBody: Bool {
@@ -2202,9 +2246,11 @@ private struct IslandSessionRow: View {
     private func detailToggleButton(isOpen: Bool) -> some View {
         Button {
             guard isInteractive else { return }
+            let isExpanded = !isOpen
             withAnimation(.easeInOut(duration: 0.2)) {
-                detailOverride = !isOpen
+                detailOverride = isExpanded
             }
+            onDetailPresentationChange?(isExpanded)
         } label: {
             Image(systemName: "chevron.down")
                 .font(.system(size: 10, weight: .bold))

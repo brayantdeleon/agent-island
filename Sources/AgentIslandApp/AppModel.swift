@@ -1495,6 +1495,23 @@ final class AppModel {
             )
     }
 
+    func setSessionDetailExpanded(
+        _ isExpanded: Bool,
+        for sessionID: String
+    ) {
+        guard state.session(id: sessionID) != nil,
+              agentControlDetailPresentationRequests[sessionID]?.isExpanded
+                != isExpanded else {
+            return
+        }
+
+        requestAgentControlDetailPresentation(
+            for: sessionID,
+            isExpanded: isExpanded
+        )
+        refreshOverlayPlacementIfVisible()
+    }
+
     private func handleAgentControlIslandToggle(
         requestSequence: UInt16,
         connectionNonce: UInt64,

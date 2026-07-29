@@ -117,6 +117,24 @@ struct AgentSessionPresentationTests {
     }
 
     @Test
+    func manuallyExpandedCompletionShowsItsFullEmbeddedBody() {
+        #expect(
+            IslandSessionEmbeddedDetailPolicy.shouldShow(
+                phase: .completed,
+                completionHasExpandedBody: true,
+                runningDetailAvailable: false
+            )
+        )
+        #expect(
+            !IslandSessionEmbeddedDetailPolicy.shouldShow(
+                phase: .completed,
+                completionHasExpandedBody: false,
+                runningDetailAvailable: false
+            )
+        )
+    }
+
+    @Test
     func persistentPermissionApprovalIsOnlyOfferedForClaudeRules() {
         let request = PermissionRequest(
             title: "Run tool",
