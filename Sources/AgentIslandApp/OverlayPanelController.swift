@@ -529,9 +529,11 @@ final class OverlayPanelController {
         }
 
         let actionableID = model.islandSurface.sessionID
-        let isNotificationMode = model.notchOpenReason == .notification && actionableID != nil
+        let isFocusedCardMode =
+            model.islandSurface.isNotificationCard
+                || model.islandSurface.isSingleTask
 
-        if isNotificationMode {
+        if isFocusedCardMode {
             // Use SwiftUI-measured height when available (accurate after first render).
             if model.measuredNotificationContentHeight > 0 {
                 return model.measuredNotificationContentHeight + Self.notificationMeasuredContentPadding

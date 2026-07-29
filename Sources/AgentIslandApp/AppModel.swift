@@ -134,6 +134,7 @@ final class AppModel {
                 islandCompactnessMode.rawValue,
                 forKey: Self.islandCompactnessModeDefaultsKey
             )
+            synchronizeVisibleSurfaceWithCompactnessMode()
             refreshOverlayPlacementIfVisible()
         }
     }
@@ -1510,16 +1511,29 @@ final class AppModel {
         let rememberedDetailState =
             agentControlDetailPresentationRequests[session.id]?.isExpanded
                 ?? false
-        let expandsDetail = previouslySelectedSessionID == session.id
-            ? !rememberedDetailState
-            : rememberedDetailState
+        let expandsDetail: Bool
+        if islandCompactnessMode == .expanded {
+            expandsDetail = true
+        } else {
+            expandsDetail = previouslySelectedSessionID == session.id
+                ? !rememberedDetailState
+                : rememberedDetailState
+        }
         requestAgentControlDetailPresentation(
             for: session.id,
             isExpanded: expandsDetail
         )
+        let surface: IslandSurface = switch islandCompactnessMode {
+        case .minimal:
+            .singleTask(sessionID: session.id)
+        case .regular:
+            .sessionList(actionableSessionID: session.id)
+        case .expanded:
+            .expanded(selectedSessionID: session.id)
+        }
         notchOpen(
             reason: .click,
-            surface: .sessionList(actionableSessionID: session.id)
+            surface: surface
         )
     }
 
@@ -1539,6 +1553,33 @@ final class AppModel {
             )
     }
 
+    private func synchronizeVisibleSurfaceWithCompactnessMode() {
+        guard notchStatus == .opened else {
+            return
+        }
+
+        let sessionID =
+            islandSurface.sessionID
+                ?? selectedSessionID
+                ?? focusedSession?.id
+        switch islandCompactnessMode {
+        case .minimal:
+            islandSurface = sessionID.map {
+                .singleTask(sessionID: $0)
+            }
+                ?? .sessionList()
+        case .regular:
+            islandSurface = notchOpenReason == .notification
+                ? sessionID.map {
+                    .notification(sessionID: $0)
+                }
+                    ?? .sessionList()
+                : .sessionList(actionableSessionID: sessionID)
+        case .expanded:
+            islandSurface = .expanded(selectedSessionID: sessionID)
+        }
+    }
+
     private func handleAgentControlIslandToggle(
         requestSequence: UInt16,
         connectionNonce: UInt64,
@@ -1556,7 +1597,31 @@ final class AppModel {
         ) else {
             return
         }
-        toggleOverlay()
+        switch islandCompactnessMode {
+        case .minimal:
+            if notchStatus == .opened,
+               islandSurface == .sessionList() {
+                notchClose()
+            } else {
+                notchOpen(reason: .click, surface: .sessionList())
+            }
+        case .regular:
+            toggleOverlay()
+        case .expanded:
+            if notchStatus == .opened,
+               islandSurface.isExpanded {
+                notchClose()
+            } else {
+                notchOpen(
+                    reason: .click,
+                    surface: .expanded(
+                        selectedSessionID:
+                            selectedSessionID
+                                ?? focusedSession?.id
+                    )
+                )
+            }
+        }
     }
 
     private func makeAgentControlSelectionToken() -> UInt64 {
@@ -2168,6 +2233,37 @@ final class AppModel {
         return surfacedSessions.first
     }
 
+    var defaultInteractiveIslandSurface: IslandSurface {
+        switch islandCompactnessMode {
+        case .minimal, .regular:
+            .sessionList()
+        case .expanded:
+            .expanded(
+                selectedSessionID:
+                    selectedSessionID
+                        ?? focusedSession?.id
+            )
+        }
+    }
+
+    private func presentationSurface(
+        for notificationSurface: IslandSurface
+    ) -> IslandSurface {
+        guard let sessionID = notificationSurface.sessionID else {
+            return notificationSurface
+        }
+
+        switch islandCompactnessMode {
+        case .minimal:
+            return .singleTask(sessionID: sessionID)
+        case .regular:
+            return notificationSurface
+        case .expanded:
+            select(sessionID: sessionID)
+            return .expanded(selectedSessionID: sessionID)
+        }
+    }
+
     var activeIslandCardSession: AgentSession? {
         guard let sessionID = islandSurface.sessionID else {
             return nil
@@ -2411,7 +2507,15 @@ final class AppModel {
     // MARK: - Overlay forwarding
 
     func toggleOverlay() { overlay.toggleOverlay() }
-    func notchOpen(reason: NotchOpenReason, surface: IslandSurface = .sessionList()) { overlay.notchOpen(reason: reason, surface: surface) }
+    func notchOpen(
+        reason: NotchOpenReason,
+        surface: IslandSurface? = nil
+    ) {
+        overlay.notchOpen(
+            reason: reason,
+            surface: surface ?? defaultInteractiveIslandSurface
+        )
+    }
     func notchClose() { overlay.notchClose() }
     func notchPop() { overlay.notchPop() }
     func performBootAnimation() { overlay.performBootAnimation() }
@@ -2426,7 +2530,12 @@ final class AppModel {
     private func refreshOverlayPlacementIfVisible() { overlay.refreshOverlayPlacementIfVisible() }
     func notePointerInsideIslandSurface() { overlay.notePointerInsideIslandSurface() }
     func handlePointerExitedIslandSurface() { overlay.handlePointerExitedIslandSurface() }
-    private func presentNotificationSurface(_ surface: IslandSurface) { overlay.presentNotificationSurface(surface) }
+    private func presentNotificationSurface(_ surface: IslandSurface) {
+        overlay.presentNotificationSurface(
+            surface,
+            as: presentationSurface(for: surface)
+        )
+    }
     private func reconcileIslandSurfaceAfterStateChange() { overlay.reconcileIslandSurfaceAfterStateChange() }
     private func dismissNotificationSurfaceIfPresent(for sessionID: String) { overlay.dismissNotificationSurfaceIfPresent(for: sessionID) }
     private func dismissOverlayForJump() { overlay.dismissOverlayForJump() }

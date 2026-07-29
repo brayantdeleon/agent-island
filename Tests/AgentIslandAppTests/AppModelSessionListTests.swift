@@ -27,10 +27,101 @@ struct AppModelSessionListTests {
             "appearance.island.v8.topBar.sessionSort",
             "appearance.island.v8.topBar.completedStaleThreshold",
             "app.suppressFrontmostNotifications",
+            "appearance.island.compactnessMode",
             "feature.completionReply.enabled",
             HiddenSessionStore.defaultsKey,
             "overlay.sound.muted",
         ].forEach(UserDefaults.standard.removeObject(forKey:))
+    }
+
+    @Test
+    func compactnessModeDefaultsToRegularAndPersistsChanges() {
+        let key = "appearance.island.compactnessMode"
+        UserDefaults.standard.removeObject(forKey: key)
+        defer {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+
+        let initialModel = AppModel()
+        #expect(initialModel.islandCompactnessMode == .regular)
+
+        initialModel.islandCompactnessMode = .minimal
+        let restoredModel = AppModel()
+        #expect(restoredModel.islandCompactnessMode == .minimal)
+    }
+
+    @Test
+    func pointerAndNotificationsRespectPresentationModeSurfaces() {
+        let session = listSession(
+            id: "presentation-session",
+            phase: .running,
+            updatedAt: .now
+        )
+        let event = AgentEvent.questionAsked(
+            QuestionAsked(
+                sessionID: session.id,
+                prompt: QuestionPrompt(
+                    title: "Choose",
+                    options: ["A", "B"]
+                ),
+                timestamp: .now
+            )
+        )
+
+        let minimalModel = AppModel()
+        minimalModel.islandCompactnessMode = .minimal
+        minimalModel.suppressFrontmostNotifications = false
+        minimalModel.state = SessionState(sessions: [session])
+        minimalModel.toggleOverlay()
+        #expect(minimalModel.islandSurface == .sessionList())
+        minimalModel.notchClose()
+        minimalModel.applyTrackedEvent(
+            event,
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+        #expect(
+            minimalModel.islandSurface
+                == .singleTask(sessionID: session.id)
+        )
+        minimalModel.notchClose()
+
+        let expandedModel = AppModel()
+        expandedModel.islandCompactnessMode = .expanded
+        expandedModel.suppressFrontmostNotifications = false
+        expandedModel.state = SessionState(sessions: [session])
+        expandedModel.select(sessionID: session.id)
+        expandedModel.toggleOverlay()
+        #expect(
+            expandedModel.islandSurface
+                == .expanded(selectedSessionID: session.id)
+        )
+        expandedModel.notchClose()
+        expandedModel.applyTrackedEvent(
+            event,
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+        #expect(
+            expandedModel.islandSurface
+                == .expanded(selectedSessionID: session.id)
+        )
+        expandedModel.notchClose()
+
+        let regularModel = AppModel()
+        regularModel.islandCompactnessMode = .regular
+        regularModel.suppressFrontmostNotifications = false
+        regularModel.state = SessionState(sessions: [session])
+        regularModel.applyTrackedEvent(
+            event,
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+        #expect(
+            regularModel.islandSurface
+                == .notification(sessionID: session.id)
+        )
+        regularModel.notchClose()
     }
 
     @Test
@@ -642,7 +733,7 @@ struct AppModelSessionListTests {
 
         #expect(model.notchStatus == .opened)
         #expect(model.notchOpenReason == .notification)
-        #expect(model.islandSurface == .sessionList(actionableSessionID: session.id))
+        #expect(model.islandSurface == .notification(sessionID: session.id))
         #expect(model.surfacedSessions.map(\.id) == [session.id])
         #expect(model.hiddenIslandSessions.isEmpty)
         #expect(model.shouldExposeEventFromHiddenSession(
@@ -725,13 +816,13 @@ struct AppModelSessionListTests {
         #expect(model.surfacedSessions.map(\.id) == [session.id])
         #expect(model.hiddenIslandSessions.isEmpty)
         #expect(model.notchStatus == .opened)
-        #expect(model.islandSurface == .sessionList(actionableSessionID: session.id))
+        #expect(model.islandSurface == .notification(sessionID: session.id))
 
         model.unhideSession(pending!)
 
         #expect(!model.isSessionHidden(model.state.session(id: session.id)!))
         #expect(model.activeIslandCardSession?.permissionRequest == request)
-        #expect(model.islandSurface == .sessionList(actionableSessionID: session.id))
+        #expect(model.islandSurface == .notification(sessionID: session.id))
     }
 
     @Test
@@ -1130,7 +1221,7 @@ struct AppModelSessionListTests {
 
         #expect(model.notchStatus == .opened)
         #expect(model.notchOpenReason == .notification)
-        #expect(model.islandSurface == .sessionList(actionableSessionID: "background-session"))
+        #expect(model.islandSurface == .notification(sessionID: "background-session"))
     }
 
     @Test
@@ -1206,7 +1297,7 @@ struct AppModelSessionListTests {
         )
         model.notchStatus = .opened
         model.notchOpenReason = .notification
-        model.islandSurface = .sessionList(actionableSessionID: "session-1")
+        model.islandSurface = .notification(sessionID: "session-1")
 
         #expect(model.shouldAutoCollapseOnMouseLeave)
 
@@ -1245,7 +1336,7 @@ struct AppModelSessionListTests {
         )
         model.notchStatus = .opened
         model.notchOpenReason = .notification
-        model.islandSurface = .sessionList(actionableSessionID: "session-1")
+        model.islandSurface = .notification(sessionID: "session-1")
 
         #expect(model.shouldAutoCollapseOnMouseLeave)
         #expect(!model.shouldDeferTimedNotificationAutoCollapse)
@@ -1277,7 +1368,10 @@ struct AppModelSessionListTests {
             ]
         )
 
-        model.notchOpen(reason: .notification, surface: .sessionList(actionableSessionID: "session-1"))
+        model.notchOpen(
+            reason: .notification,
+            surface: .notification(sessionID: "session-1")
+        )
 
         #expect(model.hasPendingNotificationAutoCollapse)
 
@@ -1817,7 +1911,7 @@ struct AppModelSessionListTests {
 
         model.state = SessionState(sessions: [sessionA, sessionB])
 
-        let surfaceA = IslandSurface.sessionList(actionableSessionID: "approval-session-A")
+        let surfaceA = IslandSurface.notification(sessionID: "approval-session-A")
         model.notchStatus = .opened
         model.notchOpenReason = .notification
         model.islandSurface = surfaceA
@@ -1825,7 +1919,7 @@ struct AppModelSessionListTests {
 
         model.notchClose()
 
-        let surfaceB = IslandSurface.sessionList(actionableSessionID: "approval-session-B")
+        let surfaceB = IslandSurface.notification(sessionID: "approval-session-B")
         model.notchOpen(reason: .notification, surface: surfaceB)
 
         #expect(
@@ -1859,7 +1953,7 @@ struct AppModelSessionListTests {
         session.summary = "Done"
         model.state = SessionState(sessions: [session])
 
-        let surface = IslandSurface.sessionList(actionableSessionID: "same-session")
+        let surface = IslandSurface.notification(sessionID: "same-session")
         model.notchStatus = .opened
         model.notchOpenReason = .notification
         model.islandSurface = surface
@@ -1909,7 +2003,7 @@ struct AppModelSessionListTests {
         )
         incomingSession.isProcessAlive = true
 
-        let currentSurface = IslandSurface.sessionList(actionableSessionID: "current-session")
+        let currentSurface = IslandSurface.notification(sessionID: "current-session")
         model.state = SessionState(sessions: [currentSession, incomingSession])
         model.notchStatus = .opened
         model.notchOpenReason = .notification

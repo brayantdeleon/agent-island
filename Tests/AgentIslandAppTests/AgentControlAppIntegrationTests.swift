@@ -373,6 +373,164 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
+    func presentationModesRouteNumberAndZeroKeysToExplicitSurfaces() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+            harness.model.islandCompactnessMode = .regular
+        }
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "first",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+                makeSession(
+                    id: "second",
+                    firstSeenAt: now.addingTimeInterval(1),
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+        let snapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(snapshot.payload, at: 8)
+
+        harness.model.islandCompactnessMode = .minimal
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 1,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.islandSurface
+                == .singleTask(sessionID: "first")
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 2,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["first"]?
+                .isExpanded == true
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 3,
+                    slotIndex: 1,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.islandSurface
+                == .singleTask(sessionID: "second")
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 4,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.notchStatus == .opened)
+        #expect(harness.model.islandSurface == .sessionList())
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 5,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.notchStatus == .closed)
+
+        harness.model.islandCompactnessMode = .expanded
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 6,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.islandSurface
+                == .expanded(selectedSessionID: "first")
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 7,
+                    slotIndex: 1,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.islandSurface
+                == .expanded(selectedSessionID: "second")
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 8,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.notchStatus == .closed)
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 9,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.notchStatus == .opened)
+        #expect(
+            harness.model.islandSurface
+                == .expanded(selectedSessionID: "second")
+        )
+    }
+
+    @Test
     func detailStatesSurviveSwitchingSessionsAndIslandReopening() throws {
         let harness = makeHarness(enabled: true)
         defer {

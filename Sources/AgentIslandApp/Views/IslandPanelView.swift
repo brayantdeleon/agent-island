@@ -548,9 +548,16 @@ struct IslandPanelView: View {
         model.agentControlDetailPresentationRequests[sessionID]
     }
 
-    /// Whether the panel was opened by a notification (show only actionable session + footer).
+    /// Whether the panel was opened by a notification.
     private var isNotificationMode: Bool {
-        model.notchOpenReason == .notification && actionableSessionID != nil
+        model.islandSurface.isNotificationCard
+    }
+
+    /// Minimal keyboard presentation and notifications both render one
+    /// identity-bound task, but only notifications offer the "show all"
+    /// transition and auto-collapse behavior.
+    private var isFocusedCardMode: Bool {
+        isNotificationMode || model.islandSurface.isSingleTask
     }
 
     private static let maxSessionListHeight: CGFloat = 560
@@ -563,8 +570,8 @@ struct IslandPanelView: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             let referenceDate = context.date
 
-            if isNotificationMode {
-                // Notification mode: NO ScrollView — content sizes naturally
+            if isFocusedCardMode {
+                // Focused-card mode: NO ScrollView — content sizes naturally
                 sessionListContent(referenceDate: referenceDate)
                     .padding(.vertical, 2)
                     .onHover { hovering in
@@ -615,11 +622,11 @@ struct IslandPanelView: View {
     @ViewBuilder
     private func sessionListContent(referenceDate: Date) -> some View {
         VStack(spacing: 0) {
-            if !isNotificationMode {
+            if !isFocusedCardMode {
                 sessionPanelHeader(referenceDate: referenceDate)
             }
 
-            if isNotificationMode, let session = model.activeIslandCardSession {
+            if isFocusedCardMode, let session = model.activeIslandCardSession {
                 IslandSessionRow(
                     session: session,
                     referenceDate: referenceDate,
@@ -662,7 +669,7 @@ struct IslandPanelView: View {
                 .id(notificationCardIdentity(for: session))
 
                 let visibleSessionCount = model.islandListSessions.count
-                if visibleSessionCount > 1 {
+                if isNotificationMode, visibleSessionCount > 1 {
                     Button {
                         let isCompletion = session.phase == .completed
                         model.expandNotificationToSessionList(clearExpansion: isCompletion)
@@ -731,7 +738,7 @@ struct IslandPanelView: View {
                 hiddenSessionsSection(referenceDate: referenceDate)
             }
 
-            if !isNotificationMode {
+            if !isFocusedCardMode {
                 sessionPanelFooter
             }
         }

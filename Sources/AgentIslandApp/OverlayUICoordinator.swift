@@ -131,7 +131,7 @@ final class OverlayUICoordinator {
 
     func toggleOverlay() {
         if notchStatus == .closed {
-            notchOpen(reason: .click)
+            notchOpen(reason: .click, surface: defaultInteractiveSurface)
         } else {
             notchClose()
         }
@@ -244,17 +244,21 @@ final class OverlayUICoordinator {
     }
 
     // Legacy compatibility
-    func showOverlay() { notchOpen(reason: .click, surface: .sessionList()) }
+    func showOverlay() {
+        notchOpen(reason: .click, surface: defaultInteractiveSurface)
+    }
     func hideOverlay() { notchClose() }
 
     /// Transition from notification mode (single session) to full session list.
     /// - Parameter clearExpansion: If true, clears the actionable session's expansion
     ///   (used for completion notifications which are informational only).
     func expandNotificationToSessionList(clearExpansion: Bool = false) {
-        if clearExpansion {
-            islandSurface = .sessionList()
-        }
-        // When not clearing, keep actionableSessionID so approval/question expansion persists
+        let actionableSessionID = clearExpansion
+            ? nil
+            : islandSurface.sessionID
+        islandSurface = .sessionList(
+            actionableSessionID: actionableSessionID
+        )
         notchOpenReason = .click
         notificationAutoCollapseTask?.cancel()
         notificationAutoCollapseTask = nil
@@ -352,25 +356,33 @@ final class OverlayUICoordinator {
 
     // MARK: - Notification surfaces
 
-    func presentNotificationSurface(_ surface: IslandSurface) {
-        guard surface.isNotificationCard else {
+    func presentNotificationSurface(
+        _ notificationSurface: IslandSurface,
+        as presentationSurface: IslandSurface? = nil
+    ) {
+        guard notificationSurface.isNotificationCard else {
             return
         }
 
-        guard !shouldPreserveCurrentNotificationSurface(against: surface) else {
+        guard !shouldPreserveCurrentNotificationSurface(
+            against: notificationSurface
+        ) else {
             return
         }
 
         appModel?.measuredNotificationContentHeight = 0
-        notchOpen(reason: .notification, surface: surface)
+        notchOpen(
+            reason: .notification,
+            surface: presentationSurface ?? notificationSurface
+        )
     }
 
     func shouldPreserveCurrentNotificationSurface(against candidate: IslandSurface) -> Bool {
         guard candidate.isNotificationCard,
               notchStatus == .opened,
               notchOpenReason == .notification,
-              islandSurface.isNotificationCard,
-              islandSurface != candidate else {
+              islandSurface.sessionID != nil,
+              islandSurface.sessionID != candidate.sessionID else {
             return false
         }
 
@@ -378,7 +390,8 @@ final class OverlayUICoordinator {
     }
 
     func reconcileIslandSurfaceAfterStateChange() {
-        guard islandSurface.isNotificationCard else {
+        guard notchOpenReason == .notification,
+              islandSurface.sessionID != nil else {
             return
         }
 
@@ -422,11 +435,6 @@ final class OverlayUICoordinator {
             return
         }
 
-        if overlayPanelController.isPointInExpandedArea(NSEvent.mouseLocation) {
-            notePointerInsideIslandSurface()
-            return
-        }
-
         notificationAutoCollapseTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(for: .seconds(Self.notificationSurfaceAutoCollapseDelay))
@@ -458,12 +466,31 @@ final class OverlayUICoordinator {
 
     private var shouldTrackPointerInsideIslandSurface: Bool {
         shouldAutoCollapseOnMouseLeave
-            || (notchStatus == .opened && notchOpenReason == .notification && islandSurface.isNotificationCard)
+            || (notchStatus == .opened
+                && notchOpenReason == .notification
+                && islandSurface.sessionID != nil)
     }
 
     private var isPointerInsideCurrentNotificationCard: Bool {
         isPointerInsideIslandSurface
             || overlayPanelController.isPointInExpandedArea(NSEvent.mouseLocation)
+    }
+
+    private var defaultInteractiveSurface: IslandSurface {
+        guard let appModel else {
+            return .sessionList()
+        }
+
+        switch appModel.islandCompactnessMode {
+        case .minimal, .regular:
+            return .sessionList()
+        case .expanded:
+            return .expanded(
+                selectedSessionID:
+                    appModel.selectedSessionID
+                        ?? appModel.focusedSession?.id
+            )
+        }
     }
 
     // MARK: - Debug snapshots (overlay portion)

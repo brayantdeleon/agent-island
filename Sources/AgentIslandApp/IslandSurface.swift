@@ -3,16 +3,41 @@ import AgentIslandCore
 
 enum IslandSurface: Equatable {
     case sessionList(actionableSessionID: String? = nil)
+    case notification(sessionID: String)
+    case singleTask(sessionID: String)
+    case expanded(selectedSessionID: String? = nil)
 
     var sessionID: String? {
         switch self {
         case let .sessionList(actionableSessionID):
             actionableSessionID
+        case let .notification(sessionID),
+             let .singleTask(sessionID):
+            sessionID
+        case let .expanded(selectedSessionID):
+            selectedSessionID
         }
     }
 
     var isNotificationCard: Bool {
-        sessionID != nil
+        if case .notification = self {
+            return true
+        }
+        return false
+    }
+
+    var isSingleTask: Bool {
+        if case .singleTask = self {
+            return true
+        }
+        return false
+    }
+
+    var isExpanded: Bool {
+        if case .expanded = self {
+            return true
+        }
+        return false
     }
 
     func autoDismissesWhenPresentedAsNotification(session: AgentSession?) -> Bool {
@@ -23,11 +48,11 @@ enum IslandSurface: Equatable {
     static func notificationSurface(for event: AgentEvent) -> IslandSurface? {
         switch event {
         case let .permissionRequested(payload):
-            .sessionList(actionableSessionID: payload.sessionID)
+            .notification(sessionID: payload.sessionID)
         case let .questionAsked(payload):
-            .sessionList(actionableSessionID: payload.sessionID)
+            .notification(sessionID: payload.sessionID)
         case let .sessionCompleted(payload):
-            payload.isInterrupt == true ? nil : .sessionList(actionableSessionID: payload.sessionID)
+            payload.isInterrupt == true ? nil : .notification(sessionID: payload.sessionID)
         default:
             nil
         }

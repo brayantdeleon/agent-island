@@ -18,7 +18,7 @@ struct IslandSurfaceTests {
             )
         )
 
-        #expect(IslandSurface.notificationSurface(for: event) == .sessionList(actionableSessionID: "session-1"))
+        #expect(IslandSurface.notificationSurface(for: event) == .notification(sessionID: "session-1"))
     }
 
     @Test
@@ -34,7 +34,7 @@ struct IslandSurfaceTests {
             )
         )
 
-        #expect(IslandSurface.notificationSurface(for: event) == .sessionList(actionableSessionID: "session-2"))
+        #expect(IslandSurface.notificationSurface(for: event) == .notification(sessionID: "session-2"))
     }
 
     @Test
@@ -54,7 +54,7 @@ struct IslandSurfaceTests {
             )
         )
 
-        let surface = IslandSurface.sessionList(actionableSessionID: "session-1")
+        let surface = IslandSurface.notification(sessionID: "session-1")
         #expect(surface.matchesCurrentState(of: session))
     }
 
@@ -70,7 +70,7 @@ struct IslandSurfaceTests {
             updatedAt: .now
         )
 
-        let surface = IslandSurface.sessionList(actionableSessionID: "session-1")
+        let surface = IslandSurface.notification(sessionID: "session-1")
         #expect(!surface.matchesCurrentState(of: session))
     }
 
@@ -84,7 +84,7 @@ struct IslandSurfaceTests {
             )
         )
 
-        #expect(IslandSurface.notificationSurface(for: event) == .sessionList(actionableSessionID: "session-3"))
+        #expect(IslandSurface.notificationSurface(for: event) == .notification(sessionID: "session-3"))
     }
 
     @Test
@@ -123,7 +123,7 @@ struct IslandSurfaceTests {
             updatedAt: .now
         )
 
-        let surface = IslandSurface.sessionList(actionableSessionID: "session-1")
+        let surface = IslandSurface.notification(sessionID: "session-1")
         #expect(!surface.autoDismissesWhenPresentedAsNotification(session: approvalSession))
         #expect(surface.autoDismissesWhenPresentedAsNotification(session: completedSession))
     }

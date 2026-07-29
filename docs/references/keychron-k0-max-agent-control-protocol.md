@@ -290,6 +290,21 @@ For the slot-9 toggle, Agent Island returns an accepted acknowledgement with
 no allowed actions and a short-lived nonzero token. This reuses the existing
 white accepted feedback without making `0` an agent selection.
 
+Agent Island persists one presentation mode, defaulting to `regular`:
+
+- `minimal`: a digit opens only that task; pressing the same digit toggles
+  its remembered detail, another digit replaces it, and `0` toggles the full
+  regular task list. Pointer opening always uses the full regular list.
+- `regular`: digits reveal and highlight tasks in the existing list, repeated
+  digits toggle remembered detail, and `0` toggles that list.
+- `expanded`: digits select tasks in the read-only split view without hiding
+  the detail pane, and `0` or pointer opening toggles the expanded view.
+
+Actionable notifications use an explicit notification surface in regular
+mode, a single-task surface in minimal mode, and an expanded surface with the
+relevant task selected in expanded mode. Presentation state does not change
+permission or question identity validation.
+
 ## `SELECTION_ACK` (`0x04`)
 
 Response payload:

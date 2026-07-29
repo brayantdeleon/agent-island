@@ -83,6 +83,13 @@ M4 may enter Agent Control only after a fresh, compatible handshake. If Agent
 Island is unavailable, an M4 tap gives brief amber feedback and leaves the
 base layer active.
 
+Triangle cycles a persisted presentation preference whose default is
+`regular`. Minimal digit presses use an explicit single-task surface while
+pointer opening and `0` expose the full regular list. Regular preserves the
+existing list and remembered detail behavior. Expanded uses an explicit
+selected-task surface; digit presses replace the selection without hiding its
+detail pane, while pointer opening and `0` toggle that surface.
+
 ## Lighting Contract
 
 | Projected slot state | Number-key lighting |
