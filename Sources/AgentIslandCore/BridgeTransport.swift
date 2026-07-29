@@ -82,7 +82,11 @@ public enum BridgeClientRole: String, Codable, Sendable {
 public enum BridgeCommand: Equatable, Codable, Sendable {
     case registerClient(role: BridgeClientRole)
     case requestQuestion(sessionID: String, prompt: QuestionPrompt)
-    case resolvePermission(sessionID: String, resolution: PermissionResolution)
+    case resolvePermission(
+        sessionID: String,
+        requestID: UUID,
+        resolution: PermissionResolution
+    )
     case answerQuestion(sessionID: String, response: QuestionPromptResponse)
     case processCodexHook(CodexHookPayload)
     case processClaudeHook(ClaudeHookPayload)
@@ -95,6 +99,7 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
         case role
         case sessionID
         case prompt
+        case requestID
         case resolution
         case response
         case codexHook
@@ -131,6 +136,7 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
         case .resolvePermission:
             self = .resolvePermission(
                 sessionID: try container.decode(String.self, forKey: .sessionID),
+                requestID: try container.decode(UUID.self, forKey: .requestID),
                 resolution: try container.decode(PermissionResolution.self, forKey: .resolution)
             )
         case .answerQuestion:
@@ -162,9 +168,10 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
             try container.encode(CommandType.requestQuestion, forKey: .type)
             try container.encode(sessionID, forKey: .sessionID)
             try container.encode(prompt, forKey: .prompt)
-        case let .resolvePermission(sessionID, resolution):
+        case let .resolvePermission(sessionID, requestID, resolution):
             try container.encode(CommandType.resolvePermission, forKey: .type)
             try container.encode(sessionID, forKey: .sessionID)
+            try container.encode(requestID, forKey: .requestID)
             try container.encode(resolution, forKey: .resolution)
         case let .answerQuestion(sessionID, response):
             try container.encode(CommandType.answerQuestion, forKey: .type)

@@ -158,17 +158,19 @@ struct AgentSessionPresentationTests {
             summary: "Working",
             timestamp: startedAt
         )))
+        let request = PermissionRequest(
+            title: "Run tests",
+            summary: "Needs approval",
+            affectedPath: "/tmp/repo"
+        )
         state.apply(.permissionRequested(PermissionRequested(
             sessionID: "agent-run",
-            request: PermissionRequest(
-                title: "Run tests",
-                summary: "Needs approval",
-                affectedPath: "/tmp/repo"
-            ),
+            request: request,
             timestamp: startedAt.addingTimeInterval(60)
         )))
         state.resolvePermission(
             sessionID: "agent-run",
+            requestID: request.id,
             resolution: .allowOnce(),
             at: startedAt.addingTimeInterval(120)
         )

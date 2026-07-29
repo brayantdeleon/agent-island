@@ -185,9 +185,10 @@ These are release blockers, not optional hardening:
 - A rejected action must not optimistically change the session phase.
 - Replayed, duplicate, malformed, or out-of-order action packets are rejected.
 
-The existing `BridgeCommand.resolvePermission(sessionID:resolution:)` does not
-carry request identity. Hardware approval must not ship until that path can
-perform identity-bound resolution.
+`BridgeCommand.resolvePermission` now carries the expected
+`PermissionRequest.id`. The bridge stores that same UUID beside the blocked
+hook interaction and atomically rejects missing, stale, replaced, question,
+or disconnected identities without consuming the current interaction.
 
 ## Source And Distribution Strategy
 
@@ -533,14 +534,65 @@ On 2026-07-28:
 
 ### Round 8 — Guarded approval and denial
 
-- [ ] Extend permission resolution with expected request identity.
-- [ ] Add selection tokens and end-to-end request matching.
-- [ ] Enable `+` allow-once and `-` deny behind a separate opt-in.
-- [ ] Test request replacement, slot reuse, duplicate packets, expired tokens,
+- [x] Extend permission resolution with expected request identity.
+- [x] Add selection tokens and end-to-end request matching.
+- [x] Enable `+` allow-once and `-` deny behind a separate opt-in.
+- [x] Test request replacement, slot reuse, duplicate packets, expired tokens,
   observer-only waits, questions, and bridge disconnects.
 
 Exit criterion: a stale action cannot resolve a newer request, and every
 negative test produces no agent-side authorization.
+
+#### Round 8 implementation evidence
+
+On 2026-07-28:
+
+- `BridgeCommand.resolvePermission`, `SessionState.resolvePermission`, the
+  AppModel UI/watch paths, and every synchronous Codex, Claude-family, and
+  OpenCode pending interaction now carry the exact `PermissionRequest.id`.
+  Bridge resolution runs atomically on its serial queue and returns a typed
+  result for resolved, inactive, identity-mismatched, and question cases.
+- General Settings has a second persisted opt-in for security-sensitive
+  keyboard approvals. It is off by default and independent of the main K0 Max
+  integration switch. Changing it renegotiates the live handshake; the host
+  advertises `allowOnce` and `deny` only while this opt-in is enabled.
+- A digit selection captures the request UUID alongside its nonce, slot,
+  slot epoch, session identity, action mask, random token, and 15-second
+  expiry. `+` and `-` are offered only for a live, non-terminal-only
+  permission while the local bridge is connected.
+- Immediately before dispatch, AppModel rechecks the current session and
+  request UUID, then the bridge independently matches the same UUID against
+  the still-blocked hook. Only a successful atomic bridge match produces an
+  accepted action response and local phase transition.
+- Questions, observer-only waits, terminal-only approvals, opt-out mode,
+  stale/replaced requests, expired tokens, same-color slot reuse, layer exit,
+  disconnect, and duplicate or out-of-order device packets perform no
+  agent-side authorization. The bridge also leaves a newer request untouched
+  when presented with an older UUID.
+- Existing mouse, keyboard-focus, and Watch permission actions use the same
+  request-bound bridge command. Watch callbacks now preserve the UUID that
+  was displayed instead of resolving whichever request is current later.
+- The firmware already implemented and validated `+`/`-`, capability gating,
+  tokens, feedback, and duplicate-sequence containment in Round 5, so Round 8
+  requires no firmware change or reflash.
+- The complete CI harness passes localization linting, documentation checks,
+  477 Swift Testing tests, 27 XCTest tests, and a clean debug build. The
+  request-identity suites include exact command codec coverage plus bridge
+  replacement, replay, question, and disconnect cases.
+- The non-interactive live USB gate passes against the connected K0 Max:
+  production IOHID discovery, handshake, AppModel state projection, host
+  restart, and clearing snapshots all succeeded. No unplug/replug prompt was
+  run unattended.
+- On 2026-07-29, disposable synthetic permission requests completed the
+  physical USB action gate. A red-pulsing slot accepted exact numbered
+  selection; `+` returned an allow-once directive and `-` returned a deny
+  directive without executing a command or modifying a file.
+- Number selection also gained a hardware-native detail interaction: the
+  first press opens the island and highlights the exact thread, while
+  subsequent presses of that selected number toggle its detail disclosure.
+  Each numbered thread remembers its own disclosure state across selection
+  changes and closing/reopening the island with `0`. Manual multi-thread
+  testing confirmed the remembered open and closed states.
 
 ### Round 9 — Packaging and support
 

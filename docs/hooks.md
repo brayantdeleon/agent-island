@@ -136,6 +136,12 @@ Codex may omit `transcript_path` from a hook payload. Agent Island still accepts
 `PreToolUse` and `PermissionRequest` events from Codex Desktop in that case so a
 real approval cannot be mistaken for an internal title-generation invocation.
 
+Permission resolution is request-bound rather than session-bound. The app
+sends both the session ID and the exact `PermissionRequest.id` that was shown
+to the user. The bridge resolves only when that UUID still belongs to the
+blocked hook process; a replaced request, question, replay, or disconnected
+hook is rejected without consuming a newer interaction.
+
 After installing or changing the hook, review and trust it with `/hooks` in
 Codex CLI, then restart Codex Desktop so its app-server loads the new hook
 definition. Existing Desktop processes do not pick up a hook installed after

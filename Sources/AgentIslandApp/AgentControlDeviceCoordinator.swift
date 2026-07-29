@@ -116,6 +116,9 @@ final class AgentControlDeviceCoordinator {
     private var isSleeping = false
 
     @ObservationIgnored
+    private var approvalActionsEnabled = false
+
+    @ObservationIgnored
     private var connectionNonce: UInt64?
 
     @ObservationIgnored
@@ -193,6 +196,18 @@ final class AgentControlDeviceCoordinator {
         diagnostics.state = .stopped
         diagnostics.selectedDevice = nil
         diagnostics.matchingDeviceCount = 0
+    }
+
+    func setApprovalActionsEnabled(_ enabled: Bool) {
+        guard approvalActionsEnabled != enabled else { return }
+        approvalActionsEnabled = enabled
+
+        guard isRunning,
+              !isSleeping,
+              diagnostics.selectedDevice != nil else {
+            return
+        }
+        beginHandshake()
     }
 
     /// Stores the latest desired device state and transmits it only when its
@@ -280,16 +295,21 @@ final class AgentControlDeviceCoordinator {
         }
         connectionNonce = nonce
 
+        var capabilities: AgentControlCapabilitySet = [
+            .stateSnapshots,
+            .selection,
+            .jump,
+        ]
+        if approvalActionsEnabled {
+            capabilities.formUnion([.allowOnce, .deny])
+        }
+
         do {
             helloSequence = try sendPacket(
                 messageType: .hello,
                 payload: AgentControlMessageCodec.helloPayload(
                     connectionNonce: nonce,
-                    capabilities: [
-                        .stateSnapshots,
-                        .selection,
-                        .jump,
-                    ]
+                    capabilities: capabilities
                 )
             )
         } catch {

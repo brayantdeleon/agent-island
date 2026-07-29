@@ -287,8 +287,10 @@ struct SessionStateTests {
             ]
         )
 
+        let requestID = state.session(id: "newer")!.permissionRequest!.id
         state.resolvePermission(
             sessionID: "newer",
+            requestID: requestID,
             resolution: .allowOnce(),
             at: startedAt.addingTimeInterval(20)
         )
@@ -305,6 +307,48 @@ struct SessionStateTests {
 
         #expect(state.sessions.first?.id == "older")
         #expect(state.sessions.first?.summary == "Answered: Production")
+    }
+
+    @Test
+    func stalePermissionIdentityCannotResolveReplacement() {
+        let first = PermissionRequest(
+            title: "First",
+            summary: "First request",
+            affectedPath: "/tmp/first"
+        )
+        let replacement = PermissionRequest(
+            title: "Replacement",
+            summary: "Replacement request",
+            affectedPath: "/tmp/replacement"
+        )
+        var state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "identity-bound",
+                    title: "Identity-bound approval",
+                    tool: .codex,
+                    phase: .waitingForApproval,
+                    summary: "Needs approval",
+                    updatedAt: Date(timeIntervalSince1970: 2_100),
+                    permissionRequest: replacement
+                ),
+            ]
+        )
+
+        let resolved = state.resolvePermission(
+            sessionID: "identity-bound",
+            requestID: first.id,
+            resolution: .allowOnce()
+        )
+        #expect(!resolved)
+        #expect(
+            state.session(id: "identity-bound")?.permissionRequest?.id
+                == replacement.id
+        )
+        #expect(
+            state.session(id: "identity-bound")?.phase
+                == .waitingForApproval
+        )
     }
 
     @Test
@@ -624,6 +668,24 @@ struct SessionStateTests {
     }
 
     @Test
+    func permissionResolutionCommandRoundTripsExpectedRequestIdentity() throws {
+        let requestID = UUID()
+        let envelope = BridgeEnvelope.command(
+            .resolvePermission(
+                sessionID: "session-42",
+                requestID: requestID,
+                resolution: .allowOnce()
+            )
+        )
+
+        var buffer = try BridgeCodec.encodeLine(envelope)
+        let decoded = try BridgeCodec.decodeLines(from: &buffer)
+
+        #expect(decoded == [envelope])
+        #expect(buffer.isEmpty)
+    }
+
+    @Test
     func bridgeQuestionCommandEmitsQuestionEventForExistingSession() async throws {
         let socketURL = BridgeSocketLocation.uniqueTestURL()
         let server = BridgeServer(socketURL: socketURL)
@@ -755,11 +817,15 @@ struct SessionStateTests {
         let permissionEvent = try await nextEvent(from: &iterator)
 
         #expect(startedEvent.isSessionStarted)
-        #expect(permissionEvent.isPermissionRequested)
+        guard case let .permissionRequested(permission) = permissionEvent else {
+            Issue.record("Expected Codex permission request")
+            return
+        }
 
         try await observer.send(
             .resolvePermission(
                 sessionID: "codex-session-1",
+                requestID: permission.request.id,
                 resolution: .deny(message: "Use the project cleanup script instead.")
             )
         )
@@ -809,7 +875,13 @@ struct SessionStateTests {
         #expect(permission.request.toolName == "apply_patch")
         #expect(permission.request.toolUseID == "tool-use-1")
 
-        try await observer.send(.resolvePermission(sessionID: "codex-permission-allow", resolution: .allowOnce()))
+        try await observer.send(
+            .resolvePermission(
+                sessionID: "codex-permission-allow",
+                requestID: permission.request.id,
+                resolution: .allowOnce()
+            )
+        )
 
         let activityEvent = try await nextEvent(from: &iterator)
         let response = try await responseTask
@@ -861,7 +933,11 @@ struct SessionStateTests {
         #expect(permission.request.affectedPath == "whois example.com")
 
         try await observer.send(
-            .resolvePermission(sessionID: payload.sessionID, resolution: .allowOnce())
+            .resolvePermission(
+                sessionID: payload.sessionID,
+                requestID: permission.request.id,
+                resolution: .allowOnce()
+            )
         )
 
         let activityEvent = try await nextEvent(from: &iterator)
@@ -944,6 +1020,7 @@ struct SessionStateTests {
         try await observer.send(
             .resolvePermission(
                 sessionID: "codex-permission-deny",
+                requestID: permission.request.id,
                 resolution: .deny(message: "Use the project cleanup script instead.")
             )
         )
@@ -997,9 +1074,18 @@ struct SessionStateTests {
         let permissionEvent = try await nextEvent(from: &iterator)
 
         #expect(startedEvent.isSessionStarted)
-        #expect(permissionEvent.isPermissionRequested)
+        guard case let .permissionRequested(permission) = permissionEvent else {
+            Issue.record("Expected Codex permission request")
+            return
+        }
 
-        try await observer.send(.resolvePermission(sessionID: "codex-session-no-ask", resolution: .allowOnce()))
+        try await observer.send(
+            .resolvePermission(
+                sessionID: "codex-session-no-ask",
+                requestID: permission.request.id,
+                resolution: .allowOnce()
+            )
+        )
 
         let activityEvent = try await nextEvent(from: &iterator)
         let response = try await responseTask
@@ -1837,17 +1923,19 @@ struct SessionStateTests {
             summary: "Working",
             timestamp: t0
         )))
+        let request = PermissionRequest(
+            title: "Run command",
+            summary: "Needs approval",
+            affectedPath: "/tmp/repo"
+        )
         state.apply(.permissionRequested(PermissionRequested(
             sessionID: "s-1",
-            request: PermissionRequest(
-                title: "Run command",
-                summary: "Needs approval",
-                affectedPath: "/tmp/repo"
-            ),
+            request: request,
             timestamp: t0.addingTimeInterval(30)
         )))
         state.resolvePermission(
             sessionID: "s-1",
+            requestID: request.id,
             resolution: .allowOnce(),
             at: t0.addingTimeInterval(60)
         )

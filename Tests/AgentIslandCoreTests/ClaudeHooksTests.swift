@@ -566,15 +566,21 @@ struct ClaudeHooksTests {
             return false
         }
 
-        if case let .permissionRequested(payload) = permissionEvent {
-            #expect(payload.request.toolName == "Bash")
-            #expect(payload.request.toolUseID == "tool-use-1")
-            #expect(payload.request.primaryActionTitle == "Allow Once")
-        } else {
+        guard case let .permissionRequested(payload) = permissionEvent else {
             Issue.record("Expected a Claude permission request event")
+            return
         }
+        #expect(payload.request.toolName == "Bash")
+        #expect(payload.request.toolUseID == "tool-use-1")
+        #expect(payload.request.primaryActionTitle == "Allow Once")
 
-        try await observer.send(.resolvePermission(sessionID: "claude-session-1", resolution: .allowOnce()))
+        try await observer.send(
+            .resolvePermission(
+                sessionID: "claude-session-1",
+                requestID: payload.request.id,
+                resolution: .allowOnce()
+            )
+        )
 
         let response = try await responseTask
         guard case let .some(.claudeHookDirective(.permissionRequest(.allow(updatedInput, updatedPermissions)))) = response else {
