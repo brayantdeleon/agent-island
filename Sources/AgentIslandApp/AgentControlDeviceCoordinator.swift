@@ -299,6 +299,7 @@ final class AgentControlDeviceCoordinator {
             .stateSnapshots,
             .selection,
             .jump,
+            .globalControls,
         ]
         if approvalActionsEnabled {
             capabilities.formUnion([.allowOnce, .deny])
@@ -570,6 +571,38 @@ final class AgentControlDeviceCoordinator {
         }
     }
 
+    @discardableResult
+    func sendGlobalControlResult(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        control: AgentControlGlobalControl,
+        result: AgentControlGlobalControlResult,
+        quitConfirmationActive: Bool
+    ) -> Bool {
+        guard diagnostics.state == .ready,
+              connectionNonce == self.connectionNonce else {
+            return false
+        }
+
+        do {
+            try sendResponsePacket(
+                messageType: .globalControlResult,
+                requestSequence: requestSequence,
+                isError: result != .accepted,
+                payload: AgentControlMessageCodec.globalControlResultPayload(
+                    connectionNonce: connectionNonce,
+                    control: control,
+                    result: result,
+                    quitConfirmationActive: quitConfirmationActive
+                )
+            )
+            return true
+        } catch {
+            scheduleTransportRestart(after: error)
+            return false
+        }
+    }
+
     private func startHeartbeat() {
         heartbeatTask?.cancel()
         heartbeatTask = Task { @MainActor [weak self] in
@@ -725,7 +758,8 @@ private extension AgentControlDeviceMessage {
             capabilities.connectionNonce
         case let .slotSelected(connectionNonce, _, _),
              let .actionInvoked(connectionNonce, _, _, _),
-             let .layerChanged(connectionNonce, _, _):
+             let .layerChanged(connectionNonce, _, _),
+             let .globalControlRequested(connectionNonce, _):
             connectionNonce
         }
     }

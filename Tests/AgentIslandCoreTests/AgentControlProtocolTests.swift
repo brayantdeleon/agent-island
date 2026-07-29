@@ -19,9 +19,9 @@ struct AgentControlProtocolTests {
 
         #expect(
             report.hexString
-                == "ac414901010001000c00efcdab8967452301061f000000000000000000000097"
+                == "ac414901010001000c01efcdab896745230106ff010000000000000000000024"
         )
-        #expect(report.last == 0x97)
+        #expect(report.last == 0x24)
         #expect(try AgentControlPacketCodec.decode(report).payload == payload)
     }
 
@@ -199,7 +199,7 @@ struct AgentControlProtocolTests {
             return
         }
         #expect(capabilities.connectionNonce == nonce)
-        #expect(capabilities.protocolMinor == 0)
+        #expect(capabilities.protocolMinor == AgentControlProtocolV1.minorVersion)
         #expect(capabilities.slotCount == 10)
         #expect(capabilities.capabilities == .allV1)
         #expect(capabilities.activeTransport == .usb)
@@ -265,6 +265,33 @@ struct AgentControlProtocolTests {
                 reason: .controlKey
             )
         )
+
+        let globalMessage = try AgentControlMessageCodec.decodeDeviceMessage(
+            AgentControlPacket(
+                messageType: .globalControlRequested,
+                sequence: 4,
+                payload: Data(
+                    littleEndianBytes(nonce)
+                        + [AgentControlGlobalControl.requestQuit.rawValue]
+                )
+            )
+        )
+        #expect(
+            globalMessage == .globalControlRequested(
+                connectionNonce: nonce,
+                control: .requestQuit
+            )
+        )
+        #expect(
+            [UInt8](
+                AgentControlMessageCodec.globalControlResultPayload(
+                    connectionNonce: nonce,
+                    control: .requestQuit,
+                    result: .accepted,
+                    quitConfirmationActive: true
+                )
+            ) == littleEndianBytes(nonce) + [4, 0, 1]
+        )
     }
 
     private func makeCapabilitiesReport(
@@ -274,8 +301,8 @@ struct AgentControlProtocolTests {
         buildIdentifier: UInt32
     ) throws -> Data {
         var payload = littleEndianBytes(nonce)
-        payload += [0, 10]
-        payload += [0x1F, 0]
+        payload += [AgentControlProtocolV1.minorVersion, 10]
+        payload += [0xFF, 0x01]
         payload += [transport.rawValue, 6]
         payload += [
             UInt8(truncatingIfNeeded: buildIdentifier),

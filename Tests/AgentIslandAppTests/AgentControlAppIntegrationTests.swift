@@ -14,6 +14,60 @@ struct AgentControlAppIntegrationTests {
     )
 
     @Test
+    func globalControlsCycleModeAndKeepQuitActionsOutOfApprovalRouting() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+            harness.model.islandCompactnessMode = .regular
+        }
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        harness.model.islandCompactnessMode = .regular
+        harness.transport.emit(
+            .report(
+                try globalControlReport(
+                    sequence: 1,
+                    control: .cyclePresentationMode
+                )
+            )
+        )
+        #expect(harness.model.islandCompactnessMode == .expanded)
+
+        harness.transport.emit(
+            .report(
+                try globalControlReport(
+                    sequence: 2,
+                    control: .requestQuit
+                )
+            )
+        )
+        #expect(harness.model.isQuitConfirmationPresented)
+        #expect(harness.model.notchStatus == .opened)
+
+        harness.transport.emit(
+            .report(
+                try globalControlReport(
+                    sequence: 3,
+                    control: .cancelQuit
+                )
+            )
+        )
+        #expect(!harness.model.isQuitConfirmationPresented)
+        let response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(response.messageType == .globalControlResult)
+        #expect(response.payload[9] == 0)
+        #expect(response.payload[10] == 0)
+    }
+
+    @Test
     func optInProjectsLiveSessionsAndDisableClearsTheKeyboard() throws {
         let harness = makeHarness(enabled: true)
         defer {
@@ -69,7 +123,15 @@ struct AgentControlAppIntegrationTests {
             harness.transport.sentReports[0]
         )
         #expect(hello.messageType == .hello)
-        #expect(readUInt16(hello.payload, at: 10) == 7)
+        #expect(
+            readUInt16(hello.payload, at: 10)
+                == AgentControlCapabilitySet([
+                    .stateSnapshots,
+                    .selection,
+                    .jump,
+                    .globalControls,
+                ]).rawValue
+        )
 
         harness.transport.emit(
             .report(try capabilitiesReport(sequence: hello.sequence))
@@ -646,6 +708,7 @@ struct AgentControlAppIntegrationTests {
                     .stateSnapshots,
                     .selection,
                     .jump,
+                    .globalControls,
                 ]).rawValue
         )
         harness.transport.emit(
@@ -707,7 +770,14 @@ struct AgentControlAppIntegrationTests {
         #expect(approvalHello.messageType == .hello)
         #expect(
             readUInt16(approvalHello.payload, at: 10)
-                == AgentControlCapabilitySet.allV1.rawValue
+                == AgentControlCapabilitySet([
+                    .stateSnapshots,
+                    .selection,
+                    .jump,
+                    .allowOnce,
+                    .deny,
+                    .globalControls,
+                ]).rawValue
         )
         #expect(
             harness.model.agentControlDeviceDiagnostics.state
@@ -769,7 +839,14 @@ struct AgentControlAppIntegrationTests {
         )
         #expect(
             readUInt16(hello.payload, at: 10)
-                == AgentControlCapabilitySet.allV1.rawValue
+                == AgentControlCapabilitySet([
+                    .stateSnapshots,
+                    .selection,
+                    .jump,
+                    .allowOnce,
+                    .deny,
+                    .globalControls,
+                ]).rawValue
         )
         harness.transport.emit(
             .report(try capabilitiesReport(sequence: hello.sequence))
@@ -827,6 +904,8 @@ struct AgentControlAppIntegrationTests {
         #expect(
             harness.model.state.session(id: "approval")?.phase == .running
         )
+        #expect(harness.model.notchStatus == .closed)
+        #expect(harness.model.agentControlSelectedSessionID == nil)
 
         harness.transport.emit(.report(actionReport))
         response = try AgentControlPacketCodec.decode(
@@ -894,6 +973,8 @@ struct AgentControlAppIntegrationTests {
         #expect(
             harness.model.state.session(id: "approval")?.phase == .completed
         )
+        #expect(harness.model.notchStatus == .closed)
+        #expect(harness.model.agentControlSelectedSessionID == nil)
     }
 
     @Test
@@ -967,6 +1048,7 @@ struct AgentControlAppIntegrationTests {
             harness.model.state.session(id: "approval")?
                 .permissionRequest?.id == replacement.id
         )
+        #expect(harness.model.notchStatus == .opened)
     }
 
     @Test
@@ -1352,6 +1434,17 @@ struct AgentControlAppIntegrationTests {
                 sequence: sequence,
                 payload: Data(payload)
             )
+        )
+    }
+
+    private func globalControlReport(
+        sequence: UInt16,
+        control: AgentControlGlobalControl
+    ) throws -> Data {
+        try deviceReport(
+            type: .globalControlRequested,
+            sequence: sequence,
+            payload: littleEndianBytes(nonce) + [control.rawValue]
         )
     }
 

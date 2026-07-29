@@ -21,6 +21,22 @@ enum TrackedEventIngress {
     case rollout
 }
 
+enum IslandCompactnessMode: String, CaseIterable, Identifiable, Sendable {
+    case minimal
+    case regular
+    case expanded
+
+    var id: String { rawValue }
+
+    var next: Self {
+        switch self {
+        case .minimal: .regular
+        case .regular: .expanded
+        case .expanded: .minimal
+        }
+    }
+}
+
 // MARK: - v6 island preferences
 
 /// What the closed island renders in the right slot. Chosen in the

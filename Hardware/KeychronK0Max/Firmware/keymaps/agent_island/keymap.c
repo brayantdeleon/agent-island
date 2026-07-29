@@ -30,6 +30,10 @@ enum custom_keycodes {
     AI_JUMP,
     AI_ALLOW,
     AI_DENY,
+    AI_GLOBAL_CIRCLE,
+    AI_GLOBAL_TRIANGLE,
+    AI_GLOBAL_SQUARE,
+    AI_GLOBAL_X,
 };
 
 enum agent_island_message {
@@ -38,16 +42,27 @@ enum agent_island_message {
     AI_MSG_HEARTBEAT      = 0x03,
     AI_MSG_SELECTION_ACK  = 0x04,
     AI_MSG_ACTION_RESULT  = 0x05,
+    AI_MSG_GLOBAL_RESULT  = 0x06,
     AI_MSG_CAPABILITIES   = 0x81,
     AI_MSG_SLOT_SELECTED  = 0x82,
     AI_MSG_ACTION_INVOKED = 0x83,
     AI_MSG_LAYER_CHANGED  = 0x84,
+    AI_MSG_GLOBAL_REQUEST = 0x85,
 };
 
 enum agent_island_action {
     AI_ACTION_JUMP       = 1,
     AI_ACTION_ALLOW_ONCE = 2,
     AI_ACTION_DENY       = 3,
+};
+
+enum agent_island_global_control {
+    AI_GLOBAL_REFRESH       = 1,
+    AI_GLOBAL_CYCLE_MODE    = 2,
+    AI_GLOBAL_OPEN_SETTINGS = 3,
+    AI_GLOBAL_REQUEST_QUIT  = 4,
+    AI_GLOBAL_CANCEL_QUIT   = 5,
+    AI_GLOBAL_CONFIRM_QUIT  = 6,
 };
 
 enum agent_island_layer_reason {
@@ -63,7 +78,7 @@ enum agent_island_constants {
     AI_MAGIC_0                 = 0x41,
     AI_MAGIC_1                 = 0x49,
     AI_PROTOCOL_MAJOR          = 0x01,
-    AI_PROTOCOL_MINOR          = 0x00,
+    AI_PROTOCOL_MINOR          = 0x01,
     AI_RESPONSE_FLAG           = 0x01,
     AI_ERROR_FLAG              = 0x02,
     AI_KNOWN_FLAGS             = AI_RESPONSE_FLAG | AI_ERROR_FLAG,
@@ -76,7 +91,11 @@ enum agent_island_constants {
     AI_CAP_JUMP                = 1U << 2,
     AI_CAP_ALLOW_ONCE          = 1U << 3,
     AI_CAP_DENY                = 1U << 4,
-    AI_ALL_CAPABILITIES        = 0x1F,
+    AI_CAP_GLOBAL_CONTROLS     = 1U << 5,
+    AI_CAP_QUESTION_NAVIGATION = 1U << 6,
+    AI_CAP_QUESTION_SELECTION  = 1U << 7,
+    AI_CAP_QUESTION_SUBMISSION = 1U << 8,
+    AI_ALL_CAPABILITIES        = 0x1FF,
     AI_ALLOWED_ACTIONS         = 0x07,
     AI_MAX_SLOT_STATE          = 6,
     AI_RESPONSE_TIMEOUT_MS     = 2000,
@@ -89,6 +108,7 @@ enum agent_island_constants {
 
 static const uint8_t ai_slot_leds[AI_SLOT_COUNT] = {19, 20, 21, 15, 16, 17, 10, 11, 12, 23};
 static const uint8_t ai_action_leds[3]            = {25, 13, 8};
+static const uint8_t ai_global_leds[4]            = {1, 2, 3, 4};
 
 static bool     ai_handshake_active;
 static bool     ai_agent_control_active;
@@ -100,6 +120,8 @@ static bool     ai_feedback_restore_rgb_off;
 static bool     ai_snapshot_seen;
 static bool     ai_pending_selection;
 static bool     ai_pending_action;
+static bool     ai_pending_global;
+static bool     ai_quit_confirmation_active;
 static uint8_t  ai_last_transport;
 static uint8_t  ai_watchdog_seconds = AI_DEFAULT_WATCHDOG_SEC;
 static uint8_t  ai_slot_states[AI_SLOT_COUNT];
@@ -110,6 +132,7 @@ static uint8_t  ai_selection_lifetime_seconds;
 static uint8_t  ai_pending_selection_slot;
 static uint8_t  ai_pending_action_slot;
 static uint8_t  ai_pending_action_kind;
+static uint8_t  ai_pending_global_control;
 static uint8_t  ai_feedback_led;
 static uint8_t  ai_feedback_red;
 static uint8_t  ai_feedback_green;
@@ -122,10 +145,12 @@ static uint16_t ai_device_sequence = 1;
 static uint16_t ai_last_host_sequence;
 static uint16_t ai_pending_selection_sequence;
 static uint16_t ai_pending_action_sequence;
+static uint16_t ai_pending_global_sequence;
 static uint32_t ai_watchdog_timer;
 static uint32_t ai_selection_timer;
 static uint32_t ai_pending_selection_timer;
 static uint32_t ai_pending_action_timer;
+static uint32_t ai_pending_global_timer;
 static uint32_t ai_feedback_timer;
 static uint16_t ai_feedback_duration_ms;
 
@@ -221,11 +246,14 @@ static void ai_send_packet(uint8_t type, uint8_t flags, uint16_t sequence, const
 static void ai_clear_pending_intents(void) {
     ai_pending_selection          = false;
     ai_pending_action             = false;
+    ai_pending_global             = false;
     ai_pending_selection_slot     = 0xFF;
     ai_pending_action_slot        = 0xFF;
     ai_pending_action_kind        = 0;
+    ai_pending_global_control     = 0;
     ai_pending_selection_sequence = 0;
     ai_pending_action_sequence    = 0;
+    ai_pending_global_sequence    = 0;
 }
 
 static void ai_clear_selection(void) {
@@ -305,6 +333,7 @@ static void ai_set_agent_control(bool enabled, uint8_t reason) {
     } else {
         layer_off(AGENT);
         ai_agent_control_active = false;
+        ai_quit_confirmation_active = false;
         ai_restore_base_rgb();
     }
     if (ai_handshake_active) {
@@ -326,6 +355,7 @@ static void ai_expire_connection(void) {
     ai_host_capabilities   = 0;
     ai_overflow_count      = 0;
     ai_snapshot_seen       = false;
+    ai_quit_confirmation_active = false;
     ai_snapshot_generation = 0;
     ai_last_host_sequence   = 0;
 }
@@ -560,6 +590,35 @@ static void ai_handle_action_result(const uint8_t *packet) {
     }
 }
 
+static void ai_handle_global_result(const uint8_t *packet) {
+    const uint8_t *payload = &packet[9];
+    uint8_t control = ai_pending_global_control;
+    uint8_t feedback_led;
+
+    if ((packet[5] & AI_RESPONSE_FLAG) == 0 ||
+        packet[8] != 11 ||
+        !ai_nonce_matches(payload) ||
+        !ai_pending_global ||
+        ai_read_u16(&packet[6]) != ai_pending_global_sequence ||
+        payload[8] != control ||
+        payload[10] > 1) {
+        return;
+    }
+
+    ai_pending_global = false;
+    ai_quit_confirmation_active = payload[10] == 1;
+    feedback_led = control >= AI_GLOBAL_CANCEL_QUIT
+        ? ai_action_leds[control == AI_GLOBAL_CONFIRM_QUIT ? 1 : 2]
+        : ai_global_leds[control - 1];
+    ai_start_feedback(
+        feedback_led,
+        (packet[5] & AI_ERROR_FLAG) ? 255 : 0,
+        (packet[5] & AI_ERROR_FLAG) ? 96 : 255,
+        0,
+        AI_ACTION_FEEDBACK_MS
+    );
+}
+
 bool keychron_raw_hid_receive_user(uint8_t src, uint8_t *data, uint8_t length) {
     if (length == 0 || data[0] != AI_COMMAND_FAMILY) {
         return false;
@@ -583,6 +642,9 @@ bool keychron_raw_hid_receive_user(uint8_t src, uint8_t *data, uint8_t length) {
             break;
         case AI_MSG_ACTION_RESULT:
             ai_handle_action_result(data);
+            break;
+        case AI_MSG_GLOBAL_RESULT:
+            ai_handle_global_result(data);
             break;
     }
     return true;
@@ -640,6 +702,23 @@ static void ai_send_action(uint8_t action) {
     payload[9] = action;
     memcpy(&payload[10], ai_selection_token, sizeof(ai_selection_token));
     ai_send_packet(AI_MSG_ACTION_INVOKED, 0, sequence, payload, sizeof(payload));
+}
+
+static void ai_send_global_control(uint8_t control) {
+    uint16_t sequence;
+    uint8_t payload[9] = {0};
+
+    if (ai_pending_global || !(ai_host_capabilities & AI_CAP_GLOBAL_CONTROLS)) {
+        return;
+    }
+    sequence = ai_device_sequence++;
+    ai_pending_global = true;
+    ai_pending_global_control = control;
+    ai_pending_global_sequence = sequence;
+    ai_pending_global_timer = timer_read32();
+    memcpy(payload, ai_connection_nonce, sizeof(ai_connection_nonce));
+    payload[8] = control;
+    ai_send_packet(AI_MSG_GLOBAL_REQUEST, 0, sequence, payload, sizeof(payload));
 }
 
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
@@ -701,7 +780,22 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
 
     if (keycode >= AI_JUMP && keycode <= AI_DENY) {
         if (record->event.pressed && ai_agent_control_active && ai_handshake_active) {
-            ai_send_action((uint8_t)(keycode - AI_JUMP + AI_ACTION_JUMP));
+            if (ai_quit_confirmation_active && keycode == AI_ALLOW) {
+                ai_send_global_control(AI_GLOBAL_CONFIRM_QUIT);
+            } else if (ai_quit_confirmation_active && keycode == AI_DENY) {
+                ai_send_global_control(AI_GLOBAL_CANCEL_QUIT);
+            } else {
+                ai_send_action((uint8_t)(keycode - AI_JUMP + AI_ACTION_JUMP));
+            }
+        }
+        return false;
+    }
+
+    if (keycode >= AI_GLOBAL_CIRCLE && keycode <= AI_GLOBAL_X) {
+        if (record->event.pressed && ai_agent_control_active && ai_handshake_active) {
+            ai_send_global_control(
+                (uint8_t)(keycode - AI_GLOBAL_CIRCLE + AI_GLOBAL_REFRESH)
+            );
         }
         return false;
     }
@@ -710,6 +804,9 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
 }
 
 static uint16_t ai_agent_keycode_for_position(keypos_t key) {
+    if (key.row == 0 && key.col >= 1 && key.col <= 4) {
+        return AI_GLOBAL_CIRCLE + (key.col - 1);
+    }
     if (key.row == 2 && key.col >= 1 && key.col <= 3) {
         return AI_SLOT_7 + (key.col - 1);
     }
@@ -788,6 +885,20 @@ void matrix_scan_user(void) {
         if (action >= AI_ACTION_JUMP && action <= AI_ACTION_DENY) {
             ai_start_feedback(
                 ai_action_leds[action - 1],
+                255,
+                96,
+                0,
+                AI_REJECTED_FEEDBACK_MS
+            );
+        }
+    }
+    if (ai_pending_global &&
+        timer_elapsed32(ai_pending_global_timer) > AI_RESPONSE_TIMEOUT_MS) {
+        uint8_t control = ai_pending_global_control;
+        ai_pending_global = false;
+        if (control >= AI_GLOBAL_REFRESH && control <= AI_GLOBAL_REQUEST_QUIT) {
+            ai_start_feedback(
+                ai_global_leds[control - 1],
                 255,
                 96,
                 0,
@@ -898,7 +1009,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         _______, UG_TOGG,          KC_MNXT, _______),
 
     [AGENT] = LAYOUT_tenkey_27(
-        KC_NO,   KC_NO,   KC_NO,      KC_NO,     KC_NO,
+        KC_NO,   AI_GLOBAL_CIRCLE, AI_GLOBAL_TRIANGLE, AI_GLOBAL_SQUARE, AI_GLOBAL_X,
         KC_NO,   KC_NO,   KC_NO,      KC_NO,     AI_DENY,
         KC_NO,   AI_SLOT_7, AI_SLOT_8, AI_SLOT_9, AI_ALLOW,
         KC_NO,   AI_SLOT_4, AI_SLOT_5, AI_SLOT_6,

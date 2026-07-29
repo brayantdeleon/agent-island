@@ -2,8 +2,8 @@
 
 - **Protocol:** Agent Island K0 Max Raw HID
 - **Major version:** 1
-- **Minor version:** 0
-- **Status:** Protocol v1; packet mechanics validated in Round 2, complete
+- **Minor version:** 1
+- **Status:** Protocol v1.1; packet mechanics validated in Round 2, complete
   keyboard-side behavior implemented in Round 5, and identity-bound host
   approvals implemented in Round 8
 
@@ -151,10 +151,12 @@ token from the prior connection.
 | `0x03` | `HEARTBEAT` | Host → firmware | No response |
 | `0x04` | `SELECTION_ACK` | Host → firmware | Response to `SLOT_SELECTED` |
 | `0x05` | `ACTION_RESULT` | Host → firmware | Response to `ACTION_INVOKED` |
+| `0x06` | `GLOBAL_CONTROL_RESULT` | Host → firmware | Response to `GLOBAL_CONTROL_REQUESTED` |
 | `0x81` | `CAPABILITIES` | Firmware → host | Response to `HELLO` |
 | `0x82` | `SLOT_SELECTED` | Firmware → host | `SELECTION_ACK` |
 | `0x83` | `ACTION_INVOKED` | Firmware → host | `ACTION_RESULT` |
 | `0x84` | `LAYER_CHANGED` | Firmware → host | No response |
+| `0x85` | `GLOBAL_CONTROL_REQUESTED` | Firmware → host | `GLOBAL_CONTROL_RESULT` |
 
 Unknown message types are ignored. A response with the error flag set uses
 the same payload shape where possible and supplies a nonzero result code.
@@ -165,7 +167,7 @@ Payload:
 
 | Offset | Size | Field |
 |---:|---:|---|
-| 0 | 1 | Host protocol minor (`0`) |
+| 0 | 1 | Host protocol minor (`1`) |
 | 1 | 8 | Connection nonce |
 | 9 | 1 | Requested watchdog seconds (`6`) |
 | 10 | 2 | Host capability bits |
@@ -177,7 +179,11 @@ Host capability bits:
 - Bit 2: jump
 - Bit 3: allow once
 - Bit 4: deny
-- Bits 5-15: reserved
+- Bit 5: global symbol controls
+- Bit 6: question navigation
+- Bit 7: question selection
+- Bit 8: question submission
+- Bits 9-15: reserved
 
 ## `CAPABILITIES` (`0x81`)
 
@@ -200,7 +206,7 @@ Active transport:
 - `2`: 2.4 GHz
 - `3`: Bluetooth, reported for diagnostics but unsupported in v1
 
-Firmware capability bits use the same low five meanings as the host. The host
+Firmware capability bits use the same low nine meanings as the host. The host
 must keep action handling disabled if a required capability is absent or the
 major version is incompatible.
 
@@ -209,6 +215,9 @@ the K0 Max integration is enabled. It advertises allow-once and deny only
 after the user enables the separate keyboard-approvals preference, which is
 off by default. Changing that preference invalidates the current selection
 and starts a fresh handshake.
+
+Global controls and question capabilities are advertised independently of
+the approval opt-in. They do not grant permission-resolution authority.
 
 The build identifier is the first 32 bits of a SHA-256 digest over the pinned
 Keychron commit plus the ordered paths and SHA-256 values of the local
@@ -309,6 +318,9 @@ Allowed action bits:
 - Bit 0: jump
 - Bit 1: allow once
 - Bit 2: deny
+- Bit 3: advance question option
+- Bit 4: select or toggle question option
+- Bit 5: submit question
 
 The token is random and nonzero. It is meaningful only to Agent Island and is
 bound internally to connection nonce, slot epoch, session ID, allowed action,
@@ -370,6 +382,36 @@ For allow-once and deny, Agent Island may return accepted only after the
 identity-bound bridge has accepted the exact expected permission request.
 That bridge match consumes at most one pending hook interaction; replaying
 the same device action or request UUID cannot authorize it twice.
+
+## `GLOBAL_CONTROL_REQUESTED` (`0x85`)
+
+Payload:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 8 | Connection nonce |
+| 8 | 1 | Control |
+
+Controls are `1` refresh, `2` cycle presentation mode, `3` open Settings,
+`4` request quit confirmation, `5` cancel quit, and `6` confirm quit.
+Circle, Triangle, Square, and X emit controls 1-4 respectively. While quit
+confirmation is active, `-` emits 5 and `+` emits 6 before any selected-task
+action is considered.
+
+## `GLOBAL_CONTROL_RESULT` (`0x06`)
+
+Response payload:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 8 | Connection nonce |
+| 8 | 1 | Echoed control |
+| 9 | 1 | Result |
+| 10 | 1 | Quit confirmation active (`0` or `1`) |
+
+Results are `0` accepted, `1` unavailable, `2` stale state, and `3`
+unsupported. The final byte synchronizes the firmware's contextual `-`/`+`
+precedence with the shared app presentation model.
 
 ## `LAYER_CHANGED` (`0x84`)
 

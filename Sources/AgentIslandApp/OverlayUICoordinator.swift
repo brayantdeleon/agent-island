@@ -12,6 +12,7 @@ final class OverlayUICoordinator {
     var notchStatus: NotchStatus = .closed
     var notchOpenReason: NotchOpenReason?
     var islandSurface: IslandSurface = .sessionList()
+    var isQuitConfirmationPresented = false
     var isOverlayVisible: Bool { notchStatus != .closed }
 
     var overlayDisplayOptions: [OverlayDisplayOption] = []
@@ -157,6 +158,7 @@ final class OverlayUICoordinator {
     }
 
     func notchClose() {
+        isQuitConfirmationPresented = false
         transitionOverlay(
             to: .closed,
             reason: nil,

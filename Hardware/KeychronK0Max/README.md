@@ -232,7 +232,7 @@ With firmware build `0x19fb67fd` connected in Cable mode:
 
 1. Open Agent Island Settings → General.
 2. Enable **Keychron K0 Max** under **Agent Control Keyboard**.
-3. Confirm the status shows **Connected**, **USB**, protocol **v1.0**, and
+3. Confirm the status shows **Connected**, **USB**, protocol **v1.1**, and
    firmware **0x19FB67FD**.
 4. Open the island and confirm assigned sessions show `K0 · 1` through
    `K0 · 9` badges.

@@ -106,7 +106,6 @@ struct IslandPanelView: View {
     private var lang: LanguageManager { model.lang }
 
     @State private var isHovering = false
-    @State private var showingQuitConfirmation = false
     @State private var keepsOpenedSurfaceMounted = false
     @State private var openedSurfaceMountGeneration: UInt64 = 0
 
@@ -180,7 +179,13 @@ struct IslandPanelView: View {
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
-        .alert(model.lang.t("island.quit.confirmTitle"), isPresented: $showingQuitConfirmation) {
+        .alert(
+            model.lang.t("island.quit.confirmTitle"),
+            isPresented: Binding(
+                get: { model.isQuitConfirmationPresented },
+                set: { model.isQuitConfirmationPresented = $0 }
+            )
+        ) {
             Button(model.lang.t("island.quit.confirmAction"), role: .destructive) {
                 model.quitApplication()
             }
@@ -417,7 +422,7 @@ struct IslandPanelView: View {
                 tint: .white.opacity(0.62),
                 accessibilityLabel: model.lang.t("island.quit.confirmTitle")
             ) {
-                showingQuitConfirmation = true
+                model.isQuitConfirmationPresented = true
             }
         }
     }

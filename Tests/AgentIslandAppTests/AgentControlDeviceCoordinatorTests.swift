@@ -24,7 +24,7 @@ struct AgentControlDeviceCoordinatorTests {
         #expect(hello.sequence == 1)
         #expect(
             [UInt8](hello.payload)
-                == [0, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 6, 7, 0]
+                == [1, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 6, 39, 0]
         )
 
         harness.transport.emit(
@@ -33,7 +33,10 @@ struct AgentControlDeviceCoordinatorTests {
 
         #expect(harness.coordinator.diagnostics.state == .ready)
         #expect(harness.coordinator.diagnostics.activeTransport == .usb)
-        #expect(harness.coordinator.diagnostics.protocolMinor == 0)
+        #expect(
+            harness.coordinator.diagnostics.protocolMinor
+                == AgentControlProtocolV1.minorVersion
+        )
         #expect(harness.coordinator.diagnostics.effectiveWatchdogSeconds == 6)
         #expect(
             harness.coordinator.diagnostics.firmwareBuildIdentifier
@@ -47,19 +50,19 @@ struct AgentControlDeviceCoordinatorTests {
     func handshakeRejectsUnsupportedCapabilityCombinations() throws {
         struct Scenario {
             let name: String
-            var minor: UInt8 = 0
+            var minor: UInt8 = AgentControlProtocolV1.minorVersion
             var slotCount: UInt8 = 10
             var capabilities: AgentControlCapabilitySet = .allV1
             var transport: AgentControlActiveTransport = .usb
             var watchdog: UInt8 = 6
         }
         let scenarios = [
-            Scenario(name: "minor", minor: 1),
+            Scenario(name: "minor", minor: AgentControlProtocolV1.minorVersion + 1),
             Scenario(name: "slot count", slotCount: 9),
             Scenario(name: "snapshots", capabilities: [.selection]),
             Scenario(
                 name: "reserved capabilities",
-                capabilities: AgentControlCapabilitySet(rawValue: 0x21)
+                capabilities: AgentControlCapabilitySet(rawValue: 1 << 15)
             ),
             Scenario(name: "Bluetooth", transport: .bluetooth),
             Scenario(name: "watchdog", watchdog: 2),
@@ -597,7 +600,7 @@ struct AgentControlDeviceCoordinatorTests {
     private func capabilitiesReport(
         nonce: UInt64,
         sequence: UInt16,
-        minor: UInt8 = 0,
+        minor: UInt8 = AgentControlProtocolV1.minorVersion,
         slotCount: UInt8 = 10,
         capabilities: AgentControlCapabilitySet = .allV1,
         transport: AgentControlActiveTransport = .usb,

@@ -19,6 +19,7 @@ enum {
     AI_MAGIC_0         = 0x41,
     AI_MAGIC_1         = 0x49,
     AI_PROTOCOL_MAJOR  = 0x01,
+    AI_PROTOCOL_MINOR  = 0x01,
     AI_RESPONSE_FLAG   = 0x01,
     AI_REPORT_SIZE     = 32,
     AI_PAYLOAD_MAX     = 22,
@@ -385,13 +386,13 @@ static void run_loop_for(CFTimeInterval seconds) {
 static int run_self_test(void) {
     uint8_t hello[AI_REPORT_SIZE] = {
         0xAC, 0x41, 0x49, 0x01, 0x01, 0x00, 0x01, 0x00,
-        0x0C, 0x00, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45,
-        0x23, 0x01, 0x06, 0x1F, 0x00,
+        0x0C, 0x01, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45,
+        0x23, 0x01, 0x06, 0xFF, 0x01,
     };
     hello[AI_REPORT_SIZE - 1] = crc8_atm(hello, AI_REPORT_SIZE - 1);
 
-    if (hello[AI_REPORT_SIZE - 1] != 0x97 || !packet_is_valid(hello, sizeof(hello))) {
-        fprintf(stderr, "CRC/golden HELLO self-test failed (got 0x%02x, expected 0x97).\n", hello[AI_REPORT_SIZE - 1]);
+    if (hello[AI_REPORT_SIZE - 1] != 0x24 || !packet_is_valid(hello, sizeof(hello))) {
+        fprintf(stderr, "CRC/golden HELLO self-test failed (got 0x%02x, expected 0x24).\n", hello[AI_REPORT_SIZE - 1]);
         return 1;
     }
 
@@ -402,7 +403,7 @@ static int run_self_test(void) {
     }
 
     printf("Protocol self-test passed.\n");
-    printf("Golden HELLO CRC-8/ATM: 0x97\n");
+    printf("Golden HELLO CRC-8/ATM: 0x24\n");
     return 0;
 }
 
@@ -422,11 +423,11 @@ static int identify_stock_firmware(probe_context_t *context) {
 
 static bool send_hello(probe_context_t *context) {
     uint8_t payload[12] = {0};
-    payload[0] = 0;
+    payload[0] = AI_PROTOCOL_MINOR;
     memcpy(&payload[1], context->nonce, sizeof(context->nonce));
     payload[9]  = AI_WATCHDOG_SECONDS;
-    payload[10] = 0x1F;
-    payload[11] = 0;
+    payload[10] = 0xFF;
+    payload[11] = 0x01;
     return send_packet(context, AI_MSG_HELLO, 0, context->sequence++, payload, sizeof(payload));
 }
 

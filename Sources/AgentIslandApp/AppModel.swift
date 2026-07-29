@@ -44,6 +44,7 @@ final class AppModel {
     private static let legacyIslandSessionSortDefaultsKey = "appearance.island.v8.sessionSort"
     private static let legacyCompletedStaleThresholdDefaultsKey = "appearance.island.v8.completedStaleThreshold"
     private static let appearanceProfileSettingsDefaultsKey = "appearance.island.v8.settingsProfile"
+    private static let islandCompactnessModeDefaultsKey = "appearance.island.compactnessMode"
     private static let agentControlSelectionLifetimeSeconds: UInt8 = 15
 
     private static let syntheticClaudeSessionPrefix = "claude-process:"
@@ -121,6 +122,16 @@ final class AppModel {
     }
 
     var selectedSessionID: String?
+    var islandCompactnessMode: IslandCompactnessMode = .regular {
+        didSet {
+            guard islandCompactnessMode != oldValue else { return }
+            UserDefaults.standard.set(
+                islandCompactnessMode.rawValue,
+                forKey: Self.islandCompactnessModeDefaultsKey
+            )
+            refreshOverlayPlacementIfVisible()
+        }
+    }
     private(set) var agentControlSelectedSessionID: String?
     private(set) var agentControlDetailPresentationRequests:
         [String: AgentControlDetailPresentationRequest] = [:]
@@ -750,6 +761,11 @@ final class AppModel {
             )
         }
         completionReplyEnabled = UserDefaults.standard.bool(forKey: Self.completionReplyEnabledDefaultsKey)
+        islandCompactnessMode = IslandCompactnessMode(
+            rawValue: UserDefaults.standard.string(
+                forKey: Self.islandCompactnessModeDefaultsKey
+            ) ?? ""
+        ) ?? .regular
         agentControlKeyboardEnabled =
             agentControlDeviceSettingsStore.loadEnabled()
         agentControlKeyboardApprovalsEnabled =
@@ -1280,8 +1296,59 @@ final class AppModel {
         case .layerChanged:
             clearAgentControlSelection()
 
+        case let .globalControlRequested(connectionNonce, control):
+            handleAgentControlGlobalControl(
+                requestSequence: event.sequence,
+                connectionNonce: connectionNonce,
+                control: control
+            )
+
         case .capabilities:
             break
+        }
+    }
+
+    private func handleAgentControlGlobalControl(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        control: AgentControlGlobalControl
+    ) {
+        var result: AgentControlGlobalControlResult = .accepted
+
+        switch control {
+        case .refresh:
+            refreshSessionsManually()
+        case .cyclePresentationMode:
+            islandCompactnessMode = islandCompactnessMode.next
+        case .openSettings:
+            notchClose()
+            showSettings()
+        case .requestQuit:
+            notchOpen(reason: .click)
+            isQuitConfirmationPresented = true
+        case .cancelQuit:
+            if isQuitConfirmationPresented {
+                isQuitConfirmationPresented = false
+            } else {
+                result = .staleState
+            }
+        case .confirmQuit:
+            if isQuitConfirmationPresented {
+                isQuitConfirmationPresented = false
+            } else {
+                result = .staleState
+            }
+        }
+
+        let sent = agentControlDeviceCoordinator.sendGlobalControlResult(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            control: control,
+            result: result,
+            quitConfirmationActive: isQuitConfirmationPresented
+        )
+        if control == .confirmQuit, result == .accepted, sent {
+            quitApplication()
         }
     }
 
@@ -1700,13 +1767,16 @@ final class AppModel {
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
         clearAgentControlSelection()
-        _ = sendAgentControlActionResult(
+        guard sendAgentControlActionResult(
             requestSequence: requestSequence,
             connectionNonce: connectionNonce,
             slotIndex: slotIndex,
             action: action,
             result: .acceptedForDispatch
-        )
+        ) else {
+            return
+        }
+        notchClose()
     }
 
     private func allowedAction(
@@ -2130,6 +2200,10 @@ final class AppModel {
     var showsNotificationCard: Bool { overlay.showsNotificationCard }
     var shouldDeferTimedNotificationAutoCollapse: Bool { overlay.shouldDeferTimedNotificationAutoCollapse }
     var hasPendingNotificationAutoCollapse: Bool { overlay.hasPendingNotificationAutoCollapse }
+    var isQuitConfirmationPresented: Bool {
+        get { overlay.isQuitConfirmationPresented }
+        set { overlay.isQuitConfirmationPresented = newValue }
+    }
 
     func loadDebugSnapshot(
         _ snapshot: IslandDebugSnapshot,
@@ -2320,10 +2394,12 @@ final class AppModel {
             requestID: requestID,
             resolution: resolution
         ) else {
+            lastActionMessage = "That permission request is no longer active."
             return
         }
 
-        dismissNotificationSurfaceIfPresent(for: session.id)
+        clearAgentControlSelection()
+        notchClose()
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
         send(
