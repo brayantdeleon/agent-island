@@ -810,7 +810,7 @@ static uint8_t ai_scale8(uint8_t value, uint8_t scale) {
 static uint8_t ai_pulse_value(void) {
     uint8_t phase    = (uint8_t)(timer_read() >> 3);
     uint8_t triangle = phase < 128 ? phase * 2 : (255 - phase) * 2;
-    return 24 + ai_scale8(triangle, 231);
+    return triangle;
 }
 
 static void ai_set_slot_color(uint8_t led, uint8_t state) {
@@ -829,7 +829,7 @@ static void ai_set_slot_color(uint8_t led, uint8_t state) {
             rgb_matrix_set_color(led, pulse, ai_scale8(pulse, 96), 0);
             break;
         case 6:
-            rgb_matrix_set_color(led, 0, 255, 0);
+            rgb_matrix_set_color(led, 0, pulse, 0);
             break;
         default:
             rgb_matrix_set_color(led, 0, 0, 0);
@@ -839,6 +839,10 @@ static void ai_set_slot_color(uint8_t led, uint8_t state) {
 
 bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     if (ai_agent_control_active && !ai_fn_active) {
+        for (uint8_t led = led_min; led < led_max; ++led) {
+            rgb_matrix_set_color(led, 0, 0, 0);
+        }
+
         if (AI_LED_CONTROL >= led_min && AI_LED_CONTROL < led_max) {
             if (ai_overflow_count > 0) {
                 rgb_matrix_set_color(AI_LED_CONTROL, 180, 0, 255);

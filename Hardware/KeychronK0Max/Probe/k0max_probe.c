@@ -525,7 +525,7 @@ static int exercise_round5_firmware(probe_context_t *context, int active_seconds
     }
 
     printf("\nRound 5 manual input window (%d seconds):\n", active_seconds);
-    printf("  1. Tap M4 now. M4 starts cyan. Slots: 1/8 blue, 2/3/9 red, 4 amber, 5/0 green, 6/7 off.\n");
+    printf("  1. Tap M4 now. M4 starts cyan. Slots: 1/8 blue, 2/3/9 red, 4 amber, 5/0 pulsing green, 6/7 off; all other LEDs stay off.\n");
     printf("  2. Press digits 1 through 0 in order. Accepted selections flash white; unassigned 7 flashes amber.\n");
     printf("  3. Press 1 Enter (green), 2 + (green), reselect 2 then - (green).\n");
     printf("  4. Press 3 then +: + must flash amber and emit no action. Press 4 Enter: Enter flashes amber after host rejection.\n");

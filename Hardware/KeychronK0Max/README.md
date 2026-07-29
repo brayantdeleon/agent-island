@@ -192,7 +192,7 @@ The diagnostic host sends a ten-slot gallery:
 - `2` and `9`: actionable approval, fast red flash
 - `3`: observed approval, fast red flash with approval actions disabled
 - `4`: waiting for an answer, amber pulse
-- `5` and `0`: recently completed, solid green
+- `5` and `0`: recently completed, green pulse with a full-off trough
 - `6`: assigned idle, off
 - `7`: unassigned, off
 
@@ -201,6 +201,10 @@ green action feedback, rejected amber feedback, all ten digit positions,
 M4 cyan/purple status, and momentary M5 Fn behavior. The probe only
 acknowledges anonymous intents; it cannot jump to or resolve a real agent.
 Leave Agent Control active at the end so watchdog recovery can be verified.
+While Agent Control is active, every LED outside M4, the assigned number
+states, and temporary action feedback remains off. Blue, amber, and green
+pulses now reach fully off at their trough, which increases contrast while
+reducing average RGB power.
 
 The final evidence line must report `yes` for handshake, layer, all slots,
 jump/allow/deny, both rejection paths, the observer guard, and watchdog.

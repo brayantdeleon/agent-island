@@ -85,7 +85,7 @@ base layer active.
 | Waiting for actionable approval | Fast red flash |
 | Waiting for observed/non-actionable approval | Fast red flash; `+` and `-` disabled |
 | Waiting for an answer | Amber pulse |
-| Recently completed | Solid green |
+| Recently completed | Green pulse with a full-off trough |
 
 Selection gives a brief white acknowledgement and then returns to the phase
 color. Accepted device actions give brief green feedback; rejected or stale
@@ -93,6 +93,9 @@ actions give brief amber feedback.
 
 The M4 LED indicates the control layer. Cyan means Agent Control is active.
 Purple means more eligible sessions exist than the ten hardware slots.
+All other LEDs are off while Agent Control is active. The smooth blue, amber,
+and green pulses reach fully off at their trough; M5 temporarily restores the
+user's ordinary Fn-layer RGB behavior while held.
 
 Project state in this priority order:
 

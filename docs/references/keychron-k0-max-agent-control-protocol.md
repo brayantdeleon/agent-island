@@ -224,7 +224,7 @@ Slot state:
 | `3` | `waitingApprovalActionable` | Fast red flash | Select, jump, allow once, deny |
 | `4` | `waitingApprovalObserved` | Fast red flash | Select and jump only |
 | `5` | `waitingAnswer` | Amber pulse | Select and jump only |
-| `6` | `completedRecent` | Solid green | Select and jump if available |
+| `6` | `completedRecent` | Green pulse with full-off trough | Select and jump if available |
 
 Snapshot generation increments whenever assignment identity or a projected
 slot state changes. It wraps naturally at `UInt16.max`. A generation change
