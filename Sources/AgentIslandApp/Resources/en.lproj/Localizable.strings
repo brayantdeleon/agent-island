@@ -44,6 +44,8 @@
 "settings.general.languageTraditionalChinese" = "Chinese (Traditional)";
 "settings.general.agentControl.section" = "Agent Control Keyboard";
 "settings.general.agentControl.enable" = "Enable Keychron K0 Max";
+"settings.general.agentControl.approvals" = "Enable keyboard approvals";
+"settings.general.agentControl.approvalsHelp" = "Security-sensitive and off by default. + allows once and - denies only the exact request selected within the 15-second selection window.";
 "settings.general.agentControl.status" = "Status";
 "settings.general.agentControl.transport" = "Connection";
 "settings.general.agentControl.protocol" = "Protocol";
@@ -51,6 +53,7 @@
 "settings.general.agentControl.unavailable" = "—";
 "settings.general.agentControl.requiresFirmware" = "Requires the custom Agent Island firmware. USB is supported; 2.4 GHz is not yet verified.";
 "settings.general.agentControl.navigation" = "Keys 1–9 select and reveal agents; 0 opens or closes the island; Enter jumps. + and - remain disabled.";
+"settings.general.agentControl.navigationApprovals" = "Keys 1–9 select and reveal agents; 0 opens or closes the island; Enter jumps; + allows once; - denies.";
 "settings.general.agentControl.state.stopped" = "Stopped";
 "settings.general.agentControl.state.searching" = "Searching";
 "settings.general.agentControl.state.handshaking" = "Handshaking";

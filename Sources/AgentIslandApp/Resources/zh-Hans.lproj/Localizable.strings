@@ -44,6 +44,8 @@
 "settings.general.languageTraditionalChinese" = "繁體中文";
 "settings.general.agentControl.section" = "智能体控制键盘";
 "settings.general.agentControl.enable" = "启用 Keychron K0 Max";
+"settings.general.agentControl.approvals" = "启用键盘审批";
+"settings.general.agentControl.approvalsHelp" = "此功能涉及安全，默认关闭。+ 仅允许一次，- 拒绝；操作仅适用于 15 秒选择窗口内所选的确切请求。";
 "settings.general.agentControl.status" = "状态";
 "settings.general.agentControl.transport" = "连接";
 "settings.general.agentControl.protocol" = "协议";
@@ -51,6 +53,7 @@
 "settings.general.agentControl.unavailable" = "—";
 "settings.general.agentControl.requiresFirmware" = "需要安装 Agent Island 自定义固件。目前支持 USB；2.4 GHz 尚未验证。";
 "settings.general.agentControl.navigation" = "按键 1–9 用于选择并显示智能体；0 用于打开或关闭灵动岛；Enter 用于跳转。+ 和 - 仍处于禁用状态。";
+"settings.general.agentControl.navigationApprovals" = "按键 1–9 用于选择并显示智能体；0 用于打开或关闭灵动岛；Enter 用于跳转；+ 仅允许一次；- 拒绝。";
 "settings.general.agentControl.state.stopped" = "已停止";
 "settings.general.agentControl.state.searching" = "正在搜索";
 "settings.general.agentControl.state.handshaking" = "正在握手";

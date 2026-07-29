@@ -3,8 +3,9 @@
 - **Protocol:** Agent Island K0 Max Raw HID
 - **Major version:** 1
 - **Minor version:** 0
-- **Status:** Protocol v1; packet mechanics validated in Round 2 and complete
-  keyboard-side behavior implemented in Round 5
+- **Status:** Protocol v1; packet mechanics validated in Round 2, complete
+  keyboard-side behavior implemented in Round 5, and identity-bound host
+  approvals implemented in Round 8
 
 ## Purpose
 
@@ -203,6 +204,12 @@ Firmware capability bits use the same low five meanings as the host. The host
 must keep action handling disabled if a required capability is absent or the
 major version is incompatible.
 
+The production host advertises state snapshots, selection, and jump whenever
+the K0 Max integration is enabled. It advertises allow-once and deny only
+after the user enables the separate keyboard-approvals preference, which is
+off by default. Changing that preference invalidates the current selection
+and starts a fresh handshake.
+
 The build identifier is the first 32 bits of a SHA-256 digest over the pinned
 Keychron commit plus the ordered paths and SHA-256 values of the local
 firmware overlay and patch files. The build manifest records the complete
@@ -361,6 +368,8 @@ authoritative state snapshot.
 
 For allow-once and deny, Agent Island may return accepted only after the
 identity-bound bridge has accepted the exact expected permission request.
+That bridge match consumes at most one pending hook interaction; replaying
+the same device action or request UUID cannot authorize it twice.
 
 ## `LAYER_CHANGED` (`0x84`)
 

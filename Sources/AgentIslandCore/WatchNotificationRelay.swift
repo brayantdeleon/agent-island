@@ -8,8 +8,12 @@ public final class WatchNotificationRelay: @unchecked Sendable {
 
     public let endpoint: WatchHTTPEndpoint
 
-    /// Callback to resolve a permission request (sessionID, approved).
-    public var onResolvePermission: (@Sendable (_ sessionID: String, _ approved: Bool) -> Void)?
+    /// Callback to resolve a permission request (sessionID, requestID, approved).
+    public var onResolvePermission: (@Sendable (
+        _ sessionID: String,
+        _ requestID: String,
+        _ approved: Bool
+    ) -> Void)?
 
     /// Callback to answer a question (sessionID, answer).
     public var onAnswerQuestion: (@Sendable (_ sessionID: String, _ answer: String) -> Void)?
@@ -168,7 +172,11 @@ public final class WatchNotificationRelay: @unchecked Sendable {
             case .permission:
                 let approved = resolution.action.lowercased() == "allow"
                 Self.logger.info("Resolving permission for session \(pending.sessionID): \(resolution.action)")
-                self.onResolvePermission?(pending.sessionID, approved)
+                self.onResolvePermission?(
+                    pending.sessionID,
+                    resolution.requestID,
+                    approved
+                )
 
             case .question:
                 Self.logger.info("Answering question for session \(pending.sessionID): \(resolution.action)")

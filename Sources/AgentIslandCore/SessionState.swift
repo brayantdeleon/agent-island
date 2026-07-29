@@ -251,13 +251,16 @@ public struct SessionState: Equatable, Sendable {
         }
     }
 
+    @discardableResult
     public mutating func resolvePermission(
         sessionID: String,
+        requestID: UUID,
         resolution: PermissionResolution,
         at timestamp: Date = .now
-    ) {
-        guard var session = sessionsByID[sessionID] else {
-            return
+    ) -> Bool {
+        guard var session = sessionsByID[sessionID],
+              session.permissionRequest?.id == requestID else {
+            return false
         }
 
         session.permissionRequest = nil
@@ -286,6 +289,7 @@ public struct SessionState: Equatable, Sendable {
         }
 
         upsert(session)
+        return true
     }
 
     public mutating func answerQuestion(

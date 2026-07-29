@@ -229,6 +229,27 @@ struct GeneralSettingsPane: View {
                 )
 
                 if model.agentControlKeyboardEnabled {
+                    Toggle(
+                        lang.t(
+                            "settings.general.agentControl.approvals"
+                        ),
+                        isOn: Binding(
+                            get: {
+                                model.agentControlKeyboardApprovalsEnabled
+                            },
+                            set: {
+                                model.agentControlKeyboardApprovalsEnabled = $0
+                            }
+                        )
+                    )
+                    Text(
+                        lang.t(
+                            "settings.general.agentControl.approvalsHelp"
+                        )
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                     LabeledContent(
                         lang.t("settings.general.agentControl.status"),
                         value: agentControlStatusTitle
@@ -250,7 +271,13 @@ struct GeneralSettingsPane: View {
                         value: agentControlFirmwareTitle
                     )
 
-                    Text(lang.t("settings.general.agentControl.navigation"))
+                    Text(
+                        lang.t(
+                            model.agentControlKeyboardApprovalsEnabled
+                                ? "settings.general.agentControl.navigationApprovals"
+                                : "settings.general.agentControl.navigation"
+                        )
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {

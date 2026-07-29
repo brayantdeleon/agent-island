@@ -17,6 +17,7 @@ private struct AgentControlSelectionContext {
     let slotIndex: UInt8
     let slotEpoch: UInt16
     let sessionID: String
+    let permissionRequestID: UUID?
     let selectionToken: UInt64
     let allowedActions: AgentControlAllowedActionSet
     let expiresAt: Date
@@ -252,7 +253,15 @@ final class AppModel {
             await hooks.repairHooksIfNeeded()
         }
     }
-    var isBridgeReady = false
+    var isBridgeReady = false {
+        didSet {
+            guard hasFinishedInit, isBridgeReady != oldValue else { return }
+            if !isBridgeReady {
+                clearAgentControlSelection()
+            }
+            updateAgentControlDeviceSnapshot()
+        }
+    }
     var lastActionMessage = "Waiting for agent hook events..." {
         didSet {
             guard lastActionMessage != oldValue else {
@@ -332,6 +341,23 @@ final class AppModel {
             } else {
                 stopAgentControlDeviceIntegration()
             }
+        }
+    }
+    var agentControlKeyboardApprovalsEnabled: Bool = false {
+        didSet {
+            guard hasFinishedInit,
+                  agentControlKeyboardApprovalsEnabled != oldValue else {
+                return
+            }
+
+            agentControlDeviceSettingsStore.saveApprovalActionsEnabled(
+                agentControlKeyboardApprovalsEnabled
+            )
+            clearAgentControlSelection()
+            agentControlDeviceCoordinator.setApprovalActionsEnabled(
+                agentControlKeyboardApprovalsEnabled
+            )
+            updateAgentControlDeviceSnapshot()
         }
     }
     var launchAtLoginEnabled: Bool = false {
@@ -529,9 +555,17 @@ final class AppModel {
 
     /// Wire up resolution callbacks so Watch/iPhone actions flow back to the bridge.
     private func setupWatchRelayCallbacks(_ relay: WatchNotificationRelay) {
-        relay.onResolvePermission = { [weak self] sessionID, approved in
+        relay.onResolvePermission = {
+            [weak self] sessionID, requestID, approved in
             Task { @MainActor [weak self] in
-                self?.approvePermission(for: sessionID, approved: approved)
+                guard let requestID = UUID(uuidString: requestID) else {
+                    return
+                }
+                self?.approvePermission(
+                    for: sessionID,
+                    requestID: requestID,
+                    approved: approved
+                )
             }
         }
 
@@ -572,6 +606,13 @@ final class AppModel {
 
     @ObservationIgnored
     private let bridgeServer = BridgeServer()
+
+    @ObservationIgnored
+    private let injectedAgentControlPermissionResolver: ((
+        String,
+        UUID,
+        PermissionResolution
+    ) -> BridgePermissionResolutionResult)?
 
     @ObservationIgnored
     private var bridgeClient = LocalBridgeClient()
@@ -655,6 +696,11 @@ final class AppModel {
         agentControlSlotAssignmentStore: AgentControlSlotAssignmentStore = .standard,
         agentControlDeviceCoordinator: AgentControlDeviceCoordinator = AgentControlDeviceCoordinator(),
         agentControlDeviceSettingsStore: AgentControlDeviceSettingsStore = .standard,
+        agentControlPermissionResolver: ((
+            String,
+            UUID,
+            PermissionResolution
+        ) -> BridgePermissionResolutionResult)? = nil,
         agentControlSelectionTokenGenerator: @escaping () -> UInt64 = {
             UInt64.random(in: 1...UInt64.max)
         },
@@ -670,6 +716,8 @@ final class AppModel {
         )
         self.agentControlDeviceCoordinator = agentControlDeviceCoordinator
         self.agentControlDeviceSettingsStore = agentControlDeviceSettingsStore
+        self.injectedAgentControlPermissionResolver =
+            agentControlPermissionResolver
         self.agentControlSelectionTokenGenerator =
             agentControlSelectionTokenGenerator
         self.agentControlDateProvider = agentControlDateProvider
@@ -693,6 +741,11 @@ final class AppModel {
         completionReplyEnabled = UserDefaults.standard.bool(forKey: Self.completionReplyEnabledDefaultsKey)
         agentControlKeyboardEnabled =
             agentControlDeviceSettingsStore.loadEnabled()
+        agentControlKeyboardApprovalsEnabled =
+            agentControlDeviceSettingsStore.loadApprovalActionsEnabled()
+        agentControlDeviceCoordinator.setApprovalActionsEnabled(
+            agentControlKeyboardApprovalsEnabled
+        )
         launchAtLoginEnabled = LaunchAtLoginService.shared.isEnabled
         appearanceSettingsProfile = IslandAppearanceDisplayProfile(
             rawValue: UserDefaults.standard.string(forKey: Self.appearanceProfileSettingsDefaultsKey) ?? ""
@@ -1094,7 +1147,10 @@ final class AppModel {
         agentControlSlotCoordinator.projection(
             for: surfacedSessions,
             at: referenceDate,
-            completedStaleThreshold: completedStaleThreshold.seconds
+            completedStaleThreshold: completedStaleThreshold.seconds,
+            canResolveExactPermissionRequest: { [self] session in
+                canResolveAgentControlPermission(for: session)
+            }
         )
     }
 
@@ -1132,6 +1188,9 @@ final class AppModel {
         }
 
         isAgentControlDeviceIntegrationStarted = true
+        agentControlDeviceCoordinator.setApprovalActionsEnabled(
+            agentControlKeyboardApprovalsEnabled
+        )
         updateAgentControlDeviceSnapshot()
         agentControlDeviceCoordinator.start()
     }
@@ -1284,14 +1343,25 @@ final class AppModel {
 
         let slotEpoch = snapshot.slotEpochs[index]
         let selectionToken = makeAgentControlSelectionToken()
-        let allowedActions: AgentControlAllowedActionSet =
-            canJumpToAgentControlSession(session) ? [.jump] : []
+        var allowedActions: AgentControlAllowedActionSet = []
+        if canJumpToAgentControlSession(session) {
+            allowedActions.insert(.jump)
+        }
+        let permissionRequestID: UUID?
+        if canResolveAgentControlPermission(for: session),
+           let requestID = session.permissionRequest?.id {
+            allowedActions.formUnion([.allowOnce, .deny])
+            permissionRequestID = requestID
+        } else {
+            permissionRequestID = nil
+        }
         let lifetimeSeconds = Self.agentControlSelectionLifetimeSeconds
         let selection = AgentControlSelectionContext(
             connectionNonce: connectionNonce,
             slotIndex: slotIndex,
             slotEpoch: slotEpoch,
             sessionID: session.id,
+            permissionRequestID: permissionRequestID,
             selectionToken: selectionToken,
             allowedActions: allowedActions,
             expiresAt: agentControlDateProvider().addingTimeInterval(
@@ -1397,7 +1467,7 @@ final class AppModel {
         action: AgentControlAction,
         selectionToken: UInt64
     ) {
-        guard action == .jump else {
+        if action != .jump, !agentControlKeyboardApprovalsEnabled {
             sendAgentControlActionResult(
                 requestSequence: requestSequence,
                 connectionNonce: connectionNonce,
@@ -1407,6 +1477,7 @@ final class AppModel {
             )
             return
         }
+
         guard let selection = agentControlSelection else {
             sendAgentControlActionResult(
                 requestSequence: requestSequence,
@@ -1430,7 +1501,7 @@ final class AppModel {
             )
             return
         }
-        guard selection.allowedActions.contains(.jump) else {
+        guard selection.allowedActions.contains(allowedAction(for: action)) else {
             sendAgentControlActionResult(
                 requestSequence: requestSequence,
                 connectionNonce: connectionNonce,
@@ -1469,12 +1540,40 @@ final class AppModel {
             )
             return
         }
+
+        switch action {
+        case .jump:
+            handleAgentControlJump(
+                session,
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex
+            )
+
+        case .allowOnce, .deny:
+            handleAgentControlPermissionResolution(
+                session,
+                selection: selection,
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action
+            )
+        }
+    }
+
+    private func handleAgentControlJump(
+        _ session: AgentSession,
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8
+    ) {
         guard canJumpToAgentControlSession(session) else {
             sendAgentControlActionResult(
                 requestSequence: requestSequence,
                 connectionNonce: connectionNonce,
                 slotIndex: slotIndex,
-                action: action,
+                action: .jump,
                 result: .transportUnavailable
             )
             return
@@ -1484,12 +1583,104 @@ final class AppModel {
             requestSequence: requestSequence,
             connectionNonce: connectionNonce,
             slotIndex: slotIndex,
-            action: action,
+            action: .jump,
             result: .acceptedForDispatch
         ) else {
             return
         }
         jumpToSession(session)
+    }
+
+    private func handleAgentControlPermissionResolution(
+        _ session: AgentSession,
+        selection: AgentControlSelectionContext,
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        action: AgentControlAction
+    ) {
+        guard isBridgeReady else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .transportUnavailable
+            )
+            return
+        }
+        guard session.phase == .waitingForApproval,
+              let requestID = selection.permissionRequestID,
+              let currentRequest = session.permissionRequest,
+              currentRequest.id == requestID,
+              !currentRequest.requiresTerminalApproval else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .permissionRequestChangedOrExpired
+            )
+            return
+        }
+
+        let resolution: PermissionResolution = action == .allowOnce
+            ? .allowOnce()
+            : .deny(
+                message: "Permission denied from the Agent Control keyboard.",
+                interrupt: false
+            )
+        let result = injectedAgentControlPermissionResolver?(
+            session.id,
+            requestID,
+            resolution
+        ) ?? bridgeServer.resolvePermission(
+            sessionID: session.id,
+            requestID: requestID,
+            resolution: resolution
+        )
+
+        guard result == .resolved else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: result == .requestNotActive
+                    ? .transportUnavailable
+                    : .permissionRequestChangedOrExpired
+            )
+            return
+        }
+
+        _ = state.resolvePermission(
+            sessionID: session.id,
+            requestID: requestID,
+            resolution: resolution
+        )
+        synchronizeSelection()
+        refreshOverlayPlacementIfVisible()
+        clearAgentControlSelection()
+        _ = sendAgentControlActionResult(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            action: action,
+            result: .acceptedForDispatch
+        )
+    }
+
+    private func allowedAction(
+        for action: AgentControlAction
+    ) -> AgentControlAllowedActionSet {
+        switch action {
+        case .jump:
+            .jump
+        case .allowOnce:
+            .allowOnce
+        case .deny:
+            .deny
+        }
     }
 
     @discardableResult
@@ -1517,6 +1708,16 @@ final class AppModel {
     ) -> Bool {
         guard let jumpTarget = session.jumpTarget else { return false }
         return jumpTarget.terminalApp.lowercased() != "unknown"
+    }
+
+    private func canResolveAgentControlPermission(
+        for session: AgentSession
+    ) -> Bool {
+        agentControlKeyboardApprovalsEnabled
+            && isBridgeReady
+            && session.phase == .waitingForApproval
+            && session.permissionRequest != nil
+            && session.permissionRequest?.requiresTerminalApproval == false
     }
 
     private func scheduleAgentControlCompletionExpiry(
@@ -1943,13 +2144,7 @@ final class AppModel {
         guard let session = focusedSession else {
             return
         }
-
-        send(
-            .resolvePermission(sessionID: session.id, resolution: permissionResolution(for: approved)),
-            userMessage: approved
-                ? "Approving permission for \(session.title)."
-                : "Denying permission for \(session.title)."
-        )
+        approvePermission(for: session.id, approved: approved)
     }
 
     func answerFocusedQuestion(_ answer: String) {
@@ -2015,26 +2210,40 @@ final class AppModel {
     }
 
     func approvePermission(for sessionID: String, approved: Bool) {
-        guard let session = state.session(id: sessionID) else {
+        guard let requestID = state.session(id: sessionID)?
+                .permissionRequest?.id else {
             return
         }
+        approvePermission(
+            for: sessionID,
+            requestID: requestID,
+            approved: approved
+        )
+    }
 
+    private func approvePermission(
+        for sessionID: String,
+        requestID: UUID,
+        approved: Bool
+    ) {
+        guard let session = state.session(id: sessionID),
+              session.permissionRequest?.id == requestID else {
+            return
+        }
         let resolution = permissionResolution(for: approved)
-        dismissNotificationSurfaceIfPresent(for: sessionID)
-        state.resolvePermission(sessionID: session.id, resolution: resolution)
-        synchronizeSelection()
-        refreshOverlayPlacementIfVisible()
-
-        send(
-            .resolvePermission(sessionID: session.id, resolution: resolution),
-            userMessage: approved
+        resolvePermission(
+            for: session,
+            requestID: requestID,
+            resolution: resolution,
+            message: approved
                 ? "Approving permission for \(session.title)."
                 : "Denying permission for \(session.title)."
         )
     }
 
     func approvePermission(for sessionID: String, action: ApprovalAction) {
-        guard let session = state.session(id: sessionID) else {
+        guard let session = state.session(id: sessionID),
+              let requestID = session.permissionRequest?.id else {
             return
         }
 
@@ -2053,13 +2262,37 @@ final class AppModel {
             message = "Always allowing for \(session.title)."
         }
 
-        dismissNotificationSurfaceIfPresent(for: sessionID)
-        state.resolvePermission(sessionID: session.id, resolution: resolution)
+        resolvePermission(
+            for: session,
+            requestID: requestID,
+            resolution: resolution,
+            message: message
+        )
+    }
+
+    private func resolvePermission(
+        for session: AgentSession,
+        requestID: UUID,
+        resolution: PermissionResolution,
+        message: String
+    ) {
+        guard state.resolvePermission(
+            sessionID: session.id,
+            requestID: requestID,
+            resolution: resolution
+        ) else {
+            return
+        }
+
+        dismissNotificationSurfaceIfPresent(for: session.id)
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
-
         send(
-            .resolvePermission(sessionID: session.id, resolution: resolution),
+            .resolvePermission(
+                sessionID: session.id,
+                requestID: requestID,
+                resolution: resolution
+            ),
             userMessage: message
         )
     }
