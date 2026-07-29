@@ -45,7 +45,7 @@
 "settings.general.agentControl.section" = "Agent Control Keyboard";
 "settings.general.agentControl.enable" = "Enable Keychron K0 Max";
 "settings.general.agentControl.approvals" = "Enable keyboard approvals";
-"settings.general.agentControl.approvalsHelp" = "Security-sensitive and off by default. + allows once and - denies only the exact request selected within the 15-second selection window.";
+"settings.general.agentControl.approvalsHelp" = "Security-sensitive and off by default. + allows once and - denies only the exact request selected within the 15-second selection window. For Codex, enabling this routes approval requests through Agent Island instead of Codex's native reviewer, including Approve for me.";
 "settings.general.agentControl.status" = "Status";
 "settings.general.agentControl.transport" = "Connection";
 "settings.general.agentControl.protocol" = "Protocol";

@@ -45,7 +45,7 @@
 "settings.general.agentControl.section" = "智能体控制键盘";
 "settings.general.agentControl.enable" = "启用 Keychron K0 Max";
 "settings.general.agentControl.approvals" = "启用键盘审批";
-"settings.general.agentControl.approvalsHelp" = "此功能涉及安全，默认关闭。+ 仅允许一次，- 拒绝；操作仅适用于 15 秒选择窗口内所选的确切请求。";
+"settings.general.agentControl.approvalsHelp" = "此功能涉及安全，默认关闭。+ 仅允许一次，- 拒绝；操作仅适用于 15 秒选择窗口内所选的确切请求。对于 Codex，启用后审批请求将由 Agent Island 处理，而不是 Codex 的原生审批器（包括“Approve for me”）。";
 "settings.general.agentControl.status" = "状态";
 "settings.general.agentControl.transport" = "连接";
 "settings.general.agentControl.protocol" = "协议";

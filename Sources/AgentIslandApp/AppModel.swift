@@ -381,6 +381,9 @@ final class AppModel {
             agentControlDeviceSettingsStore.saveApprovalActionsEnabled(
                 agentControlKeyboardApprovalsEnabled
             )
+            hooks.setCodexPermissionRequestBrokerEnabled(
+                agentControlKeyboardApprovalsEnabled
+            )
             clearAgentControlSelection()
             agentControlDeviceCoordinator.setApprovalActionsEnabled(
                 agentControlKeyboardApprovalsEnabled
@@ -796,6 +799,9 @@ final class AppModel {
             agentControlDeviceSettingsStore.loadEnabled()
         agentControlKeyboardApprovalsEnabled =
             agentControlDeviceSettingsStore.loadApprovalActionsEnabled()
+        hooks.setCodexPermissionRequestBrokerEnabled(
+            agentControlKeyboardApprovalsEnabled
+        )
         agentControlDeviceCoordinator.setApprovalActionsEnabled(
             agentControlKeyboardApprovalsEnabled
         )
@@ -3141,6 +3147,7 @@ final class AppModel {
                 // on upgrade. Must run after status reads and before any
                 // install decision.
                 self.hooks.migrateIntentStoreIfNeeded()
+                self.hooks.reconcileCodexPermissionRequestBrokerIfNeeded()
 
                 // Install only hooks the user has not explicitly opted out of.
                 // `shouldAutoInstall` skips `.uninstalled` agents and agents

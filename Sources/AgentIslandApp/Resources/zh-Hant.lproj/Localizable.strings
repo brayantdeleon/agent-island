@@ -45,7 +45,7 @@
 "settings.general.agentControl.section" = "代理控制鍵盤";
 "settings.general.agentControl.enable" = "啟用 Keychron K0 Max";
 "settings.general.agentControl.approvals" = "啟用鍵盤核准";
-"settings.general.agentControl.approvalsHelp" = "此功能涉及安全，預設關閉。+ 僅允許一次，- 拒絕；操作僅適用於 15 秒選取時限內所選的確切請求。";
+"settings.general.agentControl.approvalsHelp" = "此功能涉及安全，預設關閉。+ 僅允許一次，- 拒絕；操作僅適用於 15 秒選取時限內所選的確切請求。對於 Codex，啟用後核准請求將由 Agent Island 處理，而不是 Codex 的原生核准器（包括「Approve for me」）。";
 "settings.general.agentControl.status" = "狀態";
 "settings.general.agentControl.transport" = "連線";
 "settings.general.agentControl.protocol" = "通訊協定";

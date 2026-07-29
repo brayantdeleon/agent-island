@@ -8,6 +8,7 @@ public struct CodexHookInstallationStatus: Equatable, Sendable {
     public var hooksBinaryURL: URL?
     public var featureFlagEnabled: Bool
     public var managedHooksPresent: Bool
+    public var brokersPermissionRequests: Bool
     public var manifest: CodexHookInstallerManifest?
 
     public init(
@@ -18,6 +19,7 @@ public struct CodexHookInstallationStatus: Equatable, Sendable {
         hooksBinaryURL: URL?,
         featureFlagEnabled: Bool,
         managedHooksPresent: Bool,
+        brokersPermissionRequests: Bool,
         manifest: CodexHookInstallerManifest?
     ) {
         self.codexDirectory = codexDirectory
@@ -27,6 +29,7 @@ public struct CodexHookInstallationStatus: Equatable, Sendable {
         self.hooksBinaryURL = hooksBinaryURL
         self.featureFlagEnabled = featureFlagEnabled
         self.managedHooksPresent = managedHooksPresent
+        self.brokersPermissionRequests = brokersPermissionRequests
         self.manifest = manifest
     }
 }
@@ -63,6 +66,10 @@ public final class CodexHookInstallationManager: @unchecked Sendable {
             existingData: hooksData,
             managedCommand: managedCommand
         ))?.changed) == true
+        let brokersPermissionRequests = CodexHookInstaller.hasManagedPermissionRequestHook(
+            in: hooksData,
+            managedCommand: managedCommand
+        )
 
         return CodexHookInstallationStatus(
             codexDirectory: codexDirectory,
@@ -72,12 +79,16 @@ public final class CodexHookInstallationManager: @unchecked Sendable {
             hooksBinaryURL: resolvedHooksBinaryURL,
             featureFlagEnabled: CodexHookInstaller.isCodexHooksFeatureEnabled(in: configContents),
             managedHooksPresent: managedHooksPresent,
+            brokersPermissionRequests: brokersPermissionRequests,
             manifest: manifest
         )
     }
 
     @discardableResult
-    public func install(hooksBinaryURL: URL) throws -> CodexHookInstallationStatus {
+    public func install(
+        hooksBinaryURL: URL,
+        brokerPermissionRequests: Bool = false
+    ) throws -> CodexHookInstallationStatus {
         try fileManager.createDirectory(at: codexDirectory, withIntermediateDirectories: true)
 
         let configURL = codexDirectory.appendingPathComponent("config.toml")
@@ -98,7 +109,11 @@ public final class CodexHookInstallationManager: @unchecked Sendable {
             in: existingConfig,
             preferredKey: featureKeyProvider()
         )
-        let hooksMutation = try CodexHookInstaller.installHooksJSON(existingData: existingHooks, hookCommand: command)
+        let hooksMutation = try CodexHookInstaller.installHooksJSON(
+            existingData: existingHooks,
+            hookCommand: command,
+            brokerPermissionRequests: brokerPermissionRequests
+        )
 
         if featureMutation.changed, fileManager.fileExists(atPath: configURL.path) {
             try backupFile(at: configURL)
