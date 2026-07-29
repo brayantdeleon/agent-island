@@ -97,7 +97,7 @@ cp "${OVERLAY_DIR}/rules.mk" "${TARGET_KEYMAP_DIR}/rules.mk"
 printf '#pragma once\n#define AGENT_ISLAND_BUILD_ID 0x%su\n' "${build_id}" > "${TARGET_KEYMAP_DIR}/agent_island_build_id.h"
 overlay_installed=true
 
-print "Building Agent Island diagnostic firmware (build ID 0x${build_id})..."
+print "Building Agent Island firmware (build ID 0x${build_id})..."
 (
     cd "${QMK_SOURCE}"
     "${QMK_CLI_BIN}" compile -kb "${KEYBOARD}" -km "${CUSTOM_KEYMAP}"
@@ -120,8 +120,8 @@ Agent Island source digest (SHA-256): ${source_digest}
 Agent Island build ID (first 32 digest bits): 0x${build_id}
 Stock firmware: ${stock_path}
 Stock firmware SHA-256: ${stock_sha}
-Diagnostic firmware: ${custom_path}
-Diagnostic firmware SHA-256: ${custom_sha}
+Agent Island firmware: ${custom_path}
+Agent Island firmware SHA-256: ${custom_sha}
 MANIFEST
 
 print

@@ -53,41 +53,81 @@ enum agent_island_action {
 enum agent_island_layer_reason {
     AI_LAYER_CONTROL_TAP      = 0,
     AI_LAYER_WATCHDOG_EXPIRED = 1,
+    AI_LAYER_HOST_DISCONNECT  = 2,
+    AI_LAYER_FIRMWARE_RESET   = 3,
+    AI_LAYER_INCOMPATIBLE_HOST = 4,
 };
 
 enum agent_island_constants {
-    AI_COMMAND_FAMILY       = 0xAC,
-    AI_MAGIC_0              = 0x41,
-    AI_MAGIC_1              = 0x49,
-    AI_PROTOCOL_MAJOR       = 0x01,
-    AI_PROTOCOL_MINOR       = 0x00,
-    AI_RESPONSE_FLAG        = 0x01,
-    AI_REPORT_SIZE          = 32,
-    AI_PAYLOAD_MAX          = 22,
-    AI_SLOT_COUNT           = 10,
-    AI_DEFAULT_WATCHDOG_SEC = 6,
-    AI_ALL_CAPABILITIES     = 0x1F,
-    AI_LED_CONTROL          = 18,
+    AI_COMMAND_FAMILY          = 0xAC,
+    AI_MAGIC_0                 = 0x41,
+    AI_MAGIC_1                 = 0x49,
+    AI_PROTOCOL_MAJOR          = 0x01,
+    AI_PROTOCOL_MINOR          = 0x00,
+    AI_RESPONSE_FLAG           = 0x01,
+    AI_ERROR_FLAG              = 0x02,
+    AI_KNOWN_FLAGS             = AI_RESPONSE_FLAG | AI_ERROR_FLAG,
+    AI_REPORT_SIZE             = 32,
+    AI_PAYLOAD_MAX             = 22,
+    AI_SLOT_COUNT              = 10,
+    AI_DEFAULT_WATCHDOG_SEC    = 6,
+    AI_CAP_STATE_SNAPSHOTS     = 1U << 0,
+    AI_CAP_SELECTION           = 1U << 1,
+    AI_CAP_JUMP                = 1U << 2,
+    AI_CAP_ALLOW_ONCE          = 1U << 3,
+    AI_CAP_DENY                = 1U << 4,
+    AI_ALL_CAPABILITIES        = 0x1F,
+    AI_ALLOWED_ACTIONS         = 0x07,
+    AI_MAX_SLOT_STATE          = 6,
+    AI_RESPONSE_TIMEOUT_MS     = 2000,
+    AI_SELECTION_FEEDBACK_MS   = 350,
+    AI_ACTION_FEEDBACK_MS      = 500,
+    AI_REJECTED_FEEDBACK_MS    = 650,
+    AI_UNAVAILABLE_FEEDBACK_MS = 500,
+    AI_LED_CONTROL             = 18,
 };
 
 static const uint8_t ai_slot_leds[AI_SLOT_COUNT] = {19, 20, 21, 15, 16, 17, 10, 11, 12, 23};
+static const uint8_t ai_action_leds[3]            = {25, 13, 8};
 
 static bool     ai_handshake_active;
 static bool     ai_agent_control_active;
 static bool     ai_fn_active;
 static bool     ai_fn_restore_agent;
-static bool     ai_unavailable_feedback_active;
+static bool     ai_rgb_was_enabled;
+static bool     ai_feedback_active;
+static bool     ai_feedback_restore_rgb_off;
+static bool     ai_snapshot_seen;
+static bool     ai_pending_selection;
+static bool     ai_pending_action;
 static uint8_t  ai_last_transport;
 static uint8_t  ai_watchdog_seconds = AI_DEFAULT_WATCHDOG_SEC;
 static uint8_t  ai_slot_states[AI_SLOT_COUNT];
+static uint8_t  ai_overflow_count;
 static uint8_t  ai_selected_slot = 0xFF;
 static uint8_t  ai_allowed_actions;
+static uint8_t  ai_selection_lifetime_seconds;
+static uint8_t  ai_pending_selection_slot;
+static uint8_t  ai_pending_action_slot;
+static uint8_t  ai_pending_action_kind;
+static uint8_t  ai_feedback_led;
+static uint8_t  ai_feedback_red;
+static uint8_t  ai_feedback_green;
+static uint8_t  ai_feedback_blue;
 static uint8_t  ai_selection_token[8];
 static uint8_t  ai_connection_nonce[8];
+static uint16_t ai_host_capabilities;
 static uint16_t ai_snapshot_generation;
 static uint16_t ai_device_sequence = 1;
+static uint16_t ai_last_host_sequence;
+static uint16_t ai_pending_selection_sequence;
+static uint16_t ai_pending_action_sequence;
 static uint32_t ai_watchdog_timer;
-static uint32_t ai_unavailable_feedback_timer;
+static uint32_t ai_selection_timer;
+static uint32_t ai_pending_selection_timer;
+static uint32_t ai_pending_action_timer;
+static uint32_t ai_feedback_timer;
+static uint16_t ai_feedback_duration_ms;
 
 static uint8_t ai_crc8(const uint8_t *data, uint8_t length) {
     uint8_t crc = 0;
@@ -128,14 +168,37 @@ static bool ai_nonce_matches(const uint8_t *nonce) {
     return ai_handshake_active && memcmp(nonce, ai_connection_nonce, sizeof(ai_connection_nonce)) == 0;
 }
 
+static bool ai_bytes_are_nonzero(const uint8_t *bytes, uint8_t length) {
+    uint8_t combined = 0;
+    for (uint8_t i = 0; i < length; ++i) {
+        combined |= bytes[i];
+    }
+    return combined != 0;
+}
+
+static bool ai_sequence_is_newer(uint16_t candidate, uint16_t previous) {
+    uint16_t distance = candidate - previous;
+    return distance != 0 && distance < 0x8000;
+}
+
 static bool ai_packet_is_valid(const uint8_t *data, uint8_t length) {
-    return length == AI_REPORT_SIZE &&
-           data[0] == AI_COMMAND_FAMILY &&
-           data[1] == AI_MAGIC_0 &&
-           data[2] == AI_MAGIC_1 &&
-           data[3] == AI_PROTOCOL_MAJOR &&
-           data[8] <= AI_PAYLOAD_MAX &&
-           ai_crc8(data, AI_REPORT_SIZE - 1) == data[AI_REPORT_SIZE - 1];
+    if (length != AI_REPORT_SIZE ||
+        data[0] != AI_COMMAND_FAMILY ||
+        data[1] != AI_MAGIC_0 ||
+        data[2] != AI_MAGIC_1 ||
+        data[3] != AI_PROTOCOL_MAJOR ||
+        (data[5] & ~AI_KNOWN_FLAGS) != 0 ||
+        data[8] > AI_PAYLOAD_MAX ||
+        ai_crc8(data, AI_REPORT_SIZE - 1) != data[AI_REPORT_SIZE - 1]) {
+        return false;
+    }
+
+    for (uint8_t index = 9 + data[8]; index < AI_REPORT_SIZE - 1; ++index) {
+        if (data[index] != 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static void ai_send_packet(uint8_t type, uint8_t flags, uint16_t sequence, const uint8_t *payload, uint8_t payload_length) {
@@ -155,10 +218,69 @@ static void ai_send_packet(uint8_t type, uint8_t flags, uint16_t sequence, const
     kc_raw_hid_send(ai_last_transport, packet, sizeof(packet));
 }
 
+static void ai_clear_pending_intents(void) {
+    ai_pending_selection          = false;
+    ai_pending_action             = false;
+    ai_pending_selection_slot     = 0xFF;
+    ai_pending_action_slot        = 0xFF;
+    ai_pending_action_kind        = 0;
+    ai_pending_selection_sequence = 0;
+    ai_pending_action_sequence    = 0;
+}
+
 static void ai_clear_selection(void) {
-    ai_selected_slot   = 0xFF;
-    ai_allowed_actions = 0;
+    ai_selected_slot              = 0xFF;
+    ai_allowed_actions            = 0;
+    ai_selection_lifetime_seconds = 0;
     memset(ai_selection_token, 0, sizeof(ai_selection_token));
+    ai_clear_pending_intents();
+}
+
+static void ai_end_feedback(void) {
+    if (!ai_feedback_active) {
+        return;
+    }
+
+    ai_feedback_active = false;
+    if (ai_feedback_restore_rgb_off) {
+        rgb_matrix_disable_noeeprom();
+    }
+    ai_feedback_restore_rgb_off = false;
+}
+
+static void ai_start_feedback(
+    uint8_t led,
+    uint8_t red,
+    uint8_t green,
+    uint8_t blue,
+    uint16_t duration_ms
+) {
+    ai_end_feedback();
+    if (!ai_agent_control_active && !rgb_matrix_is_enabled()) {
+        rgb_matrix_enable_noeeprom();
+        ai_feedback_restore_rgb_off = true;
+    }
+
+    ai_feedback_led         = led;
+    ai_feedback_red         = red;
+    ai_feedback_green       = green;
+    ai_feedback_blue        = blue;
+    ai_feedback_duration_ms = duration_ms;
+    ai_feedback_timer       = timer_read32();
+    ai_feedback_active      = true;
+}
+
+static void ai_restore_base_rgb(void) {
+    if (!ai_rgb_was_enabled && rgb_matrix_is_enabled()) {
+        rgb_matrix_disable_noeeprom();
+    }
+}
+
+static void ai_prepare_agent_rgb(void) {
+    ai_rgb_was_enabled = rgb_matrix_is_enabled();
+    if (!ai_rgb_was_enabled) {
+        rgb_matrix_enable_noeeprom();
+    }
 }
 
 static void ai_send_layer_changed(bool enabled, uint8_t reason) {
@@ -174,12 +296,16 @@ static void ai_set_agent_control(bool enabled, uint8_t reason) {
         return;
     }
 
-    ai_agent_control_active = enabled;
+    ai_end_feedback();
     ai_clear_selection();
     if (enabled) {
+        ai_prepare_agent_rgb();
+        ai_agent_control_active = true;
         layer_on(AGENT);
     } else {
         layer_off(AGENT);
+        ai_agent_control_active = false;
+        ai_restore_base_rgb();
     }
     if (ai_handshake_active) {
         ai_send_layer_changed(enabled, reason);
@@ -197,87 +323,239 @@ static void ai_expire_connection(void) {
     ai_clear_selection();
     memset(ai_connection_nonce, 0, sizeof(ai_connection_nonce));
     memset(ai_slot_states, 0, sizeof(ai_slot_states));
+    ai_host_capabilities   = 0;
+    ai_overflow_count      = 0;
+    ai_snapshot_seen       = false;
     ai_snapshot_generation = 0;
+    ai_last_host_sequence   = 0;
 }
 
 static void ai_refresh_watchdog(void) {
     ai_watchdog_timer = timer_read32();
 }
 
-static void ai_handle_hello(uint8_t src, const uint8_t *packet) {
-    const uint8_t *payload = &packet[9];
-    if (packet[8] < 12 || !ai_nonce_is_nonzero(&payload[1])) {
-        return;
-    }
-
-    if (ai_agent_control_active) {
-        layer_off(AGENT);
-        ai_agent_control_active = false;
-    }
-    ai_clear_selection();
-    memset(ai_slot_states, 0, sizeof(ai_slot_states));
-    memcpy(ai_connection_nonce, &payload[1], sizeof(ai_connection_nonce));
-    ai_last_transport    = src;
-    ai_handshake_active  = true;
-    ai_watchdog_seconds  = AI_DEFAULT_WATCHDOG_SEC;
-    ai_device_sequence   = 1;
-    ai_snapshot_generation = 0;
-    ai_refresh_watchdog();
-
+static void ai_send_capabilities(uint16_t response_sequence) {
     uint8_t response[18] = {0};
     memcpy(response, ai_connection_nonce, sizeof(ai_connection_nonce));
     response[8]  = AI_PROTOCOL_MINOR;
     response[9]  = AI_SLOT_COUNT;
     response[10] = AI_ALL_CAPABILITIES;
     response[11] = 0;
-    response[12] = src == RAW_HID_SRC_USB ? 1 : 2;
+    response[12] = ai_last_transport == RAW_HID_SRC_USB ? 1 : 2;
     response[13] = ai_watchdog_seconds;
     ai_write_u32(&response[14], AGENT_ISLAND_BUILD_ID);
-    ai_send_packet(AI_MSG_CAPABILITIES, AI_RESPONSE_FLAG, ai_read_u16(&packet[6]), response, sizeof(response));
+    ai_send_packet(
+        AI_MSG_CAPABILITIES,
+        AI_RESPONSE_FLAG,
+        response_sequence,
+        response,
+        sizeof(response)
+    );
+}
+
+static void ai_handle_hello(uint8_t src, const uint8_t *packet) {
+    const uint8_t *payload = &packet[9];
+    uint16_t host_capabilities;
+    if (packet[5] != 0 ||
+        packet[8] != 12 ||
+        payload[0] != AI_PROTOCOL_MINOR ||
+        !ai_nonce_is_nonzero(&payload[1])) {
+        return;
+    }
+
+    host_capabilities = ai_read_u16(&payload[10]);
+    if (!(host_capabilities & AI_CAP_STATE_SNAPSHOTS) ||
+        (host_capabilities & ~AI_ALL_CAPABILITIES) != 0) {
+        return;
+    }
+
+    if (ai_handshake_active &&
+        src == ai_last_transport &&
+        memcmp(&payload[1], ai_connection_nonce, sizeof(ai_connection_nonce)) == 0 &&
+        ai_read_u16(&packet[6]) == ai_last_host_sequence) {
+        ai_refresh_watchdog();
+        ai_send_capabilities(ai_last_host_sequence);
+        return;
+    }
+
+    if (ai_agent_control_active) {
+        ai_set_agent_control(false, AI_LAYER_HOST_DISCONNECT);
+    }
+    ai_end_feedback();
+    ai_clear_selection();
+    memset(ai_slot_states, 0, sizeof(ai_slot_states));
+    memcpy(ai_connection_nonce, &payload[1], sizeof(ai_connection_nonce));
+    ai_last_transport      = src;
+    ai_handshake_active    = true;
+    ai_watchdog_seconds    = AI_DEFAULT_WATCHDOG_SEC;
+    ai_host_capabilities   = host_capabilities;
+    ai_device_sequence     = 1;
+    ai_last_host_sequence  = ai_read_u16(&packet[6]);
+    ai_snapshot_seen       = false;
+    ai_overflow_count      = 0;
+    ai_snapshot_generation = 0;
+    ai_refresh_watchdog();
+
+    ai_send_capabilities(ai_last_host_sequence);
 }
 
 static void ai_handle_snapshot(const uint8_t *packet) {
     const uint8_t *payload = &packet[9];
-    if (packet[8] < 21 || !ai_nonce_matches(payload)) {
+    uint16_t       sequence;
+    uint16_t       generation;
+    const uint8_t *states;
+
+    if (packet[5] != 0 || packet[8] != 21 || !ai_nonce_matches(payload)) {
         return;
     }
 
-    ai_snapshot_generation = ai_read_u16(&payload[8]);
-    memcpy(ai_slot_states, &payload[11], sizeof(ai_slot_states));
+    sequence = ai_read_u16(&packet[6]);
+    if (!ai_sequence_is_newer(sequence, ai_last_host_sequence)) {
+        return;
+    }
+
+    states = &payload[11];
+    for (uint8_t slot = 0; slot < AI_SLOT_COUNT; ++slot) {
+        if (states[slot] > AI_MAX_SLOT_STATE) {
+            return;
+        }
+    }
+
+    generation = ai_read_u16(&payload[8]);
+    if (ai_snapshot_seen && generation == ai_snapshot_generation) {
+        if (payload[10] != ai_overflow_count ||
+            memcmp(states, ai_slot_states, sizeof(ai_slot_states)) != 0) {
+            return;
+        }
+    } else {
+        if (ai_selected_slot < AI_SLOT_COUNT &&
+            ai_slot_states[ai_selected_slot] != states[ai_selected_slot]) {
+            ai_clear_selection();
+        }
+        ai_snapshot_generation = generation;
+        ai_overflow_count      = payload[10];
+        memcpy(ai_slot_states, states, sizeof(ai_slot_states));
+        ai_snapshot_seen = true;
+    }
+
+    ai_last_host_sequence = sequence;
     ai_refresh_watchdog();
 }
 
 static void ai_handle_heartbeat(const uint8_t *packet) {
-    if (packet[8] >= 8 && ai_nonce_matches(&packet[9])) {
-        ai_refresh_watchdog();
+    uint16_t sequence;
+    if (packet[5] != 0 || packet[8] != 8 || !ai_nonce_matches(&packet[9])) {
+        return;
     }
+
+    sequence = ai_read_u16(&packet[6]);
+    if (!ai_sequence_is_newer(sequence, ai_last_host_sequence)) {
+        return;
+    }
+    ai_last_host_sequence = sequence;
+    ai_refresh_watchdog();
 }
 
 static void ai_handle_selection_ack(const uint8_t *packet) {
     const uint8_t *payload = &packet[9];
-    if (packet[8] < 22 || !ai_nonce_matches(payload)) {
+    uint8_t        slot;
+    uint8_t        result;
+    uint8_t        allowed_actions;
+    const uint8_t *token;
+
+    if ((packet[5] & AI_RESPONSE_FLAG) == 0 ||
+        packet[8] != 22 ||
+        !ai_nonce_matches(payload) ||
+        !ai_pending_selection ||
+        ai_read_u16(&packet[6]) != ai_pending_selection_sequence) {
         return;
     }
 
-    uint8_t slot   = payload[8];
-    uint8_t result = payload[9];
-    if (result != 0 || slot >= AI_SLOT_COUNT) {
+    slot    = payload[8];
+    result  = payload[9];
+    token   = &payload[12];
+    ai_pending_selection = false;
+
+    if ((packet[5] & AI_ERROR_FLAG) != 0 ||
+        result != 0 ||
+        slot >= AI_SLOT_COUNT ||
+        slot != ai_pending_selection_slot ||
+        payload[21] == 0 ||
+        !ai_bytes_are_nonzero(token, sizeof(ai_selection_token))) {
         ai_clear_selection();
+        if (slot < AI_SLOT_COUNT) {
+            ai_start_feedback(
+                ai_slot_leds[slot],
+                255,
+                96,
+                0,
+                AI_REJECTED_FEEDBACK_MS
+            );
+        }
         return;
     }
 
-    ai_selected_slot   = slot;
-    ai_allowed_actions = payload[20];
-    memcpy(ai_selection_token, &payload[12], sizeof(ai_selection_token));
+    allowed_actions = payload[20] & AI_ALLOWED_ACTIONS;
+    if (!(ai_host_capabilities & AI_CAP_JUMP)) {
+        allowed_actions &= ~(1U << (AI_ACTION_JUMP - 1));
+    }
+    if (!(ai_host_capabilities & AI_CAP_ALLOW_ONCE)) {
+        allowed_actions &= ~(1U << (AI_ACTION_ALLOW_ONCE - 1));
+    }
+    if (!(ai_host_capabilities & AI_CAP_DENY)) {
+        allowed_actions &= ~(1U << (AI_ACTION_DENY - 1));
+    }
+
+    ai_selected_slot              = slot;
+    ai_allowed_actions            = allowed_actions;
+    ai_selection_lifetime_seconds = payload[21];
+    ai_selection_timer             = timer_read32();
+    memcpy(ai_selection_token, token, sizeof(ai_selection_token));
+    ai_start_feedback(
+        ai_slot_leds[slot],
+        255,
+        255,
+        255,
+        AI_SELECTION_FEEDBACK_MS
+    );
 }
 
 static void ai_handle_action_result(const uint8_t *packet) {
     const uint8_t *payload = &packet[9];
-    if (packet[8] < 11 || !ai_nonce_matches(payload)) {
+    uint8_t result;
+
+    if ((packet[5] & AI_RESPONSE_FLAG) == 0 ||
+        packet[8] != 11 ||
+        !ai_nonce_matches(payload) ||
+        !ai_pending_action ||
+        ai_read_u16(&packet[6]) != ai_pending_action_sequence ||
+        payload[8] != ai_pending_action_slot ||
+        payload[9] != ai_pending_action_kind) {
         return;
     }
 
-    if (payload[10] != 0) {
+    result            = payload[10];
+    ai_pending_action = false;
+    if ((packet[5] & AI_ERROR_FLAG) != 0 || result != 0) {
+        ai_start_feedback(
+            ai_action_leds[ai_pending_action_kind - 1],
+            255,
+            96,
+            0,
+            AI_REJECTED_FEEDBACK_MS
+        );
+        ai_clear_selection();
+        return;
+    }
+
+    ai_start_feedback(
+        ai_action_leds[ai_pending_action_kind - 1],
+        0,
+        255,
+        0,
+        AI_ACTION_FEEDBACK_MS
+    );
+    if (ai_pending_action_kind != AI_ACTION_JUMP) {
         ai_clear_selection();
     }
 }
@@ -311,25 +589,57 @@ bool keychron_raw_hid_receive_user(uint8_t src, uint8_t *data, uint8_t length) {
 }
 
 static void ai_send_slot_selected(uint8_t slot) {
+    uint16_t sequence;
+
+    ai_clear_selection();
+    sequence                      = ai_device_sequence++;
+    ai_pending_selection          = true;
+    ai_pending_selection_slot     = slot;
+    ai_pending_selection_sequence = sequence;
+    ai_pending_selection_timer    = timer_read32();
+
     uint8_t payload[11] = {0};
     memcpy(payload, ai_connection_nonce, sizeof(ai_connection_nonce));
     payload[8] = slot;
     ai_write_u16(&payload[9], ai_snapshot_generation);
-    ai_send_packet(AI_MSG_SLOT_SELECTED, 0, ai_device_sequence++, payload, sizeof(payload));
+    ai_send_packet(AI_MSG_SLOT_SELECTED, 0, sequence, payload, sizeof(payload));
 }
 
 static void ai_send_action(uint8_t action) {
-    uint8_t required_bit = 1U << (action - 1);
-    if (ai_selected_slot >= AI_SLOT_COUNT || !(ai_allowed_actions & required_bit)) {
+    uint8_t  required_bit;
+    uint16_t sequence;
+
+    if (action < AI_ACTION_JUMP || action > AI_ACTION_DENY) {
         return;
     }
+    required_bit = 1U << (action - 1);
+    if (ai_pending_action ||
+        ai_selected_slot >= AI_SLOT_COUNT ||
+        !(ai_allowed_actions & required_bit) ||
+        !ai_bytes_are_nonzero(ai_selection_token, sizeof(ai_selection_token))) {
+        ai_start_feedback(
+            ai_action_leds[action - 1],
+            255,
+            96,
+            0,
+            AI_REJECTED_FEEDBACK_MS
+        );
+        return;
+    }
+
+    sequence                   = ai_device_sequence++;
+    ai_pending_action          = true;
+    ai_pending_action_slot     = ai_selected_slot;
+    ai_pending_action_kind     = action;
+    ai_pending_action_sequence = sequence;
+    ai_pending_action_timer    = timer_read32();
 
     uint8_t payload[18] = {0};
     memcpy(payload, ai_connection_nonce, sizeof(ai_connection_nonce));
     payload[8] = ai_selected_slot;
     payload[9] = action;
     memcpy(&payload[10], ai_selection_token, sizeof(ai_selection_token));
-    ai_send_packet(AI_MSG_ACTION_INVOKED, 0, ai_device_sequence++, payload, sizeof(payload));
+    ai_send_packet(AI_MSG_ACTION_INVOKED, 0, sequence, payload, sizeof(payload));
 }
 
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
@@ -338,8 +648,13 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             if (ai_handshake_active && timer_elapsed32(ai_watchdog_timer) <= (uint32_t)ai_watchdog_seconds * 1000U) {
                 ai_set_agent_control(!ai_agent_control_active, AI_LAYER_CONTROL_TAP);
             } else {
-                ai_unavailable_feedback_active = true;
-                ai_unavailable_feedback_timer  = timer_read32();
+                ai_start_feedback(
+                    AI_LED_CONTROL,
+                    255,
+                    96,
+                    0,
+                    AI_UNAVAILABLE_FEEDBACK_MS
+                );
             }
         }
         return false;
@@ -350,12 +665,14 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             ai_fn_restore_agent = ai_agent_control_active;
             if (ai_fn_restore_agent) {
                 layer_off(AGENT);
+                ai_restore_base_rgb();
             }
             layer_on(FN);
             ai_fn_active = true;
         } else if (!record->event.pressed && ai_fn_active) {
             layer_off(FN);
             if (ai_fn_restore_agent && ai_agent_control_active && ai_handshake_active) {
+                ai_prepare_agent_rgb();
                 layer_on(AGENT);
             }
             ai_fn_active         = false;
@@ -366,7 +683,18 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
 
     if (keycode >= AI_SLOT_1 && keycode <= AI_SLOT_10) {
         if (record->event.pressed && ai_agent_control_active && ai_handshake_active) {
-            ai_send_slot_selected((uint8_t)(keycode - AI_SLOT_1));
+            uint8_t slot = (uint8_t)(keycode - AI_SLOT_1);
+            if (ai_host_capabilities & AI_CAP_SELECTION) {
+                ai_send_slot_selected(slot);
+            } else {
+                ai_start_feedback(
+                    ai_slot_leds[slot],
+                    255,
+                    96,
+                    0,
+                    AI_REJECTED_FEEDBACK_MS
+                );
+            }
         }
         return false;
     }
@@ -434,8 +762,44 @@ void matrix_scan_user(void) {
     if (ai_handshake_active && timer_elapsed32(ai_watchdog_timer) > (uint32_t)ai_watchdog_seconds * 1000U) {
         ai_expire_connection();
     }
-    if (ai_unavailable_feedback_active && timer_elapsed32(ai_unavailable_feedback_timer) > 500) {
-        ai_unavailable_feedback_active = false;
+    if (ai_feedback_active && timer_elapsed32(ai_feedback_timer) > ai_feedback_duration_ms) {
+        ai_end_feedback();
+    }
+    if (ai_pending_selection &&
+        timer_elapsed32(ai_pending_selection_timer) > AI_RESPONSE_TIMEOUT_MS) {
+        uint8_t slot       = ai_pending_selection_slot;
+        ai_pending_selection = false;
+        ai_clear_selection();
+        if (slot < AI_SLOT_COUNT) {
+            ai_start_feedback(
+                ai_slot_leds[slot],
+                255,
+                96,
+                0,
+                AI_REJECTED_FEEDBACK_MS
+            );
+        }
+    }
+    if (ai_pending_action &&
+        timer_elapsed32(ai_pending_action_timer) > AI_RESPONSE_TIMEOUT_MS) {
+        uint8_t action = ai_pending_action_kind;
+        ai_pending_action = false;
+        ai_clear_selection();
+        if (action >= AI_ACTION_JUMP && action <= AI_ACTION_DENY) {
+            ai_start_feedback(
+                ai_action_leds[action - 1],
+                255,
+                96,
+                0,
+                AI_REJECTED_FEEDBACK_MS
+            );
+        }
+    }
+    if (ai_selected_slot < AI_SLOT_COUNT &&
+        ai_selection_lifetime_seconds > 0 &&
+        timer_elapsed32(ai_selection_timer) >
+            (uint32_t)ai_selection_lifetime_seconds * 1000U) {
+        ai_clear_selection();
     }
 }
 
@@ -457,7 +821,7 @@ static void ai_set_slot_color(uint8_t led, uint8_t state) {
             break;
         case 3:
         case 4: {
-            uint8_t flash = timer_read() & 0x100 ? 255 : 0;
+            uint8_t flash = timer_read() & 0x80 ? 255 : 0;
             rgb_matrix_set_color(led, flash, 0, 0);
             break;
         }
@@ -474,21 +838,39 @@ static void ai_set_slot_color(uint8_t led, uint8_t state) {
 }
 
 bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
-    if (AI_LED_CONTROL >= led_min && AI_LED_CONTROL < led_max) {
-        if (ai_agent_control_active && !ai_fn_active) {
-            rgb_matrix_set_color(AI_LED_CONTROL, 0, 180, 255);
-        } else if (ai_unavailable_feedback_active) {
-            rgb_matrix_set_color(AI_LED_CONTROL, 255, 96, 0);
-        }
-    }
-
     if (ai_agent_control_active && !ai_fn_active) {
+        if (AI_LED_CONTROL >= led_min && AI_LED_CONTROL < led_max) {
+            if (ai_overflow_count > 0) {
+                rgb_matrix_set_color(AI_LED_CONTROL, 180, 0, 255);
+            } else {
+                rgb_matrix_set_color(AI_LED_CONTROL, 0, 180, 255);
+            }
+        }
+
         for (uint8_t slot = 0; slot < AI_SLOT_COUNT; ++slot) {
             uint8_t led = ai_slot_leds[slot];
             if (led >= led_min && led < led_max) {
                 ai_set_slot_color(led, ai_slot_states[slot]);
             }
         }
+        for (uint8_t action = 0; action < 3; ++action) {
+            uint8_t led = ai_action_leds[action];
+            if (led >= led_min && led < led_max) {
+                rgb_matrix_set_color(led, 0, 0, 0);
+            }
+        }
+    }
+
+    if (ai_feedback_active &&
+        ai_feedback_led >= led_min &&
+        ai_feedback_led < led_max &&
+        !ai_fn_active) {
+        rgb_matrix_set_color(
+            ai_feedback_led,
+            ai_feedback_red,
+            ai_feedback_green,
+            ai_feedback_blue
+        );
     }
     return true;
 }

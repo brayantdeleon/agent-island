@@ -3,8 +3,8 @@
 - **Protocol:** Agent Island K0 Max Raw HID
 - **Major version:** 1
 - **Minor version:** 0
-- **Status:** Round 1 contract; packet mechanics must be validated by the
-  Round 2 hardware spike
+- **Status:** Protocol v1; packet mechanics validated in Round 2 and complete
+  keyboard-side behavior implemented in Round 5
 
 ## Purpose
 

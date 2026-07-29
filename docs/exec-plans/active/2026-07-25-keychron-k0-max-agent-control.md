@@ -369,16 +369,51 @@ remain Round 6 work.
 
 ### Round 5 — Complete firmware behavior
 
-- [ ] Implement the dedicated M4 control behavior and momentary M5 Fn
+- [x] Implement the dedicated M4 control behavior and momentary M5 Fn
   behavior.
-- [ ] Implement all ten LED states and local animations.
-- [ ] Implement selection, jump, allow-once, and deny intents.
-- [ ] Implement action acknowledgements and local feedback.
-- [ ] Keep all live Agent Island state in RAM.
-- [ ] Implement watchdog-driven clearing and base-layer recovery.
+- [x] Implement all ten LED states and local animations.
+- [x] Implement selection, jump, allow-once, and deny intents.
+- [x] Implement action acknowledgements and local feedback.
+- [x] Keep all live Agent Island state in RAM.
+- [x] Implement watchdog-driven clearing and base-layer recovery.
 
 Exit criterion: firmware behavior matches the protocol using the diagnostic
 host, with no Agent Island application dependency.
+
+#### Round 5 evidence
+
+On 2026-07-28:
+
+- Stock and Agent Island firmware rebuilt from pinned Keychron QMK commit
+  `07bfc38a4b11b8dac7ab758dfc5868b4229499ca`. The source digest/build ID is
+  `a41cfb54e09926b6718428823f288b7f85219098accbd943e90d9a63c7360bb4`
+  / `0xa41cfb54`; the 74,696-byte image SHA-256 is
+  `14cddfa2fea8e5d6e8e68e6c8cd89e672f6dc63165313acc85b0fc7e7f5aa5ae`.
+- Firmware now validates flags, padding, exact message shapes, nonces,
+  monotonic host sequences, pending response sequences, selection tokens,
+  token lifetimes, action capabilities, slot-state values, and response
+  timeouts before changing keyboard-side state.
+- M4 provides unavailable amber, active cyan, and overflow purple feedback.
+  M5 temporarily restores the stock Fn layer and base RGB state, then returns
+  to Agent Control on release. Agent Control forces only its number and
+  action-feedback LEDs and restores the user's prior RGB enable state.
+- All ten number positions locally animate the seven protocol states.
+  Successful selection flashes white, accepted Enter/`+`/`-` actions flash
+  green, and rejected, unavailable, stale, or locally impossible actions
+  flash amber. All transient state remains in RAM.
+- The Round 5 diagnostic exercise reported `yes` for handshake, layer, all
+  slots, jump/allow/deny, selection rejection, action rejection, the
+  observer-only approval guard, and watchdog recovery. The user confirmed
+  the complete gallery, feedback colors, and momentary M5 behavior visually.
+- After heartbeat loss, the keyboard emitted watchdog reason `1`, cleared the
+  Agent layer, and restored ordinary RGB and number entry. With the host
+  stopped, M4 gave unavailable feedback and did not capture the numpad.
+- The probe CRC/golden-vector self-test, 18 focused host protocol/transport
+  tests, the live production IOHID handshake/restart test, and the complete
+  suite of 452 Swift Testing tests plus 26 XCTest tests passed.
+- The exercise used the diagnostic host only and dispatched no real Agent
+  Island navigation or approval. USB is verified; 2.4 GHz remains deferred
+  and unclaimed.
 
 ### Round 6 — Read-only Agent Island integration
 

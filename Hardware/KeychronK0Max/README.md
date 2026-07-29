@@ -1,11 +1,11 @@
-# Keychron K0 Max hardware spike
+# Keychron K0 Max Agent Control firmware
 
-This directory contains the Round 2 diagnostic firmware overlay and macOS
-Raw HID probe for the planned Agent Island K0 Max integration. It is not
-production firmware and it does not connect to Agent Island sessions or
-dispatch real approvals.
+This directory contains the pinned Agent Control firmware overlay and macOS
+Raw HID diagnostic host for the Agent Island K0 Max integration. The firmware
+implements the keyboard-side protocol, but the diagnostic host does not
+connect to Agent Island sessions or dispatch real approvals.
 
-The spike exists to prove five things before application integration begins:
+The original Round 2 spike proved five things before application integration:
 
 1. a pinned stock recovery image can be built;
 2. the keyboard can enter its STM32 DFU bootloader independently of its
@@ -49,9 +49,10 @@ Control positions are resolved independently of VIA EEPROM mappings:
   diagnostic selection acknowledgement.
 - Other key and encoder positions emit nothing while Agent Control is active.
 
-Round 2 drives the M4 status LED and all ten digit LEDs. The diagnostic host
-sets slot `1` to running, so `1` pulses blue while the other digit LEDs are
-forced off. Complete production feedback behavior still belongs to Round 5.
+Round 5 adds the complete keyboard-side behavior: all slot-state animations,
+overflow indication, selection and action feedback, response matching and
+timeouts, token lifetime enforcement, negotiated action gating, and
+watchdog-driven cleanup.
 
 ## Build
 
@@ -172,6 +173,40 @@ swift test \
 ```
 
 Both live tests are skipped during ordinary `swift test` runs.
+
+## Round 5 complete-firmware verification
+
+Build and flash the Agent Island image named by `manifest.txt`, then run the
+complete diagnostic exercise:
+
+```sh
+/private/tmp/agent-island-k0-max-artifacts/k0max-probe \
+  --round5-exercise 90
+```
+
+The diagnostic host sends a ten-slot gallery:
+
+- `1` and `8`: running, blue pulse
+- `2` and `9`: actionable approval, fast red flash
+- `3`: observed approval, fast red flash with approval actions disabled
+- `4`: waiting for an answer, amber pulse
+- `5` and `0`: recently completed, solid green
+- `6`: assigned idle, off
+- `7`: unassigned, off
+
+Follow the printed key sequence to verify white selection feedback, accepted
+green action feedback, rejected amber feedback, all ten digit positions,
+M4 cyan/purple status, and momentary M5 Fn behavior. The probe only
+acknowledges anonymous intents; it cannot jump to or resolve a real agent.
+Leave Agent Control active at the end so watchdog recovery can be verified.
+
+The final evidence line must report `yes` for handshake, layer, all slots,
+jump/allow/deny, both rejection paths, the observer guard, and watchdog.
+
+Verified on USB on 2026-07-28 with build `0xa41cfb54`. The complete evidence
+line passed, the visual gallery and M5 behavior matched the contract, and
+post-watchdog M4 unavailable feedback left ordinary number entry active.
+The 2.4 GHz transport remains deferred and unclaimed.
 
 ## Restore stock
 

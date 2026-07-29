@@ -22,6 +22,7 @@ enum {
     AI_RESPONSE_FLAG   = 0x01,
     AI_REPORT_SIZE     = 32,
     AI_PAYLOAD_MAX     = 22,
+    AI_SLOT_COUNT      = 10,
     AI_WATCHDOG_SECONDS = 6,
 };
 
@@ -37,6 +38,12 @@ enum {
     AI_MSG_LAYER_CHANGED  = 0x84,
 };
 
+enum {
+    AI_ACTION_JUMP       = 1,
+    AI_ACTION_ALLOW_ONCE = 2,
+    AI_ACTION_DENY       = 3,
+};
+
 typedef struct {
     IOHIDManagerRef manager;
     IOHIDDeviceRef  device;
@@ -49,7 +56,26 @@ typedef struct {
     bool            selection_seen;
     bool            action_seen;
     bool            watchdog_seen;
+    bool            round5_exercise;
+    bool            selection_rejection_sent;
+    bool            action_rejection_sent;
+    bool            observer_action_violation;
+    uint16_t        selected_slot_mask;
+    uint8_t         invoked_action_mask;
 } probe_context_t;
+
+static const uint8_t round5_slot_states[AI_SLOT_COUNT] = {
+    2, // 1: running
+    3, // 2: actionable approval
+    4, // 3: observed approval
+    5, // 4: waiting for an answer
+    6, // 5: completed
+    1, // 6: idle
+    0, // 7: unassigned
+    2, // 8: running
+    3, // 9: actionable approval
+    6, // 0: completed
+};
 
 static uint8_t crc8_atm(const uint8_t *data, size_t length) {
     uint8_t crc = 0;
@@ -138,25 +164,57 @@ static bool send_packet(
 
 static void send_selection_ack(probe_context_t *context, const uint8_t *request) {
     uint8_t payload[22] = {0};
+    uint8_t slot        = request[17];
+    uint8_t result      = 0;
+    uint8_t actions     = 0x07;
+
+    if (context->round5_exercise) {
+        if (slot == 6) {
+            result = 1;
+        } else {
+            actions = slot == 1 || slot == 8 ? 0x07 : 0x01;
+        }
+    }
+
     memcpy(payload, context->nonce, sizeof(context->nonce));
-    payload[8]  = request[17];
-    payload[9]  = 0;
+    payload[8]  = slot;
+    payload[9]  = result;
     payload[10] = 1;
     payload[11] = 0;
-    for (uint8_t i = 0; i < 8; ++i) {
-        payload[12 + i] = (uint8_t)(0xA1 + i);
+    if (result == 0) {
+        for (uint8_t i = 0; i < 8; ++i) {
+            payload[12 + i] = (uint8_t)(0xA1 + i + slot);
+        }
+        payload[20] = actions;
+        payload[21] = 30;
+    } else {
+        context->selection_rejection_sent = true;
     }
-    payload[20] = 0x07;
-    payload[21] = 30;
     send_packet(context, AI_MSG_SELECTION_ACK, AI_RESPONSE_FLAG, read_u16(&request[6]), payload, sizeof(payload));
 }
 
 static void send_action_result(probe_context_t *context, const uint8_t *request) {
     uint8_t payload[11] = {0};
+    uint8_t slot        = request[17];
+    uint8_t action      = request[18];
+    uint8_t result      = 0;
+
+    if (context->round5_exercise &&
+        slot == 3 &&
+        action == AI_ACTION_JUMP) {
+        result = 8;
+        context->action_rejection_sent = true;
+    }
+    if (context->round5_exercise &&
+        slot == 2 &&
+        (action == AI_ACTION_ALLOW_ONCE || action == AI_ACTION_DENY)) {
+        context->observer_action_violation = true;
+    }
+
     memcpy(payload, context->nonce, sizeof(context->nonce));
-    payload[8]  = request[17];
-    payload[9]  = request[18];
-    payload[10] = 0;
+    payload[8]  = slot;
+    payload[9]  = action;
+    payload[10] = result;
     send_packet(context, AI_MSG_ACTION_RESULT, AI_RESPONSE_FLAG, read_u16(&request[6]), payload, sizeof(payload));
 }
 
@@ -209,6 +267,9 @@ static void input_report_callback(
         case AI_MSG_SLOT_SELECTED:
             if (report[8] >= 11 && memcmp(payload, context->nonce, sizeof(context->nonce)) == 0) {
                 context->selection_seen = true;
+                if (payload[8] < AI_SLOT_COUNT) {
+                    context->selected_slot_mask |= (uint16_t)(1U << payload[8]);
+                }
                 printf("Selection intent: slot=%u generation=%u (diagnostic ACK only)\n", payload[8] + 1, read_u16(&payload[9]));
                 send_selection_ack(context, report);
             }
@@ -216,6 +277,9 @@ static void input_report_callback(
         case AI_MSG_ACTION_INVOKED:
             if (report[8] >= 18 && memcmp(payload, context->nonce, sizeof(context->nonce)) == 0) {
                 context->action_seen = true;
+                if (payload[9] >= AI_ACTION_JUMP && payload[9] <= AI_ACTION_DENY) {
+                    context->invoked_action_mask |= (uint8_t)(1U << (payload[9] - 1));
+                }
                 printf("Action intent: slot=%u action=%u (logged; no agent action dispatched)\n", payload[8] + 1, payload[9]);
                 send_action_result(context, report);
             }
@@ -366,13 +430,17 @@ static bool send_hello(probe_context_t *context) {
     return send_packet(context, AI_MSG_HELLO, 0, context->sequence++, payload, sizeof(payload));
 }
 
-static bool send_snapshot(probe_context_t *context) {
+static bool send_snapshot(
+    probe_context_t *context,
+    uint16_t generation,
+    uint8_t overflow_count,
+    const uint8_t slot_states[AI_SLOT_COUNT]
+) {
     uint8_t payload[21] = {0};
     memcpy(payload, context->nonce, sizeof(context->nonce));
-    payload[8]  = 1;
-    payload[9]  = 0;
-    payload[10] = 0;
-    payload[11] = 2;
+    write_u16(&payload[8], generation);
+    payload[10] = overflow_count;
+    memcpy(&payload[11], slot_states, AI_SLOT_COUNT);
     return send_packet(context, AI_MSG_STATE_SNAPSHOT, 0, context->sequence++, payload, sizeof(payload));
 }
 
@@ -382,6 +450,7 @@ static bool send_heartbeat(probe_context_t *context) {
 
 static int exercise_diagnostic_firmware(probe_context_t *context, int active_seconds) {
     static const uint8_t diagnostic_nonce[8] = {0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01};
+    static const uint8_t spike_slot_states[AI_SLOT_COUNT] = {2};
     memcpy(context->nonce, diagnostic_nonce, sizeof(context->nonce));
     context->sequence = 1;
 
@@ -393,7 +462,7 @@ static int exercise_diagnostic_firmware(probe_context_t *context, int active_sec
         fprintf(stderr, "No compatible Agent Island capabilities response received.\n");
         return 1;
     }
-    if (!send_snapshot(context)) {
+    if (!send_snapshot(context, 1, 0, spike_slot_states)) {
         return 1;
     }
 
@@ -437,13 +506,98 @@ static int exercise_diagnostic_firmware(probe_context_t *context, int active_sec
     return 0;
 }
 
+static int exercise_round5_firmware(probe_context_t *context, int active_seconds) {
+    static const uint8_t round5_nonce[8] = {0x52, 0x35, 0x4B, 0x30, 0x41, 0x49, 0x01, 0x05};
+    memcpy(context->nonce, round5_nonce, sizeof(context->nonce));
+    context->sequence        = 1;
+    context->round5_exercise = true;
+
+    if (!send_hello(context)) {
+        return 1;
+    }
+    run_loop_for(1.0);
+    if (!context->capabilities_seen) {
+        fprintf(stderr, "No compatible Agent Island capabilities response received.\n");
+        return 1;
+    }
+    if (!send_snapshot(context, 1, 0, round5_slot_states)) {
+        return 1;
+    }
+
+    printf("\nRound 5 manual input window (%d seconds):\n", active_seconds);
+    printf("  1. Tap M4 now. M4 starts cyan. Slots: 1/8 blue, 2/3/9 red, 4 amber, 5/0 green, 6/7 off.\n");
+    printf("  2. Press digits 1 through 0 in order. Accepted selections flash white; unassigned 7 flashes amber.\n");
+    printf("  3. Press 1 Enter (green), 2 + (green), reselect 2 then - (green).\n");
+    printf("  4. Press 3 then +: + must flash amber and emit no action. Press 4 Enter: Enter flashes amber after host rejection.\n");
+    printf("  5. Hold M5: Agent LEDs yield to stock Fn. Release M5: Agent Control returns.\n");
+    printf("  6. Around ten seconds in, M4 changes from cyan to purple to demonstrate overflow.\n");
+    printf("  7. Leave Agent Control active after the checks; the watchdog will restore the base layer.\n\n");
+    fflush(stdout);
+
+    CFAbsoluteTime deadline          = CFAbsoluteTimeGetCurrent() + active_seconds;
+    CFAbsoluteTime overflow_deadline = CFAbsoluteTimeGetCurrent() + 10.0;
+    CFAbsoluteTime next_heartbeat    = CFAbsoluteTimeGetCurrent() + 1.5;
+    bool           overflow_sent     = false;
+    while (CFAbsoluteTimeGetCurrent() < deadline) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, true);
+        if (!overflow_sent && CFAbsoluteTimeGetCurrent() >= overflow_deadline) {
+            if (!send_snapshot(context, 2, 1, round5_slot_states)) {
+                return 1;
+            }
+            overflow_sent = true;
+            printf("Overflow snapshot sent: M4 should now be purple.\n");
+            fflush(stdout);
+        }
+        if (CFAbsoluteTimeGetCurrent() >= next_heartbeat) {
+            if (!send_heartbeat(context)) {
+                return 1;
+            }
+            next_heartbeat += 2.0;
+        }
+    }
+
+    printf("Heartbeat stopped. Waiting 8 seconds for the firmware watchdog...\n");
+    fflush(stdout);
+    run_loop_for(8.0);
+
+    bool all_slots_seen = context->selected_slot_mask == 0x03FF;
+    bool all_actions_seen = (context->invoked_action_mask & 0x07) == 0x07;
+    bool complete = context->capabilities_seen &&
+                    context->layer_enabled_seen &&
+                    all_slots_seen &&
+                    all_actions_seen &&
+                    context->selection_rejection_sent &&
+                    context->action_rejection_sent &&
+                    !context->observer_action_violation &&
+                    context->watchdog_seen;
+    printf(
+        "Round 5 evidence: handshake=%s layer=%s all-slots=%s jump/allow/deny=%s "
+        "selection-reject=%s action-reject=%s observer-guard=%s watchdog=%s\n",
+        context->capabilities_seen ? "yes" : "no",
+        context->layer_enabled_seen ? "yes" : "no",
+        all_slots_seen ? "yes" : "no",
+        all_actions_seen ? "yes" : "no",
+        context->selection_rejection_sent ? "yes" : "no",
+        context->action_rejection_sent ? "yes" : "no",
+        context->observer_action_violation ? "no" : "yes",
+        context->watchdog_seen ? "yes" : "no"
+    );
+    if (!complete) {
+        fprintf(stderr, "Round 5 exercise incomplete.\n");
+        return 2;
+    }
+    return 0;
+}
+
 static void print_usage(const char *program) {
     fprintf(
         stderr,
         "Usage:\n"
         "  %s --self-test\n"
         "  %s --identify-stock\n"
-        "  %s --exercise [active-seconds]\n",
+        "  %s --exercise [active-seconds]\n"
+        "  %s --round5-exercise [active-seconds]\n",
+        program,
         program,
         program,
         program
@@ -457,16 +611,23 @@ int main(int argc, char **argv) {
 
     bool identify = argc == 2 && strcmp(argv[1], "--identify-stock") == 0;
     bool exercise = (argc == 2 || argc == 3) && strcmp(argv[1], "--exercise") == 0;
-    if (!identify && !exercise) {
+    bool round5_exercise =
+        (argc == 2 || argc == 3) && strcmp(argv[1], "--round5-exercise") == 0;
+    if (!identify && !exercise && !round5_exercise) {
         print_usage(argv[0]);
         return 64;
     }
 
-    int active_seconds = 30;
-    if (exercise && argc == 3) {
+    int active_seconds = round5_exercise ? 90 : 30;
+    if ((exercise || round5_exercise) && argc == 3) {
         active_seconds = atoi(argv[2]);
-        if (active_seconds < 5 || active_seconds > 300) {
-            fprintf(stderr, "active-seconds must be between 5 and 300.\n");
+        int minimum_seconds = round5_exercise ? 30 : 5;
+        if (active_seconds < minimum_seconds || active_seconds > 300) {
+            fprintf(
+                stderr,
+                "active-seconds must be between %d and 300.\n",
+                minimum_seconds
+            );
             return 64;
         }
     }
@@ -477,7 +638,14 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    int result = identify ? identify_stock_firmware(&context) : exercise_diagnostic_firmware(&context, active_seconds);
+    int result;
+    if (identify) {
+        result = identify_stock_firmware(&context);
+    } else if (round5_exercise) {
+        result = exercise_round5_firmware(&context, active_seconds);
+    } else {
+        result = exercise_diagnostic_firmware(&context, active_seconds);
+    }
     close_device(&context);
     return result;
 }
