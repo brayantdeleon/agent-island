@@ -24,7 +24,7 @@ struct AgentControlDeviceCoordinatorTests {
         #expect(hello.sequence == 1)
         #expect(
             [UInt8](hello.payload)
-                == [0, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 6, 1, 0]
+                == [0, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 6, 7, 0]
         )
 
         harness.transport.emit(
@@ -124,7 +124,9 @@ struct AgentControlDeviceCoordinatorTests {
             .report(try capabilitiesReport(nonce: firstNonce, sequence: 1))
         )
 
-        try await Task.sleep(for: .milliseconds(55))
+        try await waitUntil {
+            harness.transport.sentReports.count >= 3
+        }
 
         let packets = try harness.transport.sentReports.map(
             AgentControlPacketCodec.decode
@@ -180,6 +182,107 @@ struct AgentControlDeviceCoordinatorTests {
         normalizedSecondPayload.replaceSubrange(8..<10, with: [1, 0])
         #expect(snapshotPackets[0].payload == normalizedSecondPayload)
         #expect(harness.coordinator.diagnostics.snapshotGeneration == 2)
+    }
+
+    @Test
+    func slotEpochChangesOnlyWhenThatSlotChanges() throws {
+        let harness = makeHarness()
+        defer { harness.coordinator.stop() }
+        harness.coordinator.setSnapshot(
+            AgentControlSnapshotContent(
+                slots: [
+                    AgentControlSnapshotSlot(identity: "A", lightState: .running),
+                    AgentControlSnapshotSlot(identity: "B", lightState: .running),
+                ],
+                overflowCount: 0
+            )
+        )
+        harness.coordinator.start()
+        harness.transport.emit(
+            .report(try capabilitiesReport(nonce: firstNonce, sequence: 1))
+        )
+        #expect(
+            Array(harness.coordinator.currentSnapshot?.slotEpochs.prefix(2) ?? [])
+                == [1, 1]
+        )
+
+        harness.coordinator.setSnapshot(
+            AgentControlSnapshotContent(
+                slots: [
+                    AgentControlSnapshotSlot(identity: "A", lightState: .running),
+                    AgentControlSnapshotSlot(identity: "B", lightState: .recentlyCompleted),
+                ],
+                overflowCount: 0
+            )
+        )
+        #expect(
+            Array(harness.coordinator.currentSnapshot?.slotEpochs.prefix(2) ?? [])
+                == [1, 2]
+        )
+
+        harness.coordinator.setSnapshot(
+            AgentControlSnapshotContent(
+                slots: [
+                    AgentControlSnapshotSlot(identity: "C", lightState: .running),
+                    AgentControlSnapshotSlot(identity: "B", lightState: .recentlyCompleted),
+                ],
+                overflowCount: 0
+            )
+        )
+        #expect(
+            Array(harness.coordinator.currentSnapshot?.slotEpochs.prefix(2) ?? [])
+                == [2, 2]
+        )
+    }
+
+    @Test
+    func navigationResponsesEchoRequestSequenceAndSetResponseFlags() throws {
+        let harness = makeHarness()
+        defer { harness.coordinator.stop() }
+        harness.coordinator.start()
+        harness.transport.emit(
+            .report(try capabilitiesReport(nonce: firstNonce, sequence: 1))
+        )
+
+        #expect(
+            harness.coordinator.sendSelectionAcknowledgement(
+                requestSequence: 41,
+                connectionNonce: firstNonce,
+                slotIndex: 2,
+                result: .accepted,
+                slotEpoch: 7,
+                selectionToken: 99,
+                allowedActions: [.jump],
+                lifetimeSeconds: 15
+            )
+        )
+        #expect(
+            harness.coordinator.sendActionResult(
+                requestSequence: 42,
+                connectionNonce: firstNonce,
+                slotIndex: 2,
+                action: .jump,
+                result: .staleOrUnknownToken
+            )
+        )
+
+        let selection = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[harness.transport.sentReports.count - 2]
+        )
+        let action = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(selection.messageType == .selectionAcknowledgement)
+        #expect(selection.sequence == 41)
+        #expect(selection.flags == [.response])
+        #expect(selection.payload[9] == AgentControlSelectionResult.accepted.rawValue)
+        #expect(action.messageType == .actionResult)
+        #expect(action.sequence == 42)
+        #expect(action.flags == [.response, .error])
+        #expect(
+            action.payload[10]
+                == AgentControlActionResult.staleOrUnknownToken.rawValue
+        )
     }
 
     @Test
@@ -356,7 +459,7 @@ struct AgentControlDeviceCoordinatorTests {
         let harness = makeHarness()
         defer { harness.coordinator.stop() }
         var messages: [AgentControlDeviceMessage] = []
-        harness.coordinator.onDeviceMessage = { messages.append($0) }
+        harness.coordinator.onDeviceMessage = { messages.append($0.message) }
         harness.coordinator.start()
         harness.transport.emit(
             .report(try capabilitiesReport(nonce: firstNonce, sequence: 1))

@@ -290,6 +290,40 @@ public enum AgentControlAction: UInt8, Equatable, Sendable {
     case deny = 3
 }
 
+public struct AgentControlAllowedActionSet: OptionSet, Equatable, Sendable {
+    public let rawValue: UInt8
+
+    public init(rawValue: UInt8) {
+        self.rawValue = rawValue
+    }
+
+    public static let jump = Self(rawValue: 1 << 0)
+    public static let allowOnce = Self(rawValue: 1 << 1)
+    public static let deny = Self(rawValue: 1 << 2)
+}
+
+public enum AgentControlSelectionResult: UInt8, Equatable, Sendable {
+    case accepted = 0
+    case unassigned = 1
+    case staleSnapshot = 2
+    case sessionUnavailable = 3
+    case appUnavailable = 4
+    case unsupported = 5
+}
+
+public enum AgentControlActionResult: UInt8, Equatable, Sendable {
+    case acceptedForDispatch = 0
+    case noValidSelection = 1
+    case staleOrUnknownToken = 2
+    case slotUnassignedOrReused = 3
+    case actionUnavailable = 4
+    case permissionRequestChangedOrExpired = 5
+    case transportUnavailable = 6
+    case unsupported = 7
+    case appBusy = 8
+    case malformedOrDuplicateConflict = 9
+}
+
 public enum AgentControlLayerChangeReason: UInt8, Equatable, Sendable {
     case controlKey = 0
     case watchdogExpired = 1
@@ -356,6 +390,40 @@ public enum AgentControlMessageCodec {
     public static func heartbeatPayload(connectionNonce: UInt64) -> Data {
         var payload: [UInt8] = []
         appendUInt64(connectionNonce, to: &payload)
+        return Data(payload)
+    }
+
+    public static func selectionAcknowledgementPayload(
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        result: AgentControlSelectionResult,
+        slotEpoch: UInt16,
+        selectionToken: UInt64,
+        allowedActions: AgentControlAllowedActionSet,
+        lifetimeSeconds: UInt8
+    ) -> Data {
+        var payload: [UInt8] = []
+        appendUInt64(connectionNonce, to: &payload)
+        payload.append(slotIndex)
+        payload.append(result.rawValue)
+        appendUInt16(slotEpoch, to: &payload)
+        appendUInt64(selectionToken, to: &payload)
+        payload.append(allowedActions.rawValue)
+        payload.append(lifetimeSeconds)
+        return Data(payload)
+    }
+
+    public static func actionResultPayload(
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        action: AgentControlAction,
+        result: AgentControlActionResult
+    ) -> Data {
+        var payload: [UInt8] = []
+        appendUInt64(connectionNonce, to: &payload)
+        payload.append(slotIndex)
+        payload.append(action.rawValue)
+        payload.append(result.rawValue)
         return Data(payload)
     }
 

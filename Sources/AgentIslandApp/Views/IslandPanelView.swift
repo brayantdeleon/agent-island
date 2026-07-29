@@ -580,11 +580,19 @@ struct IslandPanelView: View {
                 VStack(spacing: 0) {
                     sessionPanelHeader(referenceDate: referenceDate)
 
-                    ScrollView(.vertical) {
-                        sessionRowsContent(referenceDate: referenceDate)
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical) {
+                            sessionRowsContent(referenceDate: referenceDate)
+                        }
+                        .scrollIndicators(.hidden)
+                        .scrollBounceBehavior(.basedOnSize)
+                        .onAppear {
+                            scrollToActionableSession(using: proxy)
+                        }
+                        .onChange(of: actionableSessionID) {
+                            scrollToActionableSession(using: proxy)
+                        }
                     }
-                    .scrollIndicators(.hidden)
-                    .scrollBounceBehavior(.basedOnSize)
 
                     sessionPanelFooter
                 }
@@ -678,8 +686,8 @@ struct IslandPanelView: View {
                                     ? { model.unhideSession(session) } : nil
                             )
                         }
-                    }
                 }
+            }
 
                 hiddenSessionsSection(referenceDate: referenceDate)
             }
@@ -737,11 +745,21 @@ struct IslandPanelView: View {
                         onUnhide: model.isSessionHidden(session)
                             ? { model.unhideSession(session) } : nil
                     )
+                    .id(session.id)
                 }
             }
         }
 
         hiddenSessionsSection(referenceDate: referenceDate)
+    }
+
+    private func scrollToActionableSession(
+        using proxy: ScrollViewProxy
+    ) {
+        guard let actionableSessionID else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            proxy.scrollTo(actionableSessionID, anchor: .center)
+        }
     }
 
     @ViewBuilder

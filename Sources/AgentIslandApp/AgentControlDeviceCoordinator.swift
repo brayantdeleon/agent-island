@@ -59,13 +59,28 @@ struct AgentControlDeviceDiagnostics: Equatable, Sendable {
     }
 }
 
+struct AgentControlDeviceEvent: Equatable, Sendable {
+    let message: AgentControlDeviceMessage
+    let sequence: UInt16
+}
+
+struct AgentControlDeviceSnapshot: Equatable, Sendable {
+    let connectionNonce: UInt64
+    let generation: UInt16
+    let content: AgentControlSnapshotContent
+    let slotEpochs: [UInt16]
+}
+
 @MainActor
 @Observable
 final class AgentControlDeviceCoordinator {
     private(set) var diagnostics = AgentControlDeviceDiagnostics()
 
     @ObservationIgnored
-    var onDeviceMessage: ((AgentControlDeviceMessage) -> Void)?
+    var onDeviceMessage: ((AgentControlDeviceEvent) -> Void)?
+
+    @ObservationIgnored
+    private(set) var currentSnapshot: AgentControlDeviceSnapshot?
 
     @ObservationIgnored
     private let transport: any AgentControlHIDTransport
@@ -120,6 +135,12 @@ final class AgentControlDeviceCoordinator {
 
     @ObservationIgnored
     private var snapshotGeneration: UInt16 = 0
+
+    @ObservationIgnored
+    private var slotEpochs = [UInt16](
+        repeating: 0,
+        count: AgentControlProtocolV1.slotCount
+    )
 
     init(
         transport: any AgentControlHIDTransport = K0MaxHIDTransport(),
@@ -264,7 +285,11 @@ final class AgentControlDeviceCoordinator {
                 messageType: .hello,
                 payload: AgentControlMessageCodec.helloPayload(
                     connectionNonce: nonce,
-                    capabilities: [.stateSnapshots]
+                    capabilities: [
+                        .stateSnapshots,
+                        .selection,
+                        .jump,
+                    ]
                 )
             )
         } catch {
@@ -352,7 +377,12 @@ final class AgentControlDeviceCoordinator {
         if case let .layerChanged(_, enabled, _) = message {
             diagnostics.lastLayerEnabled = enabled
         }
-        onDeviceMessage?(message)
+        onDeviceMessage?(
+            AgentControlDeviceEvent(
+                message: message,
+                sequence: packet.sequence
+            )
+        )
     }
 
     private func handleCapabilities(
@@ -417,6 +447,14 @@ final class AgentControlDeviceCoordinator {
     private func sendSnapshot(_ content: AgentControlSnapshotContent) {
         guard let connectionNonce else { return }
         snapshotGeneration &+= 1
+        var nextSlotEpochs = slotEpochs
+        for index in 0..<AgentControlProtocolV1.slotCount
+        where lastSentSnapshot?.slots[index] != content.slots[index] {
+            nextSlotEpochs[index] &+= 1
+            if nextSlotEpochs[index] == 0 {
+                nextSlotEpochs[index] = 1
+            }
+        }
 
         do {
             _ = try sendPacket(
@@ -427,10 +465,88 @@ final class AgentControlDeviceCoordinator {
                     content: content
                 )
             )
+            slotEpochs = nextSlotEpochs
             lastSentSnapshot = content
+            currentSnapshot = AgentControlDeviceSnapshot(
+                connectionNonce: connectionNonce,
+                generation: snapshotGeneration,
+                content: content,
+                slotEpochs: slotEpochs
+            )
             diagnostics.snapshotGeneration = snapshotGeneration
         } catch {
             scheduleTransportRestart(after: error)
+        }
+    }
+
+    @discardableResult
+    func sendSelectionAcknowledgement(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        result: AgentControlSelectionResult,
+        slotEpoch: UInt16 = 0,
+        selectionToken: UInt64 = 0,
+        allowedActions: AgentControlAllowedActionSet = [],
+        lifetimeSeconds: UInt8 = 0
+    ) -> Bool {
+        guard diagnostics.state == .ready,
+              connectionNonce == self.connectionNonce else {
+            return false
+        }
+
+        do {
+            try sendResponsePacket(
+                messageType: .selectionAcknowledgement,
+                requestSequence: requestSequence,
+                isError: result != .accepted,
+                payload: AgentControlMessageCodec
+                    .selectionAcknowledgementPayload(
+                        connectionNonce: connectionNonce,
+                        slotIndex: slotIndex,
+                        result: result,
+                        slotEpoch: slotEpoch,
+                        selectionToken: selectionToken,
+                        allowedActions: allowedActions,
+                        lifetimeSeconds: lifetimeSeconds
+                    )
+            )
+            return true
+        } catch {
+            scheduleTransportRestart(after: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func sendActionResult(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        action: AgentControlAction,
+        result: AgentControlActionResult
+    ) -> Bool {
+        guard diagnostics.state == .ready,
+              connectionNonce == self.connectionNonce else {
+            return false
+        }
+
+        do {
+            try sendResponsePacket(
+                messageType: .actionResult,
+                requestSequence: requestSequence,
+                isError: result != .acceptedForDispatch,
+                payload: AgentControlMessageCodec.actionResultPayload(
+                    connectionNonce: connectionNonce,
+                    slotIndex: slotIndex,
+                    action: action,
+                    result: result
+                )
+            )
+            return true
+        } catch {
+            scheduleTransportRestart(after: error)
+            return false
         }
     }
 
@@ -484,6 +600,28 @@ final class AgentControlDeviceCoordinator {
         return sequence
     }
 
+    private func sendResponsePacket(
+        messageType: AgentControlMessageType,
+        requestSequence: UInt16,
+        isError: Bool,
+        payload: Data
+    ) throws {
+        var flags: AgentControlPacketFlags = [.response]
+        if isError {
+            flags.insert(.error)
+        }
+        let report = try AgentControlPacketCodec.encode(
+            AgentControlPacket(
+                messageType: messageType,
+                flags: flags,
+                sequence: requestSequence,
+                payload: payload
+            )
+        )
+        try transport.send(report: report)
+        diagnostics.sentReportCount += 1
+    }
+
     private func scheduleTransportRestart(after error: Error) {
         guard isRunning, !isSleeping else { return }
         cancelConnectionTasks()
@@ -534,7 +672,12 @@ final class AgentControlDeviceCoordinator {
         nextHostSequence = 1
         lastDeviceSequence = nil
         lastSentSnapshot = nil
+        currentSnapshot = nil
         snapshotGeneration = 0
+        slotEpochs = [UInt16](
+            repeating: 0,
+            count: AgentControlProtocolV1.slotCount
+        )
         diagnostics.activeTransport = nil
         diagnostics.protocolMinor = nil
         diagnostics.effectiveWatchdogSeconds = nil

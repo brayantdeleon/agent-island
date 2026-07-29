@@ -4,7 +4,7 @@ import AgentIslandCore
 
 final class K0MaxHIDTransportIntegrationTests: XCTestCase {
     @MainActor
-    func testLiveAppModelProjectsSessionStateReadOnly() async throws {
+    func testLiveAppModelProjectsSessionStateWithNavigationCapabilities() async throws {
         guard ProcessInfo.processInfo.environment[
             "AGENT_ISLAND_RUN_K0_MAX_HID_INTEGRATION"
         ] == "1" else {

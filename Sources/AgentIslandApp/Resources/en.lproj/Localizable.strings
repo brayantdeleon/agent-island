@@ -50,7 +50,7 @@
 "settings.general.agentControl.firmware" = "Firmware";
 "settings.general.agentControl.unavailable" = "—";
 "settings.general.agentControl.requiresFirmware" = "Requires the custom Agent Island firmware. USB is supported; 2.4 GHz is not yet verified.";
-"settings.general.agentControl.readOnly" = "Read-only in this version. Number, Enter, +, and - actions are disabled.";
+"settings.general.agentControl.navigation" = "Number keys select and reveal agents; Enter jumps to the selected agent. + and - remain disabled.";
 "settings.general.agentControl.state.stopped" = "Stopped";
 "settings.general.agentControl.state.searching" = "Searching";
 "settings.general.agentControl.state.handshaking" = "Handshaking";

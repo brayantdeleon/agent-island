@@ -471,13 +471,52 @@ On 2026-07-28:
 
 ### Round 7 — Selection and navigation
 
-- [ ] Route digit selection to the exact current slot/session mapping.
-- [ ] Reveal the selected card without jumping.
-- [ ] Route Enter through the existing session-scoped jump behavior.
-- [ ] Reject stale selections and acknowledge accepted/rejected intents.
+- [x] Route digit selection to the exact current slot/session mapping.
+- [x] Reveal the selected card without jumping.
+- [x] Route Enter through the existing session-scoped jump behavior.
+- [x] Reject stale selections and acknowledge accepted/rejected intents.
 
 Exit criterion: selection and jump pass unit, harness, and manual
 multi-session tests.
+
+#### Round 7 implementation evidence
+
+On 2026-07-28:
+
+- The host advertises `stateSnapshots`, `selection`, and `jump`, while
+  continuing to omit `allowOnce` and `deny`. Settings copy now describes the
+  enabled number-key and Enter behavior and keeps `+` and `-` explicitly
+  disabled.
+- Device requests retain their firmware sequence through AppModel routing.
+  Selection and action responses echo that sequence with the protocol's
+  response/error flags and exact 22-byte and 11-byte payloads.
+- Each transmitted slot has a host-only epoch that changes when that slot's
+  session identity or light state changes. Navigation tokens are random,
+  nonzero, valid for 15 seconds, and bound to the connection nonce, slot,
+  slot epoch, session ID, and jump capability.
+- An accepted digit selects the exact identity in the last transmitted
+  snapshot, opens the session list, highlights that card, and scrolls it into
+  view without dispatching a jump. Enter re-reads the current mapping and
+  session, sends `accepted for dispatch`, and then uses the existing
+  session-scoped terminal jump path.
+- Stale snapshot generations, unassigned slots, unavailable sessions,
+  mismatched or expired tokens, slot reuse, lost jump targets, and
+  unsupported actions produce explicit rejection results. A response-send
+  failure prevents the app action and restarts the transport.
+- Protocol, coordinator, and AppModel tests cover wire payloads, response
+  sequences and flags, exact multi-session selection, no-jump reveal,
+  accepted Enter dispatch, stale snapshot rejection, same-color slot reuse,
+  and the Round 7 approval boundary. The focused suites pass 26 tests.
+- The complete CI harness passes string linting, documentation checks, 460
+  Swift Testing tests, 27 XCTest tests, and a clean debug build. Its ordinary
+  run skips the three opt-in K0 Max hardware gates and the existing live
+  Ghostty jump gate.
+- The opt-in AppModel-to-production-IOHID USB gate passes against the
+  connected K0 Max with the Round 7 capability advertisement, including a
+  real handshake plus running and completed state generations.
+
+Manual USB multi-session selection and jump remain required before the Round
+7 exit criterion is complete.
 
 ### Round 8 — Guarded approval and denial
 

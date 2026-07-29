@@ -64,7 +64,7 @@ struct AgentControlAppIntegrationTests {
             harness.transport.sentReports[0]
         )
         #expect(hello.messageType == .hello)
-        #expect(readUInt16(hello.payload, at: 10) == 1)
+        #expect(readUInt16(hello.payload, at: 10) == 7)
 
         harness.transport.emit(
             .report(try capabilitiesReport(sequence: hello.sequence))
@@ -112,25 +112,29 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
-    func deviceIntentsAreProcessedButHaveNoAppActionRoute() throws {
-        let harness = makeHarness(enabled: true)
+    func digitSelectionRevealsExactSessionAndEnterJumps() async throws {
+        let token: UInt64 = 0xA8A7_A6A5_A4A3_A2A1
+        let harness = makeHarness(enabled: true, selectionToken: token)
         defer {
             harness.model.agentControlKeyboardEnabled = false
         }
         let now = Date()
-        let approval = makeSession(
-            id: "approval",
-            firstSeenAt: now,
-            updatedAt: now,
-            phase: .waitingForApproval,
-            permissionRequest: PermissionRequest(
-                title: "Edit",
-                summary: "Edit a file",
-                affectedPath: "/tmp/file"
-            )
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "first",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+                makeSession(
+                    id: "second",
+                    firstSeenAt: now.addingTimeInterval(1),
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
         )
-        harness.model.state = SessionState(sessions: [approval])
-        let originalMessage = harness.model.lastActionMessage
         harness.model.startAgentControlDeviceIntegrationIfNeeded()
         let hello = try AgentControlPacketCodec.decode(
             harness.transport.sentReports[0]
@@ -138,7 +142,10 @@ struct AgentControlAppIntegrationTests {
         harness.transport.emit(
             .report(try capabilitiesReport(sequence: hello.sequence))
         )
-        let reportCountBeforeIntents = harness.transport.sentReports.count
+        let snapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(snapshot.payload, at: 8)
 
         harness.transport.emit(
             .report(
@@ -146,52 +153,229 @@ struct AgentControlAppIntegrationTests {
                     type: .slotSelected,
                     sequence: 1,
                     payload: littleEndianBytes(nonce)
-                        + [0, 1, 0]
-                )
-            )
-        )
-        for (offset, action) in AgentControlAction.allTestCases.enumerated() {
-            harness.transport.emit(
-                .report(
-                    try deviceReport(
-                        type: .actionInvoked,
-                        sequence: UInt16(offset + 2),
-                        payload: littleEndianBytes(nonce)
-                            + [0, action.rawValue]
-                            + littleEndianBytes(UInt64(77 + offset))
-                    )
-                )
-            )
-        }
-        harness.transport.emit(
-            .report(
-                try deviceReport(
-                    type: .layerChanged,
-                    sequence: 5,
-                    payload: littleEndianBytes(nonce)
                         + [
                             1,
-                            AgentControlLayerChangeReason
-                                .controlKey.rawValue,
+                            UInt8(truncatingIfNeeded: generation),
+                            UInt8(truncatingIfNeeded: generation >> 8),
                         ]
                 )
             )
         )
+        let selectionResponse = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(selectionResponse.messageType == .selectionAcknowledgement)
+        #expect(selectionResponse.sequence == 1)
+        #expect(selectionResponse.flags == [.response])
+        #expect(
+            selectionResponse.payload[9]
+                == AgentControlSelectionResult.accepted.rawValue
+        )
+        #expect(readUInt64(selectionResponse.payload, at: 12) == token)
+        #expect(
+            selectionResponse.payload[20]
+                == AgentControlAllowedActionSet.jump.rawValue
+        )
+        #expect(selectionResponse.payload[21] == 15)
+        #expect(harness.model.selectedSessionID == "second")
+        #expect(harness.model.notchStatus == .opened)
+        #expect(harness.model.notchOpenReason == .click)
+        #expect(
+            harness.model.islandSurface
+                == .sessionList(actionableSessionID: "second")
+        )
+        #expect(harness.model.lastActionMessage != "Jumped to second.")
 
+        harness.transport.emit(
+            .report(
+                try deviceReport(
+                    type: .actionInvoked,
+                    sequence: 2,
+                    payload: littleEndianBytes(nonce)
+                        + [1, AgentControlAction.jump.rawValue]
+                        + littleEndianBytes(token)
+                )
+            )
+        )
+        let actionResponse = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(actionResponse.messageType == .actionResult)
+        #expect(actionResponse.sequence == 2)
+        #expect(actionResponse.flags == [.response])
+        #expect(
+            actionResponse.payload[10]
+                == AgentControlActionResult.acceptedForDispatch.rawValue
+        )
+
+        await waitUntil {
+            harness.model.lastActionMessage == "Jumped to second."
+        }
+        #expect(harness.model.notchStatus == .closed)
+    }
+
+    @Test
+    func staleSnapshotAndReusedSlotAreRejectedWithoutJumping() async throws {
+        let token: UInt64 = 0x0102_0304_0506_0708
+        let harness = makeHarness(enabled: true, selectionToken: token)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "original",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+        let firstSnapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(firstSnapshot.payload, at: 8)
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 1,
+                    slotIndex: 0,
+                    generation: generation &+ 1
+                )
+            )
+        )
+        var response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(response.flags == [.response, .error])
+        #expect(
+            response.payload[9]
+                == AgentControlSelectionResult.staleSnapshot.rawValue
+        )
         #expect(harness.model.selectedSessionID == nil)
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 2,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(
+            response.payload[9]
+                == AgentControlSelectionResult.accepted.rawValue
+        )
+
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "replacement",
+                    firstSeenAt: now.addingTimeInterval(2),
+                    updatedAt: now.addingTimeInterval(2),
+                    phase: .running
+                ),
+            ]
+        )
+        harness.transport.emit(
+            .report(
+                try deviceReport(
+                    type: .actionInvoked,
+                    sequence: 3,
+                    payload: littleEndianBytes(nonce)
+                        + [0, AgentControlAction.jump.rawValue]
+                        + littleEndianBytes(token)
+                )
+            )
+        )
+        response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(response.flags == [.response, .error])
+        #expect(
+            response.payload[10]
+                == AgentControlActionResult.slotUnassignedOrReused.rawValue
+        )
+
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(harness.model.lastActionMessage != "Jumped to original.")
+        #expect(harness.model.lastActionMessage != "Jumped to replacement.")
+    }
+
+    @Test
+    func approvalKeysRemainUnsupportedInRoundSeven() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "approval",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .waitingForApproval,
+                    permissionRequest: PermissionRequest(
+                        title: "Edit",
+                        summary: "Edit a file",
+                        affectedPath: "/tmp/file"
+                    )
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        #expect(
+            readUInt16(hello.payload, at: 10)
+                == AgentControlCapabilitySet([
+                    .stateSnapshots,
+                    .selection,
+                    .jump,
+                ]).rawValue
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+        harness.transport.emit(
+            .report(
+                try deviceReport(
+                    type: .actionInvoked,
+                    sequence: 1,
+                    payload: littleEndianBytes(nonce)
+                        + [0, AgentControlAction.allowOnce.rawValue]
+                        + littleEndianBytes(99)
+                )
+            )
+        )
+
+        let response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(response.messageType == .actionResult)
+        #expect(response.flags == [.response, .error])
+        #expect(
+            response.payload[10]
+                == AgentControlActionResult.unsupported.rawValue
+        )
         #expect(
             harness.model.state.session(id: "approval")?.phase
                 == .waitingForApproval
-        )
-        #expect(harness.model.lastActionMessage == originalMessage)
-        #expect(harness.transport.sentReports.count == reportCountBeforeIntents)
-        #expect(
-            harness.model.agentControlDeviceDiagnostics.lastLayerEnabled
-                == true
-        )
-        #expect(
-            harness.model.agentControlDeviceDiagnostics
-                .duplicateOrOutOfOrderReportCount == 0
         )
     }
 
@@ -247,7 +431,8 @@ struct AgentControlAppIntegrationTests {
     }
 
     private func makeHarness(
-        enabled: Bool
+        enabled: Bool,
+        selectionToken: UInt64 = 0x1122_3344_5566_7788
     ) -> (
         model: AppModel,
         transport: FakeAgentControlHIDTransport,
@@ -276,12 +461,16 @@ struct AgentControlAppIntegrationTests {
             reconnectDelay: .seconds(60)
         )
         let model = AppModel(
+            terminalJumpAction: { target in
+                "Jumped to \(target.workspaceName)."
+            },
             hiddenSessionStore: HiddenSessionStore(defaults: defaults),
             agentControlSlotAssignmentStore:
                 AgentControlSlotAssignmentStore(defaults: defaults),
             agentControlDeviceCoordinator: coordinator,
             agentControlDeviceSettingsStore:
-                AgentControlDeviceSettingsStore(defaults: defaults)
+                AgentControlDeviceSettingsStore(defaults: defaults),
+            agentControlSelectionTokenGenerator: { selectionToken }
         )
         return (model, transport, defaults)
     }
@@ -364,6 +553,23 @@ struct AgentControlAppIntegrationTests {
         )
     }
 
+    private func slotSelectionReport(
+        sequence: UInt16,
+        slotIndex: UInt8,
+        generation: UInt16
+    ) throws -> Data {
+        try deviceReport(
+            type: .slotSelected,
+            sequence: sequence,
+            payload: littleEndianBytes(nonce)
+                + [
+                    slotIndex,
+                    UInt8(truncatingIfNeeded: generation),
+                    UInt8(truncatingIfNeeded: generation >> 8),
+                ]
+        )
+    }
+
     private func latestSnapshotPacket(
         in reports: [Data]
     ) throws -> AgentControlPacket {
@@ -384,6 +590,16 @@ struct AgentControlAppIntegrationTests {
         return UInt16(bytes[offset]) | UInt16(bytes[offset + 1]) << 8
     }
 
+    private func readUInt64(_ data: Data, at offset: Int) -> UInt64 {
+        let bytes = [UInt8](data)
+        var value: UInt64 = 0
+        for byteOffset in 0..<8 {
+            value |= UInt64(bytes[offset + byteOffset])
+                << UInt64(byteOffset * 8)
+        }
+        return value
+    }
+
     private func waitUntil(
         _ predicate: @escaping @MainActor () -> Bool
     ) async {
@@ -395,12 +611,4 @@ struct AgentControlAppIntegrationTests {
         }
         Issue.record("Timed out waiting for Agent Control snapshot update")
     }
-}
-
-private extension AgentControlAction {
-    static let allTestCases: [Self] = [
-        .jump,
-        .allowOnce,
-        .deny,
-    ]
 }

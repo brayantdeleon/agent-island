@@ -250,7 +250,7 @@ struct GeneralSettingsPane: View {
                         value: agentControlFirmwareTitle
                     )
 
-                    Text(lang.t("settings.general.agentControl.readOnly"))
+                    Text(lang.t("settings.general.agentControl.navigation"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {

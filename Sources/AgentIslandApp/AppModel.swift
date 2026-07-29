@@ -12,6 +12,16 @@ extension Notification.Name {
     static let agentIslandSelectSetupTab = Notification.Name("agentIslandSelectSetupTab")
 }
 
+private struct AgentControlSelectionContext {
+    let connectionNonce: UInt64
+    let slotIndex: UInt8
+    let slotEpoch: UInt16
+    let sessionID: String
+    let selectionToken: UInt64
+    let allowedActions: AgentControlAllowedActionSet
+    let expiresAt: Date
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -27,6 +37,7 @@ final class AppModel {
     private static let legacyIslandSessionSortDefaultsKey = "appearance.island.v8.sessionSort"
     private static let legacyCompletedStaleThresholdDefaultsKey = "appearance.island.v8.completedStaleThreshold"
     private static let appearanceProfileSettingsDefaultsKey = "appearance.island.v8.settingsProfile"
+    private static let agentControlSelectionLifetimeSeconds: UInt8 = 15
 
     private static let syntheticClaudeSessionPrefix = "claude-process:"
     private static let liveSessionStalenessWindow: TimeInterval = 15 * 60
@@ -71,6 +82,15 @@ final class AppModel {
 
     @ObservationIgnored
     private var isAgentControlDeviceIntegrationStarted = false
+
+    @ObservationIgnored
+    private var agentControlSelection: AgentControlSelectionContext?
+
+    @ObservationIgnored
+    private let agentControlSelectionTokenGenerator: () -> UInt64
+
+    @ObservationIgnored
+    private let agentControlDateProvider: () -> Date
 
     private var hiddenSessionIdentifiers: Set<HiddenSessionIdentifier> = []
 
@@ -630,7 +650,11 @@ final class AppModel {
         hiddenSessionStore: HiddenSessionStore = .standard,
         agentControlSlotAssignmentStore: AgentControlSlotAssignmentStore = .standard,
         agentControlDeviceCoordinator: AgentControlDeviceCoordinator = AgentControlDeviceCoordinator(),
-        agentControlDeviceSettingsStore: AgentControlDeviceSettingsStore = .standard
+        agentControlDeviceSettingsStore: AgentControlDeviceSettingsStore = .standard,
+        agentControlSelectionTokenGenerator: @escaping () -> UInt64 = {
+            UInt64.random(in: 1...UInt64.max)
+        },
+        agentControlDateProvider: @escaping () -> Date = Date.init
     ) {
         self.terminalJumpAction = terminalJumpAction
         self.isNotificationSessionAlreadyFrontmost = isNotificationSessionAlreadyFrontmost
@@ -640,6 +664,9 @@ final class AppModel {
         )
         self.agentControlDeviceCoordinator = agentControlDeviceCoordinator
         self.agentControlDeviceSettingsStore = agentControlDeviceSettingsStore
+        self.agentControlSelectionTokenGenerator =
+            agentControlSelectionTokenGenerator
+        self.agentControlDateProvider = agentControlDateProvider
         self.hiddenSessionIdentifiers = hiddenSessionStore.load()
         UserDefaults.standard.register(defaults: [
             Self.showDockIconDefaultsKey: true,
@@ -753,6 +780,9 @@ final class AppModel {
         }
         monitoring.onCodexAppMaintenanceTick = { [weak self] in
             self?.discovery.maintainCodexAppSessionsIfNeeded()
+        }
+        agentControlDeviceCoordinator.onDeviceMessage = { [weak self] event in
+            self?.handleAgentControlDeviceEvent(event)
         }
         refreshOverlayDisplayConfiguration()
         hasFinishedInit = true
@@ -1087,8 +1117,8 @@ final class AppModel {
         agentControlDeviceCoordinator.diagnostics
     }
 
-    /// Starts the read-only K0 Max state projection without registering any
-    /// device-message action handler. Kept internal for deterministic tests.
+    /// Starts K0 Max state projection and navigation intent handling.
+    /// Kept internal for deterministic tests.
     func startAgentControlDeviceIntegrationIfNeeded() {
         guard agentControlKeyboardEnabled,
               !isAgentControlDeviceIntegrationStarted else {
@@ -1103,6 +1133,7 @@ final class AppModel {
     private func stopAgentControlDeviceIntegration() {
         agentControlSnapshotRefreshTask?.cancel()
         agentControlSnapshotRefreshTask = nil
+        agentControlSelection = nil
         guard isAgentControlDeviceIntegrationStarted else { return }
 
         // Clear immediately while the connection is still live. Firmware's
@@ -1137,6 +1168,287 @@ final class AppModel {
         scheduleAgentControlCompletionExpiry(
             after: referenceDate
         )
+    }
+
+    private func handleAgentControlDeviceEvent(
+        _ event: AgentControlDeviceEvent
+    ) {
+        switch event.message {
+        case let .slotSelected(
+            connectionNonce,
+            slotIndex,
+            snapshotGeneration
+        ):
+            handleAgentControlSlotSelection(
+                requestSequence: event.sequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                snapshotGeneration: snapshotGeneration
+            )
+
+        case let .actionInvoked(
+            connectionNonce,
+            slotIndex,
+            action,
+            selectionToken
+        ):
+            handleAgentControlAction(
+                requestSequence: event.sequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                selectionToken: selectionToken
+            )
+
+        case .layerChanged:
+            agentControlSelection = nil
+
+        case .capabilities:
+            break
+        }
+    }
+
+    private func handleAgentControlSlotSelection(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        snapshotGeneration: UInt16
+    ) {
+        agentControlSelection = nil
+
+        guard Int(slotIndex) < AgentControlProtocolV1.slotCount else {
+            rejectAgentControlSelection(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                result: .unsupported
+            )
+            return
+        }
+        guard let snapshot = agentControlDeviceCoordinator.currentSnapshot,
+              snapshot.connectionNonce == connectionNonce else {
+            rejectAgentControlSelection(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                result: .appUnavailable
+            )
+            return
+        }
+        guard snapshot.generation == snapshotGeneration else {
+            rejectAgentControlSelection(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                result: .staleSnapshot
+            )
+            return
+        }
+
+        let index = Int(slotIndex)
+        guard let slot = snapshot.content.slots[index] else {
+            rejectAgentControlSelection(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                result: .unassigned
+            )
+            return
+        }
+        guard let session = surfacedSessions.first(
+            where: { $0.id == slot.identity }
+        ) else {
+            rejectAgentControlSelection(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                result: .sessionUnavailable
+            )
+            return
+        }
+
+        let slotEpoch = snapshot.slotEpochs[index]
+        var selectionToken = agentControlSelectionTokenGenerator()
+        if selectionToken == 0 {
+            selectionToken = 1
+        }
+        let allowedActions: AgentControlAllowedActionSet =
+            canJumpToAgentControlSession(session) ? [.jump] : []
+        let lifetimeSeconds = Self.agentControlSelectionLifetimeSeconds
+        let selection = AgentControlSelectionContext(
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            slotEpoch: slotEpoch,
+            sessionID: session.id,
+            selectionToken: selectionToken,
+            allowedActions: allowedActions,
+            expiresAt: agentControlDateProvider().addingTimeInterval(
+                TimeInterval(lifetimeSeconds)
+            )
+        )
+
+        guard agentControlDeviceCoordinator.sendSelectionAcknowledgement(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            result: .accepted,
+            slotEpoch: slotEpoch,
+            selectionToken: selectionToken,
+            allowedActions: allowedActions,
+            lifetimeSeconds: lifetimeSeconds
+        ) else {
+            return
+        }
+
+        agentControlSelection = selection
+        select(sessionID: session.id)
+        notchOpen(
+            reason: .click,
+            surface: .sessionList(actionableSessionID: session.id)
+        )
+    }
+
+    private func rejectAgentControlSelection(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        result: AgentControlSelectionResult
+    ) {
+        agentControlDeviceCoordinator.sendSelectionAcknowledgement(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            result: result
+        )
+    }
+
+    private func handleAgentControlAction(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        action: AgentControlAction,
+        selectionToken: UInt64
+    ) {
+        guard action == .jump else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .unsupported
+            )
+            return
+        }
+        guard let selection = agentControlSelection else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .noValidSelection
+            )
+            return
+        }
+        guard selection.connectionNonce == connectionNonce,
+              selection.slotIndex == slotIndex,
+              selection.selectionToken == selectionToken,
+              agentControlDateProvider() < selection.expiresAt else {
+            agentControlSelection = nil
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .staleOrUnknownToken
+            )
+            return
+        }
+        guard selection.allowedActions.contains(.jump) else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .actionUnavailable
+            )
+            return
+        }
+        let index = Int(slotIndex)
+        guard let snapshot = agentControlDeviceCoordinator.currentSnapshot,
+              snapshot.connectionNonce == connectionNonce,
+              index < snapshot.content.slots.count,
+              index < snapshot.slotEpochs.count,
+              snapshot.slotEpochs[index] == selection.slotEpoch,
+              snapshot.content.slots[index]?.identity
+                == selection.sessionID else {
+            agentControlSelection = nil
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .slotUnassignedOrReused
+            )
+            return
+        }
+        guard let session = surfacedSessions.first(
+            where: { $0.id == selection.sessionID }
+        ) else {
+            agentControlSelection = nil
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .slotUnassignedOrReused
+            )
+            return
+        }
+        guard canJumpToAgentControlSession(session) else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .transportUnavailable
+            )
+            return
+        }
+
+        guard sendAgentControlActionResult(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            action: action,
+            result: .acceptedForDispatch
+        ) else {
+            return
+        }
+        jumpToSession(session)
+    }
+
+    @discardableResult
+    private func sendAgentControlActionResult(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        action: AgentControlAction,
+        result: AgentControlActionResult
+    ) -> Bool {
+        agentControlDeviceCoordinator.sendActionResult(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            slotIndex: slotIndex,
+            action: action,
+            result: result
+        )
+    }
+
+    private func canJumpToAgentControlSession(
+        _ session: AgentSession
+    ) -> Bool {
+        guard let jumpTarget = session.jumpTarget else { return false }
+        return jumpTarget.terminalApp.lowercased() != "unknown"
     }
 
     private func scheduleAgentControlCompletionExpiry(

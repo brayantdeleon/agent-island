@@ -140,6 +140,48 @@ struct AgentControlProtocolTests {
     }
 
     @Test
+    func navigationResponsePayloadsMatchTheWireContract() {
+        let nonce: UInt64 = 0x0102_0304_0506_0708
+        let selection = [UInt8](
+            AgentControlMessageCodec.selectionAcknowledgementPayload(
+                connectionNonce: nonce,
+                slotIndex: 4,
+                result: .accepted,
+                slotEpoch: 0x1234,
+                selectionToken: 0xA8A7_A6A5_A4A3_A2A1,
+                allowedActions: [.jump],
+                lifetimeSeconds: 15
+            )
+        )
+        let action = [UInt8](
+            AgentControlMessageCodec.actionResultPayload(
+                connectionNonce: nonce,
+                slotIndex: 4,
+                action: .jump,
+                result: .acceptedForDispatch
+            )
+        )
+
+        #expect(selection.count == 22)
+        #expect(
+            selection == [
+                8, 7, 6, 5, 4, 3, 2, 1,
+                4, 0, 0x34, 0x12,
+                0xA1, 0xA2, 0xA3, 0xA4,
+                0xA5, 0xA6, 0xA7, 0xA8,
+                1, 15,
+            ]
+        )
+        #expect(
+            action == [
+                8, 7, 6, 5, 4, 3, 2, 1,
+                4, AgentControlAction.jump.rawValue,
+                AgentControlActionResult.acceptedForDispatch.rawValue,
+            ]
+        )
+    }
+
+    @Test
     func capabilitiesPayloadDecodesAllNegotiatedFields() throws {
         let nonce: UInt64 = 0x0123_4567_89AB_CDEF
         let packet = try AgentControlPacketCodec.decode(
