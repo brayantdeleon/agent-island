@@ -441,6 +441,11 @@ On 2026-07-28:
   with live connection state, transport, protocol, and firmware build
   diagnostics. The app starts the device coordinator only after its runtime
   starts and the preference is enabled.
+- A later interaction refinement defaults device discovery on while retaining
+  the explicit opt-out. Keyboard mode and K0 badges now activate only after a
+  compatible device completes its handshake and deactivate immediately on
+  disconnect. Pointer selection and detail disclosure remain independent of
+  that connection state.
 - AppModel now converts the shared ten-slot projection into anonymous device
   snapshots on session, hidden-state, display-profile, and completion-window
   changes. A scheduled refresh turns recently completed slots off when the

@@ -17,7 +17,10 @@ struct AgentControlDeviceSettingsStore {
     }
 
     func loadEnabled() -> Bool {
-        defaults.bool(forKey: Self.defaultsKey)
+        guard defaults.object(forKey: Self.defaultsKey) != nil else {
+            return true
+        }
+        return defaults.bool(forKey: Self.defaultsKey)
     }
 
     func saveEnabled(_ enabled: Bool) {

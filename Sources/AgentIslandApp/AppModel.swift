@@ -854,6 +854,14 @@ final class AppModel {
         agentControlDeviceCoordinator.onDeviceMessage = { [weak self] event in
             self?.handleAgentControlDeviceEvent(event)
         }
+        agentControlDeviceCoordinator.onConnectionReadinessChanged = {
+            [weak self] isReady in
+            guard let self else { return }
+            if !isReady {
+                self.clearAgentControlSelection()
+            }
+            self.refreshOverlayPlacementIfVisible()
+        }
         refreshOverlayDisplayConfiguration()
         hasFinishedInit = true
     }
@@ -1079,7 +1087,7 @@ final class AppModel {
         _ sessions: [AgentSession],
         at referenceDate: Date
     ) -> [AgentSession] {
-        guard agentControlKeyboardEnabled else {
+        guard agentControlKeyboardModeActive else {
             return sessions
         }
 
@@ -1219,7 +1227,7 @@ final class AppModel {
         for sessionID: String,
         at referenceDate: Date = .now
     ) -> String? {
-        guard agentControlKeyboardEnabled,
+        guard agentControlKeyboardModeActive,
               let keyLabel = agentControlSlotLabel(
                 for: sessionID,
                 at: referenceDate
@@ -1235,7 +1243,7 @@ final class AppModel {
     func compactAgentControlSlots(
         at referenceDate: Date = .now
     ) {
-        guard agentControlKeyboardEnabled else {
+        guard agentControlKeyboardModeActive else {
             return
         }
 
@@ -1254,6 +1262,14 @@ final class AppModel {
 
     var agentControlDeviceDiagnostics: AgentControlDeviceDiagnostics {
         agentControlDeviceCoordinator.diagnostics
+    }
+
+    /// True only while a compatible keyboard has completed its handshake.
+    /// Device discovery can remain armed while this mode follows the physical
+    /// connection automatically.
+    var agentControlKeyboardModeActive: Bool {
+        agentControlKeyboardEnabled
+            && agentControlDeviceDiagnostics.state == .ready
     }
 
     /// Starts K0 Max state projection and navigation intent handling.
@@ -1276,7 +1292,6 @@ final class AppModel {
         agentControlSnapshotRefreshTask?.cancel()
         agentControlSnapshotRefreshTask = nil
         clearAgentControlSelection()
-        agentControlDetailPresentationRequests.removeAll()
         guard isAgentControlDeviceIntegrationStarted else { return }
 
         // Clear immediately while the connection is still live. Firmware's

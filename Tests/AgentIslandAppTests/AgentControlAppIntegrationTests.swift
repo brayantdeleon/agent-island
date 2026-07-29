@@ -60,7 +60,7 @@ struct AgentControlAppIntegrationTests {
             harness.model.agentControlHardwareBadgeLabel(
                 for: "running",
                 at: now
-            ) == "K0 · 1"
+            ) == nil
         )
 
         harness.model.startAgentControlDeviceIntegrationIfNeeded()
@@ -90,6 +90,13 @@ struct AgentControlAppIntegrationTests {
         )
         #expect(snapshot.payload[10] == 0)
         #expect(harness.model.agentControlDeviceDiagnostics.state == .ready)
+        #expect(harness.model.agentControlKeyboardModeActive)
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "running",
+                at: now
+            ) == "K0 · 1"
+        )
         #expect(
             harness.model.agentControlDeviceDiagnostics
                 .firmwareBuildIdentifier == 0xA41C_FB54
@@ -114,6 +121,111 @@ struct AgentControlAppIntegrationTests {
                 at: now
             ) == nil
         )
+    }
+
+    @Test
+    func connectionAutomaticallyControlsKeyboardModeWithoutChangingPointerDetail() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        let device = try #require(
+            harness.transport.automaticallyConnectedDevice
+        )
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "completed",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .completed
+                ),
+            ]
+        )
+        harness.model.setSessionDetailExpanded(
+            true,
+            for: "completed"
+        )
+
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        var hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        #expect(harness.model.agentControlKeyboardModeActive)
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "completed",
+                at: now
+            ) == "K0 · 1"
+        )
+
+        harness.transport.emit(
+            .disconnected(
+                device: device,
+                matchingDeviceCount: 0
+            )
+        )
+
+        #expect(!harness.model.agentControlKeyboardModeActive)
+        #expect(
+            harness.model.agentControlHardwareBadgeLabel(
+                for: "completed",
+                at: now
+            ) == nil
+        )
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["completed"]?
+                .isExpanded == true
+        )
+
+        harness.transport.emit(
+            .connected(
+                device: device,
+                matchingDeviceCount: 1
+            )
+        )
+        hello = try AgentControlPacketCodec.decode(
+            try #require(
+                harness.transport.sentReports.last {
+                    (try? AgentControlPacketCodec.decode($0).messageType)
+                        == .hello
+                }
+            )
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        #expect(harness.model.agentControlKeyboardModeActive)
+        #expect(
+            harness.model
+                .agentControlDetailPresentationRequests["completed"]?
+                .isExpanded == true
+        )
+    }
+
+    @Test
+    func keyboardDiscoveryDefaultsOnButStillAllowsExplicitOptOut() {
+        let suiteName =
+            "agent-island-control-settings-tests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = AgentControlDeviceSettingsStore(defaults: defaults)
+
+        #expect(store.loadEnabled())
+
+        store.saveEnabled(false)
+
+        #expect(!store.loadEnabled())
     }
 
     @Test
@@ -584,7 +696,7 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
-    func statusGroupsSortByAscendingKeyboardSlotWithOverflowLast() {
+    func statusGroupsSortByAscendingKeyboardSlotWithOverflowLast() throws {
         let harness = makeHarness(enabled: true)
         let previousGroup = harness.model.islandSessionGroup
         let previousSort = harness.model.islandSessionSort
@@ -611,6 +723,13 @@ struct AgentControlAppIntegrationTests {
         )
         harness.model.islandSessionSort = .lastUpdate
         harness.model.islandSessionGroup = .state
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
 
         let sections = harness.model.islandSessionSections(at: now)
 

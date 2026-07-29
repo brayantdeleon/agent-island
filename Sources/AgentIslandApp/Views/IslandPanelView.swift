@@ -626,7 +626,9 @@ struct IslandPanelView: View {
                     completedStaleThreshold: model.completedStaleThreshold.seconds,
                     isActionable: true,
                     isHardwareSelected:
-                        session.id == model.agentControlSelectedSessionID,
+                        model.agentControlKeyboardModeActive
+                            && session.id
+                                == model.agentControlSelectedSessionID,
                     detailPresentationRequest:
                         agentControlDetailPresentationRequest(
                             for: session.id
@@ -688,7 +690,9 @@ struct IslandPanelView: View {
                                 completedStaleThreshold: model.completedStaleThreshold.seconds,
                                 isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
                                 isHardwareSelected:
-                                    session.id == model.agentControlSelectedSessionID,
+                                    model.agentControlKeyboardModeActive
+                                        && session.id
+                                            == model.agentControlSelectedSessionID,
                                 detailPresentationRequest:
                                     agentControlDetailPresentationRequest(
                                         for: session.id
@@ -760,7 +764,9 @@ struct IslandPanelView: View {
                         completedStaleThreshold: model.completedStaleThreshold.seconds,
                         isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
                         isHardwareSelected:
-                            session.id == model.agentControlSelectedSessionID,
+                            model.agentControlKeyboardModeActive
+                                && session.id
+                                    == model.agentControlSelectedSessionID,
                         detailPresentationRequest:
                             agentControlDetailPresentationRequest(
                                 for: session.id
@@ -846,7 +852,9 @@ struct IslandPanelView: View {
                             stateIndicator: model.islandSessionStateIndicator,
                             completedStaleThreshold: model.completedStaleThreshold.seconds,
                             isHardwareSelected:
-                                session.id == model.agentControlSelectedSessionID,
+                                model.agentControlKeyboardModeActive
+                                    && session.id
+                                        == model.agentControlSelectedSessionID,
                             detailPresentationRequest:
                                 agentControlDetailPresentationRequest(
                                     for: session.id
@@ -1386,6 +1394,16 @@ enum IslandSessionEmbeddedDetailPolicy {
     }
 }
 
+enum IslandSessionDrawingGroupPolicy {
+    static func isEnabled(
+        requested: Bool,
+        isActionable: Bool,
+        showsDetail: Bool
+    ) -> Bool {
+        requested && !isActionable && !showsDetail
+    }
+}
+
 private struct IslandSessionRow: View {
     let session: AgentSession
     let referenceDate: Date
@@ -1476,7 +1494,15 @@ private struct IslandSessionRow: View {
             }
         }
         .opacity(isStaleCompleted ? 0.7 : 1)
-        .modifier(ConditionalDrawingGroup(enabled: useDrawingGroup && !isActionable))
+        .modifier(
+            ConditionalDrawingGroup(
+                enabled: IslandSessionDrawingGroupPolicy.isEnabled(
+                    requested: useDrawingGroup,
+                    isActionable: isActionable,
+                    showsDetail: showsDetail
+                )
+            )
+        )
         .contentShape(Rectangle())
         .animation(.easeInOut(duration: 0.15), value: isHighlighted)
         .onTapGesture(perform: handlePrimaryTap)

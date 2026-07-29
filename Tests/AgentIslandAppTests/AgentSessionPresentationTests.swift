@@ -135,6 +135,31 @@ struct AgentSessionPresentationTests {
     }
 
     @Test
+    func expandedRowsBypassDrawingGroupRegardlessOfSelectionSource() {
+        #expect(
+            !IslandSessionDrawingGroupPolicy.isEnabled(
+                requested: true,
+                isActionable: false,
+                showsDetail: true
+            )
+        )
+        #expect(
+            !IslandSessionDrawingGroupPolicy.isEnabled(
+                requested: true,
+                isActionable: true,
+                showsDetail: true
+            )
+        )
+        #expect(
+            IslandSessionDrawingGroupPolicy.isEnabled(
+                requested: true,
+                isActionable: false,
+                showsDetail: false
+            )
+        )
+    }
+
+    @Test
     func persistentPermissionApprovalIsOnlyOfferedForClaudeRules() {
         let request = PermissionRequest(
             title: "Run tool",

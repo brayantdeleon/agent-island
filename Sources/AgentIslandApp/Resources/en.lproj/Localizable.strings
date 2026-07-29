@@ -43,7 +43,7 @@
 "settings.general.languageChinese" = "Chinese (Simplified)";
 "settings.general.languageTraditionalChinese" = "Chinese (Traditional)";
 "settings.general.agentControl.section" = "Agent Control Keyboard";
-"settings.general.agentControl.enable" = "Enable Keychron K0 Max";
+"settings.general.agentControl.enable" = "Automatically use Keychron K0 Max";
 "settings.general.agentControl.approvals" = "Enable keyboard approvals";
 "settings.general.agentControl.approvalsHelp" = "Security-sensitive and off by default. + allows once and - denies only the exact request selected within the 15-second selection window.";
 "settings.general.agentControl.status" = "Status";
