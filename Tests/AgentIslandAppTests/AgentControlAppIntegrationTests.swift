@@ -572,8 +572,8 @@ struct AgentControlAppIntegrationTests {
                 )
             )
         )
-        #expect(harness.model.notchStatus == .opened)
-        #expect(harness.model.islandSurface == .sessionList())
+        #expect(harness.model.notchStatus == .closed)
+        #expect(harness.model.agentControlSelectedSessionID == nil)
 
         harness.transport.emit(
             .report(
@@ -584,7 +584,8 @@ struct AgentControlAppIntegrationTests {
                 )
             )
         )
-        #expect(harness.model.notchStatus == .closed)
+        #expect(harness.model.notchStatus == .opened)
+        #expect(harness.model.islandSurface == .sessionList())
 
         harness.model.islandCompactnessMode = .expanded
         harness.transport.emit(

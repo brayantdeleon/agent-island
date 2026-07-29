@@ -1772,8 +1772,7 @@ final class AppModel {
         }
         switch islandCompactnessMode {
         case .minimal:
-            if notchStatus == .opened,
-               islandSurface == .sessionList() {
+            if notchStatus == .opened {
                 notchClose()
             } else {
                 notchOpen(reason: .click, surface: .sessionList())
