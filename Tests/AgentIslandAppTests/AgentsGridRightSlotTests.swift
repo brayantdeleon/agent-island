@@ -10,7 +10,7 @@ struct AgentsGridRightSlotTests {
     /// session.firstSeenAt so historical order is preserved.
     @Test
     func bulkFirstObservationOrdersByHistoricalFirstSeenAt() {
-        let model = AppModel()
+        let model = makeModel()
         model.islandRightSlot = .agents
 
         let now = Date(timeIntervalSince1970: 100_000)
@@ -45,7 +45,7 @@ struct AgentsGridRightSlotTests {
     /// observation-time.
     @Test
     func newlyObservedSessionAlwaysLandsAtTheEndRegardlessOfHistoricalTime() {
-        let model = AppModel()
+        let model = makeModel()
         model.islandRightSlot = .agents
 
         let now = Date(timeIntervalSince1970: 200_000)
@@ -78,7 +78,7 @@ struct AgentsGridRightSlotTests {
     /// again — not re-observed as a newcomer.
     @Test
     func returningSessionKeepsItsOriginalSlot() {
-        let model = AppModel()
+        let model = makeModel()
         model.islandRightSlot = .agents
 
         let now = Date()
@@ -109,7 +109,7 @@ struct AgentsGridRightSlotTests {
     /// overflow cell showing the remainder count.
     @Test
     func moreThanNineSessionsFoldIntoOverflow() {
-        let model = AppModel()
+        let model = makeModel()
         model.islandRightSlot = .agents
         let now = Date(timeIntervalSince1970: 200_000)
 
@@ -140,7 +140,7 @@ struct AgentsGridRightSlotTests {
     /// everything else (completed, stale) to `.idle`.
     @Test
     func cellStateReflectsSessionPhase() {
-        let model = AppModel()
+        let model = makeModel()
         model.islandRightSlot = .agents
         let now = Date()
 
@@ -176,6 +176,18 @@ struct AgentsGridRightSlotTests {
     }
 
     // MARK: - helpers
+
+    private func makeModel() -> AppModel {
+        let suiteName = "agent-island-grid-slot-tests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return AppModel(
+            hiddenSessionStore: HiddenSessionStore(defaults: defaults),
+            agentControlSlotAssignmentStore: AgentControlSlotAssignmentStore(
+                defaults: defaults
+            )
+        )
+    }
 
     private static func cellFor(_ session: AgentSession) -> AgentGridCell {
         let color = Color(hex: session.tool.brandColorHex) ?? .gray

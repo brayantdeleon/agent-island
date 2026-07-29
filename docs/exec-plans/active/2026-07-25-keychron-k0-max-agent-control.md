@@ -285,16 +285,38 @@ Build, recovery, flash, probe, and restore instructions live in
 
 ### Round 3 — Stable slot and projection model
 
-- [ ] Add a pure ten-slot allocator and persisted assignment store.
-- [ ] Add phase-to-device-state projection.
-- [ ] Add overflow and completion-expiry behavior.
-- [ ] Expose matching slot labels to Agent Island presentation state.
-- [ ] Cover startup ordering, new arrivals, temporary disappearance, restart,
+- [x] Add a pure ten-slot allocator and persisted assignment store.
+- [x] Add phase-to-device-state projection.
+- [x] Add overflow and completion-expiry behavior.
+- [x] Expose matching slot labels to Agent Island presentation state.
+- [x] Cover startup ordering, new arrivals, temporary disappearance, restart,
   completion expiry, slot reuse, hidden approvals, subagent exclusion, and
   overflow with unit tests.
 
 Exit criterion: deterministic tests prove that a live agent does not change
 numbers unexpectedly.
+
+#### Round 3 evidence
+
+On 2026-07-28:
+
+- `AgentControlSlotAllocator` deterministically assigns ten device-independent
+  slots, preserves active assignments, restores persisted preferences, and
+  lets overflow candidates claim released capacity without rotating live
+  sessions.
+- `AgentControlLightState` projects running, actionable and observed approval,
+  question, recent-completion, and idle states using the protocol's v1 raw
+  values.
+- `AgentControlSlotCoordinator` filters stale completions, subagents, and
+  realtime voice sessions, then persists preferred assignments through a
+  versioned `UserDefaults` store.
+- `AppModel` exposes the shared projection and `1`-`9`/`0` labels. The
+  closed-island agent grid now consumes the same stable ordering instead of a
+  separate process-lifetime ticket map.
+- Focused allocator/store, presentation, and existing grid test suites passed
+  19 tests. The full `swift test` run passed 434 Swift Testing tests plus 24
+  XCTest tests; the live Ghostty integration test remained intentionally
+  skipped behind its existing environment gate.
 
 ### Round 4 — macOS HID transport
 

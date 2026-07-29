@@ -31,7 +31,6 @@ final class AppModel {
     private static let syntheticClaudeSessionPrefix = "claude-process:"
     private static let liveSessionStalenessWindow: TimeInterval = 15 * 60
     private static let jumpOverlayDismissLeadTime: Duration = .milliseconds(20)
-    private static let agentsGridObservedSequenceLimit = 512
     /// The pointer must remain continuously inside the closed island before a
     /// passive hover may open it. This keeps ordinary menu-bar navigation from
     /// expanding the island while preserving immediate click-to-open behavior.
@@ -49,7 +48,6 @@ final class AppModel {
     var state = SessionState() {
         didSet {
             _cachedSessionBuckets = nil
-            pruneAgentsGridObservationTicketsIfNeeded()
             bridgeServer.updateStateSnapshot(state)
         }
     }
@@ -57,6 +55,9 @@ final class AppModel {
 
     @ObservationIgnored
     private let hiddenSessionStore: HiddenSessionStore
+
+    @ObservationIgnored
+    private let agentControlSlotCoordinator: AgentControlSlotCoordinator
 
     private var hiddenSessionIdentifiers: Set<HiddenSessionIdentifier> = []
 
@@ -73,14 +74,6 @@ final class AppModel {
         let validThrough: Date?
     }
 
-    /// Monotonic ticket assigned the first time a session ID shows up in the
-    /// closed-island's right-slot surfaced set. Drives the grid's display
-    /// order: newly-surfaced sessions always land at the end, and a session
-    /// that briefly leaves (e.g. attachment flip) keeps its old slot when it
-    /// returns. Persists for the process lifetime; session IDs are UUIDs so
-    /// accumulation over time is bounded in practice.
-    @ObservationIgnored private var _agentsGridObservedSequence: [String: Int] = [:]
-    @ObservationIgnored private var _agentsGridNextTicket: Int = 0
     var selectedSessionID: String?
     let hooks = HookInstallationCoordinator()
     let overlay = OverlayUICoordinator()
@@ -598,11 +591,15 @@ final class AppModel {
         isNotificationSessionAlreadyFrontmost: @escaping @Sendable (AgentSession) async -> Bool = { session in
             await ForegroundTerminalSessionProbe().matches(session: session)
         },
-        hiddenSessionStore: HiddenSessionStore = .standard
+        hiddenSessionStore: HiddenSessionStore = .standard,
+        agentControlSlotAssignmentStore: AgentControlSlotAssignmentStore = .standard
     ) {
         self.terminalJumpAction = terminalJumpAction
         self.isNotificationSessionAlreadyFrontmost = isNotificationSessionAlreadyFrontmost
         self.hiddenSessionStore = hiddenSessionStore
+        self.agentControlSlotCoordinator = AgentControlSlotCoordinator(
+            store: agentControlSlotAssignmentStore
+        )
         self.hiddenSessionIdentifiers = hiddenSessionStore.load()
         UserDefaults.standard.register(defaults: [
             Self.showDockIconDefaultsKey: true,
@@ -1007,7 +1004,26 @@ final class AppModel {
     /// Right-slot payload derived from the user's `islandRightSlot`
     /// preference and current live state. Returns nil when the preference
     /// is `.none` or there's nothing meaningful to show.
-    func islandClosedRightSlotContent() -> IslandRightSlotContent? {
+    func agentControlSlotProjection(
+        at referenceDate: Date = .now
+    ) -> AgentControlSlotProjection {
+        agentControlSlotCoordinator.projection(
+            for: surfacedSessions,
+            at: referenceDate,
+            completedStaleThreshold: completedStaleThreshold.seconds
+        )
+    }
+
+    func agentControlSlotLabel(
+        for sessionID: String,
+        at referenceDate: Date = .now
+    ) -> String? {
+        agentControlSlotProjection(at: referenceDate).keyLabel(for: sessionID)
+    }
+
+    func islandClosedRightSlotContent(
+        at referenceDate: Date = .now
+    ) -> IslandRightSlotContent? {
         let sessions = surfacedSessions
         switch islandRightSlot {
         case .none:
@@ -1017,70 +1033,41 @@ final class AppModel {
             guard n > 0 else { return nil }
             return .count(n)
         case .agents:
-            // Display order = order-of-first-observation-in-the-island. A
-            // session that later flips visibility (e.g. attachment churn,
-            // completed↔running) keeps its existing slot instead of being
-            // reshuffled by session.firstSeenAt, which tracks the historical
-            // event time and can be older than visible peers. Bulk-observing
-            // N sessions at once (e.g. at app launch) breaks the tie by
-            // session.firstSeenAt so historical order is preserved.
-            stampAgentsGridObservationTickets(for: sessions)
-            let ordered = sessions.sorted { a, b in
-                let ta = _agentsGridObservedSequence[a.id] ?? .max
-                let tb = _agentsGridObservedSequence[b.id] ?? .max
-                if ta != tb { return ta < tb }
-                return a.id < b.id
+            let projection = agentControlSlotProjection(at: referenceDate)
+            let sessionsByID = Dictionary(
+                uniqueKeysWithValues: sessions.map { ($0.id, $0) }
+            )
+            let orderedCells = projection.assignedSlots.compactMap { slot in
+                sessionsByID[slot.sessionID].map {
+                    Self.agentsGridCell(for: $0, lightState: slot.lightState)
+                }
             }
+            let totalCount = orderedCells.count + projection.overflowCount
             var cells: [AgentGridCell] = []
-            if ordered.count <= 9 {
-                cells = ordered.map(Self.agentsGridCell(for:))
+            if totalCount <= 9 {
+                cells = orderedCells
             } else {
-                cells = ordered.prefix(7).map(Self.agentsGridCell(for:))
-                cells.append(.overflow(ordered.count - 7))
+                cells = Array(orderedCells.prefix(7))
+                cells.append(.overflow(totalCount - 7))
             }
             return cells.isEmpty ? nil : .agents(cells)
         }
     }
 
-    private func stampAgentsGridObservationTickets(for sessions: [AgentSession]) {
-        let newcomers = sessions.filter { _agentsGridObservedSequence[$0.id] == nil }
-        guard !newcomers.isEmpty else { return }
-        let orderedNewcomers = newcomers.sorted { a, b in
-            if a.firstSeenAt != b.firstSeenAt { return a.firstSeenAt < b.firstSeenAt }
-            return a.id < b.id
-        }
-        for session in orderedNewcomers {
-            _agentsGridObservedSequence[session.id] = _agentsGridNextTicket
-            _agentsGridNextTicket += 1
-        }
-    }
-
-    private func pruneAgentsGridObservationTicketsIfNeeded() {
-        guard _agentsGridObservedSequence.count > Self.agentsGridObservedSequenceLimit else {
-            return
-        }
-
-        let liveIDs = Set(state.sessions.map(\.id))
-        let retainedHistoricalCapacity = max(Self.agentsGridObservedSequenceLimit - liveIDs.count, 0)
-        let retainedHistoricalIDs = _agentsGridObservedSequence
-            .filter { !liveIDs.contains($0.key) }
-            .sorted { $0.value > $1.value }
-            .prefix(retainedHistoricalCapacity)
-            .map(\.key)
-        let retainedIDs = liveIDs.union(retainedHistoricalIDs)
-        _agentsGridObservedSequence = _agentsGridObservedSequence.filter {
-            retainedIDs.contains($0.key)
-        }
-    }
-
-    private static func agentsGridCell(for session: AgentSession) -> AgentGridCell {
+    private static func agentsGridCell(
+        for session: AgentSession,
+        lightState: AgentControlLightState
+    ) -> AgentGridCell {
         let color = Color(hex: session.tool.brandColorHex) ?? .gray
         let state: AgentGridCellState
-        if session.phase.requiresAttention {
-            state = .waiting
-        } else if session.phase == .running {
+        switch lightState {
+        case .running:
             state = .running
-        } else {
+        case .waitingForActionableApproval,
+             .waitingForObservedApproval,
+             .waitingForAnswer:
+            state = .waiting
+        case .idle, .recentlyCompleted:
             state = .idle
         }
         return .session(color: color, state: state)
