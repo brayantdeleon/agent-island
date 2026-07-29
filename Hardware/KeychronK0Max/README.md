@@ -145,6 +145,34 @@ The final evidence line must report `yes` for handshake, layer, selection,
 action, and watchdog. On watchdog expiry the lights must return to the user's
 ordinary RGB effect and number keys must type normally.
 
+## Round 4 production-host verification
+
+Round 4 adds the production Swift packet codec, IOHID transport, and
+coordinator without starting them from the Agent Island app. The app remains
+disconnected by default until the opt-in UI and read-only projection work in
+Round 6.
+
+With the diagnostic firmware connected over USB, verify real discovery,
+handshake, one snapshot, and a fresh host connection:
+
+```sh
+AGENT_ISLAND_RUN_K0_MAX_HID_INTEGRATION=1 \
+swift test \
+  --filter K0MaxHIDTransportIntegrationTests/testConnectedDiagnosticFirmwareHandshakeAndHostRestart
+```
+
+For the manual removal-callback gate, start the following test, unplug the
+USB cable when prompted, leave it disconnected for two seconds, and reconnect
+it when prompted:
+
+```sh
+AGENT_ISLAND_RUN_K0_MAX_HID_REPLUG_INTEGRATION=1 \
+swift test \
+  --filter K0MaxHIDTransportIntegrationTests/testLiveUnplugAndReplugRecovery
+```
+
+Both live tests are skipped during ordinary `swift test` runs.
+
 ## Restore stock
 
 Enter DFU with the physical Esc procedure and flash the stock binary recorded

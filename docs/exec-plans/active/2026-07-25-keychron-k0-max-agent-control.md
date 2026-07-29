@@ -320,17 +320,51 @@ On 2026-07-28:
 
 ### Round 4 — macOS HID transport
 
-- [ ] Add a transport protocol and fake implementation.
-- [ ] Discover the K0 Max by VID/PID and Raw HID usage.
-- [ ] Implement handshake, capability checks, heartbeat, reconnect, and
+- [x] Add a transport protocol and fake implementation.
+- [x] Discover the K0 Max by VID/PID and Raw HID usage.
+- [x] Implement handshake, capability checks, heartbeat, reconnect, and
   sleep/wake recovery.
-- [ ] Add packet validation, sequence handling, snapshot deduplication, and
+- [x] Add packet validation, sequence handling, snapshot deduplication, and
   structured diagnostics.
-- [ ] Handle multiple matching devices deterministically or present a device
+- [x] Handle multiple matching devices deterministically or present a device
   choice before enabling.
 
 Exit criterion: transport tests pass without hardware, and the real transport
 survives unplug/replug and app restart without stale lights.
+
+#### Round 4 evidence
+
+On 2026-07-28:
+
+- The Core codec matches the Round 2 golden `HELLO` vector byte for byte,
+  including CRC `0x97`, and rejects invalid length, magic, major version,
+  flags, payload length, CRC, and nonzero padding.
+- The production IOHID transport matches VID/PID `3434:0A06`, primary usage
+  page `0xFF60`, and primary usage `0x61`. It selects multiple interfaces
+  deterministically by location ID and then registry-entry ID.
+- The coordinator uses a fresh nonzero nonce per connection, advertises only
+  read-only snapshot support in this round, validates capabilities, sends
+  monotonic sequences and two-second heartbeats, deduplicates snapshots by
+  slot identity and light state, retries failures/timeouts, and resets across
+  disconnect, sleep, and wake.
+- Eighteen deterministic codec/coordinator tests pass using the fake
+  transport. They cover capability incompatibility, heartbeat, snapshot
+  deduplication, stale handshake containment, sequence replay/out-of-order
+  rejection, send failure, timeout, disconnect/replug, sleep/wake, and
+  multi-device selection.
+- The complete suite passed 452 Swift Testing tests and 26 XCTest tests.
+  Three opt-in live tests were skipped in the ordinary run: the two K0 Max
+  gates and the existing Ghostty jump gate.
+- The opt-in live USB test passed against diagnostic firmware build
+  `0x4103537d`: real IOHID discovery, handshake, snapshot, coordinator stop,
+  a new host connection, and an empty clearing snapshot all completed.
+- The first manual unplug/replug test window timed out before a physical
+  disconnect was observed. The deterministic removal/reconnect path passes,
+  but the real removal-callback gate remains pending a repeated manual run.
+
+The production coordinator is not started by `AppModel` in this round.
+Opt-in preference, visible device status, and real session snapshot wiring
+remain Round 6 work.
 
 ### Round 5 — Complete firmware behavior
 
