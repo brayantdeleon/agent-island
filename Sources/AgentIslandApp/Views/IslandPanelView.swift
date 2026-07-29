@@ -604,6 +604,10 @@ struct IslandPanelView: View {
                 IslandSessionRow(
                     session: session,
                     referenceDate: referenceDate,
+                    hardwareSlotBadge: model.agentControlHardwareBadgeLabel(
+                        for: session.id,
+                        at: referenceDate
+                    ),
                     stateIndicator: model.islandSessionStateIndicator,
                     completedStaleThreshold: model.completedStaleThreshold.seconds,
                     isActionable: true,
@@ -651,6 +655,10 @@ struct IslandPanelView: View {
                             IslandSessionRow(
                                 session: session,
                                 referenceDate: referenceDate,
+                                hardwareSlotBadge: model.agentControlHardwareBadgeLabel(
+                                    for: session.id,
+                                    at: referenceDate
+                                ),
                                 stateIndicator: model.islandSessionStateIndicator,
                                 completedStaleThreshold: model.completedStaleThreshold.seconds,
                                 isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
@@ -707,6 +715,10 @@ struct IslandPanelView: View {
                     IslandSessionRow(
                         session: session,
                         referenceDate: referenceDate,
+                        hardwareSlotBadge: model.agentControlHardwareBadgeLabel(
+                            for: session.id,
+                            at: referenceDate
+                        ),
                         stateIndicator: model.islandSessionStateIndicator,
                         completedStaleThreshold: model.completedStaleThreshold.seconds,
                         isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
@@ -768,6 +780,10 @@ struct IslandPanelView: View {
                         IslandSessionRow(
                             session: session,
                             referenceDate: referenceDate,
+                            hardwareSlotBadge: model.agentControlHardwareBadgeLabel(
+                                for: session.id,
+                                at: referenceDate
+                            ),
                             stateIndicator: model.islandSessionStateIndicator,
                             completedStaleThreshold: model.completedStaleThreshold.seconds,
                             useDrawingGroup: model.notchStatus == .opened,
@@ -1285,6 +1301,7 @@ private enum IslandSessionRowPresentation {
 private struct IslandSessionRow: View {
     let session: AgentSession
     let referenceDate: Date
+    var hardwareSlotBadge: String?
     var stateIndicator: IslandSessionStateIndicator = .animatedDot
     var completedStaleThreshold: TimeInterval = AgentSession.staleCompletedDisplayThreshold
     var isActionable: Bool = false
@@ -1410,6 +1427,9 @@ private struct IslandSessionRow: View {
             Spacer(minLength: 10)
 
             HStack(spacing: 6) {
+                if let hardwareSlotBadge {
+                    sideBadge(hardwareSlotBadge)
+                }
                 agentBadge
                 if session.isRemote {
                     sideBadge("SSH")

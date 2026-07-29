@@ -42,6 +42,27 @@
 "settings.general.languageEnglish" = "English";
 "settings.general.languageChinese" = "Chinese (Simplified)";
 "settings.general.languageTraditionalChinese" = "Chinese (Traditional)";
+"settings.general.agentControl.section" = "Agent Control Keyboard";
+"settings.general.agentControl.enable" = "Enable Keychron K0 Max";
+"settings.general.agentControl.status" = "Status";
+"settings.general.agentControl.transport" = "Connection";
+"settings.general.agentControl.protocol" = "Protocol";
+"settings.general.agentControl.firmware" = "Firmware";
+"settings.general.agentControl.unavailable" = "—";
+"settings.general.agentControl.requiresFirmware" = "Requires the custom Agent Island firmware. USB is supported; 2.4 GHz is not yet verified.";
+"settings.general.agentControl.readOnly" = "Read-only in this version. Number, Enter, +, and - actions are disabled.";
+"settings.general.agentControl.state.stopped" = "Stopped";
+"settings.general.agentControl.state.searching" = "Searching";
+"settings.general.agentControl.state.handshaking" = "Handshaking";
+"settings.general.agentControl.state.ready" = "Connected";
+"settings.general.agentControl.state.reconnecting" = "Reconnecting";
+"settings.general.agentControl.state.incompatible" = "Incompatible";
+"settings.general.agentControl.state.sleeping" = "Sleeping";
+"settings.general.agentControl.state.failed" = "Failed";
+"settings.general.agentControl.transport.usb" = "USB";
+"settings.general.agentControl.transport.2_4ghz" = "2.4 GHz";
+"settings.general.agentControl.transport.bluetooth" = "Bluetooth";
+"settings.general.agentControl.transport.unknown" = "Unknown";
 
 /* Settings - Personalization (v6) */
 "settings.tab.appearance" = "Personalization";

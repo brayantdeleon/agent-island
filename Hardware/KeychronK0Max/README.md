@@ -2,8 +2,10 @@
 
 This directory contains the pinned Agent Control firmware overlay and macOS
 Raw HID diagnostic host for the Agent Island K0 Max integration. The firmware
-implements the keyboard-side protocol, but the diagnostic host does not
-connect to Agent Island sessions or dispatch real approvals.
+implements the keyboard-side protocol. The standalone diagnostic host does
+not connect to Agent Island sessions or dispatch real approvals; the Round 6
+app integration projects session state only and does not enable keyboard
+selection, navigation, or approval actions.
 
 The original Round 2 spike proved five things before application integration:
 
@@ -207,6 +209,34 @@ Verified on USB on 2026-07-28 with build `0xa41cfb54`. The complete evidence
 line passed, the visual gallery and M5 behavior matched the contract, and
 post-watchdog M4 unavailable feedback left ordinary number entry active.
 The 2.4 GHz transport remains deferred and unclaimed.
+
+## Round 6 read-only app integration
+
+With firmware build `0xa41cfb54` connected in Cable mode:
+
+1. Open Agent Island Settings → General.
+2. Enable **Keychron K0 Max** under **Agent Control Keyboard**.
+3. Confirm the status shows **Connected**, **USB**, protocol **v1.0**, and
+   firmware **0xA41CFB54**.
+4. Open the island and confirm assigned sessions show `K0 · 1` through
+   `K0 · 0` badges.
+5. Tap M4 and compare the digit lighting with current session phases.
+
+Round 6 deliberately negotiates state snapshots only. Number-key selection,
+Enter jump, `+` allow-once, and `-` deny remain disabled in both the firmware
+capability gate and AppModel. Disabling the setting sends an empty snapshot
+before closing the transport; the firmware watchdog remains the fallback.
+
+The opt-in production-USB gate exercises AppModel session projection through
+the real IOHID transport:
+
+```sh
+AGENT_ISLAND_RUN_K0_MAX_HID_INTEGRATION=1 \
+swift test \
+  --filter K0MaxHIDTransportIntegrationTests/testLiveAppModelProjectsSessionStateReadOnly
+```
+
+This test is skipped during ordinary `swift test` runs.
 
 ## Restore stock
 

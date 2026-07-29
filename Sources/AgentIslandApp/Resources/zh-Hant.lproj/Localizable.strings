@@ -42,6 +42,27 @@
 "settings.general.languageEnglish" = "English";
 "settings.general.languageChinese" = "简体中文";
 "settings.general.languageTraditionalChinese" = "繁體中文";
+"settings.general.agentControl.section" = "代理控制鍵盤";
+"settings.general.agentControl.enable" = "啟用 Keychron K0 Max";
+"settings.general.agentControl.status" = "狀態";
+"settings.general.agentControl.transport" = "連線";
+"settings.general.agentControl.protocol" = "通訊協定";
+"settings.general.agentControl.firmware" = "韌體";
+"settings.general.agentControl.unavailable" = "—";
+"settings.general.agentControl.requiresFirmware" = "需要安裝 Agent Island 自訂韌體。目前支援 USB；2.4 GHz 尚未驗證。";
+"settings.general.agentControl.readOnly" = "此版本為唯讀模式。數字鍵、Enter、+ 和 - 操作均已停用。";
+"settings.general.agentControl.state.stopped" = "已停止";
+"settings.general.agentControl.state.searching" = "正在搜尋";
+"settings.general.agentControl.state.handshaking" = "正在交握";
+"settings.general.agentControl.state.ready" = "已連線";
+"settings.general.agentControl.state.reconnecting" = "正在重新連線";
+"settings.general.agentControl.state.incompatible" = "不相容";
+"settings.general.agentControl.state.sleeping" = "睡眠中";
+"settings.general.agentControl.state.failed" = "失敗";
+"settings.general.agentControl.transport.usb" = "USB";
+"settings.general.agentControl.transport.2_4ghz" = "2.4 GHz";
+"settings.general.agentControl.transport.bluetooth" = "藍牙";
+"settings.general.agentControl.transport.unknown" = "未知";
 
 /* Settings - Personalization (v6) */
 "settings.tab.appearance" = "個人化";

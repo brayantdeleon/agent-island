@@ -49,6 +49,7 @@ final class AppModel {
         didSet {
             _cachedSessionBuckets = nil
             bridgeServer.updateStateSnapshot(state)
+            updateAgentControlDeviceSnapshot()
         }
     }
     @ObservationIgnored private var _cachedSessionBuckets: SessionBucketCache?
@@ -58,6 +59,18 @@ final class AppModel {
 
     @ObservationIgnored
     private let agentControlSlotCoordinator: AgentControlSlotCoordinator
+
+    @ObservationIgnored
+    private let agentControlDeviceCoordinator: AgentControlDeviceCoordinator
+
+    @ObservationIgnored
+    private let agentControlDeviceSettingsStore: AgentControlDeviceSettingsStore
+
+    @ObservationIgnored
+    private var agentControlSnapshotRefreshTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var isAgentControlDeviceIntegrationStarted = false
 
     private var hiddenSessionIdentifiers: Set<HiddenSessionIdentifier> = []
 
@@ -278,6 +291,25 @@ final class AppModel {
             UserDefaults.standard.set(suppressFrontmostNotifications, forKey: Self.suppressFrontmostNotificationsDefaultsKey)
         }
     }
+    var agentControlKeyboardEnabled: Bool = false {
+        didSet {
+            guard hasFinishedInit,
+                  agentControlKeyboardEnabled != oldValue else {
+                return
+            }
+
+            agentControlDeviceSettingsStore.saveEnabled(
+                agentControlKeyboardEnabled
+            )
+            if agentControlKeyboardEnabled {
+                if hasStarted {
+                    startAgentControlDeviceIntegrationIfNeeded()
+                }
+            } else {
+                stopAgentControlDeviceIntegration()
+            }
+        }
+    }
     var launchAtLoginEnabled: Bool = false {
         didSet {
             guard !isApplyingLaunchAtLogin, hasFinishedInit, launchAtLoginEnabled != oldValue else { return }
@@ -410,6 +442,10 @@ final class AppModel {
             oldValue.sessionSort != newValue.sessionSort ||
             oldValue.completedStaleThreshold != newValue.completedStaleThreshold {
             _cachedSessionBuckets = nil
+        }
+        if oldValue.completedStaleThreshold
+            != newValue.completedStaleThreshold {
+            updateAgentControlDeviceSnapshot()
         }
         refreshOverlayPlacementIfVisible()
     }
@@ -592,7 +628,9 @@ final class AppModel {
             await ForegroundTerminalSessionProbe().matches(session: session)
         },
         hiddenSessionStore: HiddenSessionStore = .standard,
-        agentControlSlotAssignmentStore: AgentControlSlotAssignmentStore = .standard
+        agentControlSlotAssignmentStore: AgentControlSlotAssignmentStore = .standard,
+        agentControlDeviceCoordinator: AgentControlDeviceCoordinator = AgentControlDeviceCoordinator(),
+        agentControlDeviceSettingsStore: AgentControlDeviceSettingsStore = .standard
     ) {
         self.terminalJumpAction = terminalJumpAction
         self.isNotificationSessionAlreadyFrontmost = isNotificationSessionAlreadyFrontmost
@@ -600,6 +638,8 @@ final class AppModel {
         self.agentControlSlotCoordinator = AgentControlSlotCoordinator(
             store: agentControlSlotAssignmentStore
         )
+        self.agentControlDeviceCoordinator = agentControlDeviceCoordinator
+        self.agentControlDeviceSettingsStore = agentControlDeviceSettingsStore
         self.hiddenSessionIdentifiers = hiddenSessionStore.load()
         UserDefaults.standard.register(defaults: [
             Self.showDockIconDefaultsKey: true,
@@ -618,6 +658,8 @@ final class AppModel {
             )
         }
         completionReplyEnabled = UserDefaults.standard.bool(forKey: Self.completionReplyEnabledDefaultsKey)
+        agentControlKeyboardEnabled =
+            agentControlDeviceSettingsStore.loadEnabled()
         launchAtLoginEnabled = LaunchAtLoginService.shared.isEnabled
         appearanceSettingsProfile = IslandAppearanceDisplayProfile(
             rawValue: UserDefaults.standard.string(forKey: Self.appearanceProfileSettingsDefaultsKey) ?? ""
@@ -630,6 +672,10 @@ final class AppModel {
         }
 
         overlay.appModel = self
+        overlay.onPlacementDiagnosticsChanged = { [weak self] in
+            self?._cachedSessionBuckets = nil
+            self?.updateAgentControlDeviceSnapshot()
+        }
         overlay.restoreDisplayPreference()
         overlay.startObservingDisplayChanges()
         overlay.onStatusMessage = { [weak self] message in
@@ -876,6 +922,7 @@ final class AppModel {
         }
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
+        updateAgentControlDeviceSnapshot()
         lastActionMessage = "Hidden conversation: \(session.title)"
     }
 
@@ -890,6 +937,7 @@ final class AppModel {
         }
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
+        updateAgentControlDeviceSnapshot()
         lastActionMessage = "Unhidden conversation: \(session.title)"
     }
 
@@ -1019,6 +1067,111 @@ final class AppModel {
         at referenceDate: Date = .now
     ) -> String? {
         agentControlSlotProjection(at: referenceDate).keyLabel(for: sessionID)
+    }
+
+    func agentControlHardwareBadgeLabel(
+        for sessionID: String,
+        at referenceDate: Date = .now
+    ) -> String? {
+        guard agentControlKeyboardEnabled,
+              let keyLabel = agentControlSlotLabel(
+                for: sessionID,
+                at: referenceDate
+              ) else {
+            return nil
+        }
+        return "K0 · \(keyLabel)"
+    }
+
+    var agentControlDeviceDiagnostics: AgentControlDeviceDiagnostics {
+        agentControlDeviceCoordinator.diagnostics
+    }
+
+    /// Starts the read-only K0 Max state projection without registering any
+    /// device-message action handler. Kept internal for deterministic tests.
+    func startAgentControlDeviceIntegrationIfNeeded() {
+        guard agentControlKeyboardEnabled,
+              !isAgentControlDeviceIntegrationStarted else {
+            return
+        }
+
+        isAgentControlDeviceIntegrationStarted = true
+        updateAgentControlDeviceSnapshot()
+        agentControlDeviceCoordinator.start()
+    }
+
+    private func stopAgentControlDeviceIntegration() {
+        agentControlSnapshotRefreshTask?.cancel()
+        agentControlSnapshotRefreshTask = nil
+        guard isAgentControlDeviceIntegrationStarted else { return }
+
+        // Clear immediately while the connection is still live. Firmware's
+        // watchdog remains the fallback if the report cannot be delivered.
+        agentControlDeviceCoordinator.setSnapshot(.empty)
+        agentControlDeviceCoordinator.stop()
+        isAgentControlDeviceIntegrationStarted = false
+    }
+
+    private func updateAgentControlDeviceSnapshot(
+        at referenceDate: Date = .now
+    ) {
+        guard agentControlKeyboardEnabled,
+              isAgentControlDeviceIntegrationStarted else {
+            return
+        }
+
+        let projection = agentControlSlotProjection(at: referenceDate)
+        agentControlDeviceCoordinator.setSnapshot(
+            AgentControlSnapshotContent(
+                slots: projection.slots.map { slot in
+                    slot.map {
+                        AgentControlSnapshotSlot(
+                            identity: $0.sessionID,
+                            lightState: $0.lightState
+                        )
+                    }
+                },
+                overflowCount: projection.overflowCount
+            )
+        )
+        scheduleAgentControlCompletionExpiry(
+            after: referenceDate
+        )
+    }
+
+    private func scheduleAgentControlCompletionExpiry(
+        after referenceDate: Date
+    ) {
+        agentControlSnapshotRefreshTask?.cancel()
+        agentControlSnapshotRefreshTask = nil
+
+        let threshold = completedStaleThreshold.seconds
+        guard threshold.isFinite else { return }
+
+        let nextExpiry = surfacedSessions.lazy
+            .filter { session in
+                session.phase == .completed
+                    && !session.isSubagentSession
+                    && !session.isRealtimeVoiceChatSession
+            }
+            .map { $0.updatedAt.addingTimeInterval(threshold) }
+            .filter { $0 > referenceDate }
+            .min()
+
+        guard let nextExpiry else { return }
+        let delay = max(
+            nextExpiry.timeIntervalSince(referenceDate) + 0.01,
+            0.01
+        )
+        agentControlSnapshotRefreshTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.updateAgentControlDeviceSnapshot()
+        }
     }
 
     func islandClosedRightSlotContent(
@@ -1189,6 +1342,7 @@ final class AppModel {
             return
         }
         hasStarted = true
+        startAgentControlDeviceIntegrationIfNeeded()
 
         if loadRuntimeState {
             isResolvingInitialLiveSessions = true

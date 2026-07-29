@@ -417,13 +417,44 @@ On 2026-07-28:
 
 ### Round 6 — Read-only Agent Island integration
 
-- [ ] Add an opt-in K0 Max setting and visible connection/protocol status.
-- [ ] Connect the slot projection to snapshots and heartbeat.
-- [ ] Show hardware slot labels in Agent Island.
-- [ ] Ship no navigation or approval action in this round.
+- [x] Add an opt-in K0 Max setting and visible connection/protocol status.
+- [x] Connect the slot projection to snapshots and heartbeat.
+- [x] Show hardware slot labels in Agent Island.
+- [x] Ship no navigation or approval action in this round.
 
 Exit criterion: real sessions drive correct lighting, while all keyboard
 actions remain disabled.
+
+#### Round 6 evidence
+
+On 2026-07-28:
+
+- General Settings gained a persisted, default-off Keychron K0 Max opt-in
+  with live connection state, transport, protocol, and firmware build
+  diagnostics. The app starts the device coordinator only after its runtime
+  starts and the preference is enabled.
+- AppModel now converts the shared ten-slot projection into anonymous device
+  snapshots on session, hidden-state, display-profile, and completion-window
+  changes. A scheduled refresh turns recently completed slots off when the
+  configured completion window expires even if no new hook event arrives.
+- Assigned session cards show `K0 · 1` through `K0 · 0` while the integration
+  is enabled. Disabling it sends an empty snapshot before closing the
+  transport, with the firmware watchdog retained as fallback cleanup.
+- The host continues to advertise only `stateSnapshots`. AppModel registers
+  no device-message handler, so injected selection, jump, allow-once, deny,
+  and layer messages cannot select a session, mutate a request, dispatch a
+  command, or receive an action acknowledgement in this round.
+- Three deterministic AppModel integration tests cover live phase projection,
+  opt-out clearing, completion expiry, persisted opt-in state, hardware
+  labels, and the read-only action boundary. The focused projection,
+  coordinator, and app integration suites passed 19 tests.
+- The complete suite passed 455 Swift Testing tests plus 27 XCTest tests.
+  The ordinary run skipped only the three opt-in K0 Max hardware gates and
+  the existing live Ghostty jump gate.
+- The new opt-in AppModel-to-production-IOHID USB test passed against
+  firmware build `0xa41cfb54`. It completed a real handshake, sent running
+  and recently-completed snapshots as two generations, exposed `K0 · 1`,
+  and then cleared and stopped the transport without enabling device actions.
 
 ### Round 7 — Selection and navigation
 

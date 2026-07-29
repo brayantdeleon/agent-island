@@ -4,6 +4,77 @@ import AgentIslandCore
 
 final class K0MaxHIDTransportIntegrationTests: XCTestCase {
     @MainActor
+    func testLiveAppModelProjectsSessionStateReadOnly() async throws {
+        guard ProcessInfo.processInfo.environment[
+            "AGENT_ISLAND_RUN_K0_MAX_HID_INTEGRATION"
+        ] == "1" else {
+            throw XCTSkip(
+                "Set AGENT_ISLAND_RUN_K0_MAX_HID_INTEGRATION=1 to run the live K0 Max HID test."
+            )
+        }
+
+        let suiteName =
+            "agent-island-live-k0-app-test-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(
+            true,
+            forKey: AgentControlDeviceSettingsStore.defaultsKey
+        )
+        let coordinator = makeLiveCoordinator()
+        let model = AppModel(
+            hiddenSessionStore: HiddenSessionStore(defaults: defaults),
+            agentControlSlotAssignmentStore:
+                AgentControlSlotAssignmentStore(defaults: defaults),
+            agentControlDeviceCoordinator: coordinator,
+            agentControlDeviceSettingsStore:
+                AgentControlDeviceSettingsStore(defaults: defaults)
+        )
+        defer {
+            model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        var session = AgentSession(
+            id: "live-app-projection",
+            title: "Codex · K0 Max live test",
+            tool: .codex,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "Testing live K0 Max projection",
+            updatedAt: now,
+            firstSeenAt: now
+        )
+        session.isProcessAlive = true
+        model.state = SessionState(sessions: [session])
+
+        model.startAgentControlDeviceIntegrationIfNeeded()
+
+        let becameReady = await waitForReady(coordinator, timeout: 5)
+        XCTAssertTrue(becameReady)
+        let runningSnapshotSent = await wait(timeout: 2) {
+            coordinator.diagnostics.snapshotGeneration == 1
+        }
+        XCTAssertTrue(runningSnapshotSent)
+        XCTAssertEqual(
+            model.agentControlHardwareBadgeLabel(
+                for: session.id,
+                at: now
+            ),
+            "K0 · 1"
+        )
+
+        session.phase = .completed
+        session.updatedAt = .now
+        model.state = SessionState(sessions: [session])
+        let completedSnapshotSent = await wait(timeout: 2) {
+            coordinator.diagnostics.snapshotGeneration == 2
+        }
+        XCTAssertTrue(completedSnapshotSent)
+        XCTAssertEqual(coordinator.diagnostics.activeTransport, .usb)
+    }
+
+    @MainActor
     func testConnectedDiagnosticFirmwareHandshakeAndHostRestart() async throws {
         guard ProcessInfo.processInfo.environment[
             "AGENT_ISLAND_RUN_K0_MAX_HID_INTEGRATION"
