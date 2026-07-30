@@ -46,7 +46,7 @@ struct CodexNativeApprovalRemote {
     private static let codexBundleIdentifier = "com.openai.codex"
     private static let activationTimeout: Duration = .seconds(2)
     private static let controlTimeout: Duration = .seconds(4)
-    private static let responseTimeout: Duration = .seconds(1)
+    private static let responseTimeout: Duration = .seconds(2)
     private static let pollInterval: Duration = .milliseconds(50)
     private static let maximumVisitedElements = 4_096
 
@@ -174,6 +174,31 @@ struct CodexNativeApprovalRemote {
             }
             Self.logger.error(
                 "AXPress returned success but the candidate remained available."
+            )
+
+            // Some Electron controls advertise AXPress and return success
+            // without dispatching the DOM click. Fall back to a real pointer
+            // click only at the center of the exact accessibility-matched
+            // Allow/Deny control, then verify that Codex dismissed it.
+            guard Self.clickCenter(of: control) else {
+                continue
+            }
+            Self.logger.notice(
+                "Clicked the center of the matched Codex approval control."
+            )
+            if await waitUntil(
+                timeout: Self.responseTimeout,
+                condition: {
+                    !Self.isAvailable(control)
+                }
+            ) {
+                Self.logger.notice(
+                    "Codex approval control disappeared after pointer fallback."
+                )
+                return
+            }
+            Self.logger.error(
+                "Pointer fallback completed but the candidate remained available."
             )
         }
 
@@ -332,6 +357,73 @@ struct CodexNativeApprovalRemote {
         ) == .success
     }
 
+    private static func clickCenter(of element: AXUIElement) -> Bool {
+        guard let position = pointAttribute(
+            kAXPositionAttribute,
+            of: element
+        ),
+              let size = sizeAttribute(
+                  kAXSizeAttribute,
+                  of: element
+              ),
+              size.width > 0,
+              size.height > 0 else {
+            logger.error(
+                "Matched approval control does not expose a clickable frame."
+            )
+            return false
+        }
+
+        let center = CGPoint(
+            x: position.x + (size.width / 2),
+            y: position.y + (size.height / 2)
+        )
+        guard center.x.isFinite, center.y.isFinite else {
+            logger.error("Matched approval control has an invalid frame.")
+            return false
+        }
+
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let originalPosition = CGEvent(source: nil)?.location
+        let events: [CGEvent?] = [
+            CGEvent(
+                mouseEventSource: source,
+                mouseType: .mouseMoved,
+                mouseCursorPosition: center,
+                mouseButton: .left
+            ),
+            CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseDown,
+                mouseCursorPosition: center,
+                mouseButton: .left
+            ),
+            CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseUp,
+                mouseCursorPosition: center,
+                mouseButton: .left
+            ),
+        ]
+        guard events.allSatisfy({ $0 != nil }) else {
+            logger.error("Could not create pointer events for Codex approval.")
+            return false
+        }
+        for event in events.compactMap(\.self) {
+            event.post(tap: .cghidEventTap)
+        }
+        if let originalPosition,
+           let restoreEvent = CGEvent(
+               mouseEventSource: source,
+               mouseType: .mouseMoved,
+               mouseCursorPosition: originalPosition,
+               mouseButton: .left
+           ) {
+            restoreEvent.post(tap: .cghidEventTap)
+        }
+        return true
+    }
+
     private static func accessibleLabels(for element: AXUIElement) -> Set<String> {
         let attributes = [
             kAXTitleAttribute,
@@ -387,6 +479,56 @@ struct CodexNativeApprovalRemote {
             return nil
         }
         return value as? Bool
+    }
+
+    private static func pointAttribute(
+        _ attribute: String,
+        of element: AXUIElement
+    ) -> CGPoint? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            attribute as CFString,
+            &value
+        ) == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+        var point = CGPoint.zero
+        guard AXValueGetValue(
+            value as! AXValue,
+            .cgPoint,
+            &point
+        ) else {
+            return nil
+        }
+        return point
+    }
+
+    private static func sizeAttribute(
+        _ attribute: String,
+        of element: AXUIElement
+    ) -> CGSize? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            attribute as CFString,
+            &value
+        ) == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+        var size = CGSize.zero
+        guard AXValueGetValue(
+            value as! AXValue,
+            .cgSize,
+            &size
+        ) else {
+            return nil
+        }
+        return size
     }
 
     private static func elementAttribute(
