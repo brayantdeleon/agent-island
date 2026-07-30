@@ -73,8 +73,9 @@ struct CodexNativeApprovalRemote {
             throw CodexNativeApprovalRemoteError.accessibilityPermissionRequired
         }
 
+        let previousFrontmostApp = NSWorkspace.shared.frontmostApplication
         let wasCodexFrontmost =
-            NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            previousFrontmostApp?.bundleIdentifier
                 == Self.codexBundleIdentifier
         NSWorkspace.shared.open(threadURL)
         app.activate()
@@ -192,6 +193,7 @@ struct CodexNativeApprovalRemote {
                     Self.logger.notice(
                         "Codex approval control disappeared after pointer activation."
                     )
+                    Self.restorePreviousApp(previousFrontmostApp)
                     return
                 }
                 Self.logger.error(
@@ -222,6 +224,7 @@ struct CodexNativeApprovalRemote {
                 }
             ) {
                 Self.logger.notice("Codex approval control disappeared.")
+                Self.restorePreviousApp(previousFrontmostApp)
                 return
             }
             Self.logger.error(
@@ -401,6 +404,23 @@ struct CodexNativeApprovalRemote {
             window,
             kAXFocusedAttribute as CFString,
             kCFBooleanTrue
+        )
+    }
+
+    @MainActor
+    private static func restorePreviousApp(
+        _ previousApp: NSRunningApplication?
+    ) {
+        guard let previousApp,
+              previousApp.bundleIdentifier != codexBundleIdentifier,
+              !previousApp.isTerminated,
+              NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                == codexBundleIdentifier else {
+            return
+        }
+        let restored = previousApp.activate()
+        logger.notice(
+            "Restored previous app \(previousApp.localizedName ?? previousApp.bundleIdentifier ?? "<unknown>", privacy: .public): \(restored, privacy: .public)."
         )
     }
 
