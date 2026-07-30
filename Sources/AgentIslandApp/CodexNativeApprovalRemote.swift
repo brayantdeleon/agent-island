@@ -149,8 +149,35 @@ struct CodexNativeApprovalRemote {
                 .sorted()
                 .joined(separator: " | ")
             Self.logger.notice(
-                "Pressing Codex candidate: \(candidateLabels, privacy: .public)"
+                "Activating Codex candidate: \(candidateLabels, privacy: .public)"
             )
+
+            // Electron currently advertises AXPress but does not dispatch its
+            // DOM click. Prefer a real pointer click at the center of the exact
+            // accessibility-matched Allow/Deny control.
+            if Self.clickCenter(of: control) {
+                Self.logger.notice(
+                    "Clicked the center of the matched Codex approval control."
+                )
+                if await waitUntil(
+                    timeout: Self.responseTimeout,
+                    condition: {
+                        !Self.isAvailable(control)
+                    }
+                ) {
+                    Self.logger.notice(
+                        "Codex approval control disappeared after pointer activation."
+                    )
+                    return
+                }
+                Self.logger.error(
+                    "Pointer activation completed but the candidate remained available."
+                )
+            }
+
+            // Keep AXPress as a fallback in case a future Codex build exposes
+            // a working native accessibility action.
+            Self.logger.notice("Trying AXPress fallback.")
             let result = AXUIElementPerformAction(
                 control,
                 kAXPressAction as CFString
@@ -174,31 +201,6 @@ struct CodexNativeApprovalRemote {
             }
             Self.logger.error(
                 "AXPress returned success but the candidate remained available."
-            )
-
-            // Some Electron controls advertise AXPress and return success
-            // without dispatching the DOM click. Fall back to a real pointer
-            // click only at the center of the exact accessibility-matched
-            // Allow/Deny control, then verify that Codex dismissed it.
-            guard Self.clickCenter(of: control) else {
-                continue
-            }
-            Self.logger.notice(
-                "Clicked the center of the matched Codex approval control."
-            )
-            if await waitUntil(
-                timeout: Self.responseTimeout,
-                condition: {
-                    !Self.isAvailable(control)
-                }
-            ) {
-                Self.logger.notice(
-                    "Codex approval control disappeared after pointer fallback."
-                )
-                return
-            }
-            Self.logger.error(
-                "Pointer fallback completed but the candidate remained available."
             )
         }
 
@@ -358,6 +360,13 @@ struct CodexNativeApprovalRemote {
     }
 
     private static func clickCenter(of element: AXUIElement) -> Bool {
+        guard CGPreflightPostEventAccess() else {
+            _ = CGRequestPostEventAccess()
+            logger.error(
+                "Input-control permission is unavailable; requested PostEvent access."
+            )
+            return false
+        }
         guard let position = pointAttribute(
             kAXPositionAttribute,
             of: element
