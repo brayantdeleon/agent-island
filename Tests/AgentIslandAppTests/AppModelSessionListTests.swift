@@ -1374,15 +1374,42 @@ struct AppModelSessionListTests {
     @Test
     func newerRolloutActivityClearsOnlyNativeCodexApproval() {
         let now = Date(timeIntervalSince1970: 2_700)
-        let model = AppModel()
+        let suiteName =
+            "AppModelSessionListTests.NativeApproval.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(
+            true,
+            forKey:
+                AgentControlDeviceSettingsStore
+                    .approvalActionsDefaultsKey
+        )
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let model = AppModel(
+            agentControlDeviceSettingsStore:
+                AgentControlDeviceSettingsStore(defaults: defaults)
+        )
         model.suppressFrontmostNotifications = false
+        model.codexApprovalBrokerEnabled = false
+        var nativeSession = listSession(
+            id: "native-approval",
+            phase: .running,
+            updatedAt: now
+        )
+        nativeSession.jumpTarget = JumpTarget(
+            terminalApp: "Codex.app",
+            workspaceName: "agent-island",
+            paneTitle: "Codex",
+            workingDirectory: "/tmp/agent-island",
+            codexThreadID: nativeSession.id
+        )
+        nativeSession.isCodexAppSession = true
         model.state = SessionState(
             sessions: [
-                listSession(
-                    id: "native-approval",
-                    phase: .running,
-                    updatedAt: now
-                ),
+                nativeSession,
                 listSession(
                     id: "routed-approval",
                     phase: .running,
@@ -1392,20 +1419,20 @@ struct AppModelSessionListTests {
         )
 
         model.applyTrackedEvent(
-            .permissionRequested(
-                PermissionRequested(
+            .activityUpdated(
+                SessionActivityUpdated(
                     sessionID: "native-approval",
-                    request: PermissionRequest(
-                        title: "Run command",
-                        summary: "Needs native approval",
-                        affectedPath: "osascript",
-                        resolutionRoute: .nativeCodex
-                    ),
+                    summary: "Needs native approval",
+                    phase: .waitingForApproval,
                     timestamp: now.addingTimeInterval(2)
                 )
             ),
             updateLastActionMessage: false,
-            ingress: .bridge
+            ingress: .rollout
+        )
+        #expect(
+            model.state.session(id: "native-approval")?
+                .permissionRequest?.resolutionRoute == .nativeCodex
         )
         model.applyTrackedEvent(
             .permissionRequested(

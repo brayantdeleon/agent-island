@@ -3518,6 +3518,10 @@ final class AppModel {
             )
         }
         state.apply(event)
+        promoteObservedNativeCodexApprovalIfNeeded(
+            from: event,
+            ingress: ingress
+        )
         if let resolvedPermissionSessionID =
             resolvedPermissionSessionID
                 ?? timelineResolvedNativePermission?.sessionID {
@@ -3579,6 +3583,46 @@ final class AppModel {
                 ingress: ingress
             )
         }
+    }
+
+    private func promoteObservedNativeCodexApprovalIfNeeded(
+        from event: AgentEvent,
+        ingress: TrackedEventIngress
+    ) {
+        guard ingress == .rollout,
+              agentControlKeyboardApprovalsEnabled,
+              !codexApprovalBrokerEnabled,
+              case let .activityUpdated(payload) = event,
+              payload.phase == .waitingForApproval,
+              let session = state.session(id: payload.sessionID),
+              session.tool == .codex,
+              session.isCodexAppSession
+                || session.jumpTarget?.terminalApp == "Codex.app",
+              session.permissionRequest == nil else {
+            return
+        }
+
+        let summary = session.summary.isEmpty
+            ? "Codex is waiting for approval."
+            : session.summary
+        state.apply(
+            .permissionRequested(
+                PermissionRequested(
+                    sessionID: session.id,
+                    request: PermissionRequest(
+                        title: "Codex approval",
+                        summary: summary,
+                        affectedPath:
+                            session.codexMetadata?.currentCommandPreview
+                                ?? summary,
+                        primaryActionTitle: "Allow",
+                        secondaryActionTitle: "Deny",
+                        resolutionRoute: .nativeCodex
+                    ),
+                    timestamp: session.updatedAt
+                )
+            )
+        )
     }
 
     private func scheduleNotificationSurfacePresentationIfNeeded(
