@@ -5,6 +5,45 @@ import Testing
 
 struct ClaudeHooksTests {
     @Test
+    func claudeHookPayloadDecodesCurrentManualPermissionMode() throws {
+        let data = Data(
+            """
+            {
+              "cwd": "/tmp/worktree",
+              "hook_event_name": "PermissionRequest",
+              "session_id": "claude-manual-mode",
+              "permission_mode": "manual",
+              "tool_name": "Bash",
+              "tool_input": {"command": "pwd"}
+            }
+            """.utf8
+        )
+
+        let payload = try JSONDecoder().decode(ClaudeHookPayload.self, from: data)
+
+        #expect(payload.permissionMode == .manual)
+    }
+
+    @Test
+    func claudeBashPermissionSuggestionHasExactRuleAndScopeLabel() {
+        let update = ClaudePermissionUpdate.addRules(
+            destination: .localSettings,
+            rules: [
+                ClaudePermissionRuleValue(
+                    toolName: "Bash",
+                    ruleContent: "rm -rf node_modules"
+                ),
+            ],
+            behavior: .allow
+        )
+
+        #expect(
+            update.displayLabel
+                == "Yes, allow running `rm -rf node_modules` for this project"
+        )
+    }
+
+    @Test
     func claudeHookOutputEncoderEncodesPermissionDecision() throws {
         let output = try ClaudeHookOutputEncoder.standardOutput(
             for: .claudeHookDirective(
@@ -537,6 +576,16 @@ struct ClaudeHooksTests {
         try await observer.send(.registerClient(role: .observer))
 
         let toolInput: ClaudeHookJSONValue = .object(["command": .string("ls -la")])
+        let suggestedUpdate = ClaudePermissionUpdate.addRules(
+            destination: .localSettings,
+            rules: [
+                ClaudePermissionRuleValue(
+                    toolName: "Bash",
+                    ruleContent: "ls -la"
+                ),
+            ],
+            behavior: .allow
+        )
         let preToolPayload = ClaudeHookPayload(
             cwd: "/tmp/worktree",
             hookEventName: .preToolUse,
@@ -550,7 +599,8 @@ struct ClaudeHooksTests {
             hookEventName: .permissionRequest,
             sessionID: "claude-session-1",
             toolName: "Bash",
-            toolInput: toolInput
+            toolInput: toolInput,
+            permissionSuggestions: [suggestedUpdate]
         )
 
         let preToolResponse = try BridgeCommandClient(socketURL: socketURL).send(.processClaudeHook(preToolPayload))
@@ -573,12 +623,15 @@ struct ClaudeHooksTests {
         #expect(payload.request.toolName == "Bash")
         #expect(payload.request.toolUseID == "tool-use-1")
         #expect(payload.request.primaryActionTitle == "Allow Once")
+        #expect(payload.request.suggestedUpdates == [suggestedUpdate])
 
         try await observer.send(
             .resolvePermission(
                 sessionID: "claude-session-1",
                 requestID: payload.request.id,
-                resolution: .allowOnce()
+                resolution: .allowOnce(
+                    updatedPermissions: [suggestedUpdate]
+                )
             )
         )
 
@@ -588,7 +641,7 @@ struct ClaudeHooksTests {
             return
         }
 
-        #expect(updatedPermissions.isEmpty)
+        #expect(updatedPermissions == [suggestedUpdate])
         #expect(updatedInput == toolInput)
     }
 

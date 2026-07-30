@@ -257,6 +257,12 @@ Claude Desktop's embedded Claude Code worker is treated as host-only evidence. I
 | `terminal_tty` | `terminalTTY` | TTY device path |
 | `terminal_title` | `terminalTitle` | Tab / window title |
 
+Agent Island accepts both Claude Code's current `manual` permission-mode name
+and the legacy `default` name. A keyboard `+` approval remains allow-once.
+Longer-lived approval choices are shown only when Claude supplies
+`permission_suggestions`; Agent Island renders and returns those exact updates
+instead of constructing a broader rule of its own.
+
 ### PreToolUse directive response
 
 ```json

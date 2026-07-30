@@ -2507,23 +2507,20 @@ private struct IslandSessionRow: View {
                     .buttonStyle(IslandActionButtonStyle(kind: .secondary, expands: true))
                 Button(session.permissionRequest?.primaryActionTitle ?? lang.t("approval.allowOnce")) { onApprove?(.allowOnce) }
                     .buttonStyle(IslandActionButtonStyle(kind: .success, expands: true))
-                if session.supportsPersistentPermissionApproval,
-                   let toolName = session.permissionRequest?.toolName {
-                    Button(lang.t("approval.alwaysAllow", toolName)) {
-                        let rule = ClaudePermissionRuleValue(toolName: toolName)
-                        let update = ClaudePermissionUpdate.addRules(
-                            destination: .session,
-                            rules: [rule],
-                            behavior: .allow
-                        )
-                        onApprove?(.allowWithUpdates([update]))
-                    }
-                    .buttonStyle(IslandActionButtonStyle(
-                        kind: .primary,
-                        expands: true,
-                        labelLineLimit: nil
-                    ))
+            }
+
+            ForEach(
+                Array(session.permissionApprovalSuggestions.enumerated()),
+                id: \.offset
+            ) { _, update in
+                Button(update.displayLabel) {
+                    onApprove?(.allowWithUpdates([update]))
                 }
+                .buttonStyle(IslandActionButtonStyle(
+                    kind: .primary,
+                    expands: true,
+                    labelLineLimit: nil
+                ))
             }
         }
     }

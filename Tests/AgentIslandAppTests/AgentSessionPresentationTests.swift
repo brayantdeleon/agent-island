@@ -216,12 +216,23 @@ struct AgentSessionPresentationTests {
     }
 
     @Test
-    func persistentPermissionApprovalIsOnlyOfferedForClaudeRules() {
+    func exactPermissionSuggestionsAreOnlyOfferedForClaudeRequests() {
+        let update = ClaudePermissionUpdate.addRules(
+            destination: .localSettings,
+            rules: [
+                ClaudePermissionRuleValue(
+                    toolName: "Bash",
+                    ruleContent: "swift test"
+                ),
+            ],
+            behavior: .allow
+        )
         let request = PermissionRequest(
             title: "Run tool",
             summary: "Run tool",
             affectedPath: "tool",
-            toolName: "Bash"
+            toolName: "Bash",
+            suggestedUpdates: [update]
         )
         let codex = AgentSession(
             id: "codex-approval",
@@ -241,9 +252,24 @@ struct AgentSessionPresentationTests {
             updatedAt: .now,
             permissionRequest: request
         )
+        let claudeWithoutSuggestion = AgentSession(
+            id: "claude-approval-without-suggestion",
+            title: "Claude approval without suggestion",
+            tool: .claudeCode,
+            phase: .waitingForApproval,
+            summary: "Approval needed",
+            updatedAt: .now,
+            permissionRequest: PermissionRequest(
+                title: "Run tool",
+                summary: "Run tool",
+                affectedPath: "tool",
+                toolName: "Bash"
+            )
+        )
 
-        #expect(!codex.supportsPersistentPermissionApproval)
-        #expect(claude.supportsPersistentPermissionApproval)
+        #expect(codex.permissionApprovalSuggestions.isEmpty)
+        #expect(claude.permissionApprovalSuggestions == [update])
+        #expect(claudeWithoutSuggestion.permissionApprovalSuggestions.isEmpty)
     }
 
     @Test

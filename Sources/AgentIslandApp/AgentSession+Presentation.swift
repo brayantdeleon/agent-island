@@ -430,8 +430,12 @@ extension AgentSession {
         phase == .completed || (isActionable && phase.requiresAttention)
     }
 
-    var supportsPersistentPermissionApproval: Bool {
-        tool == .claudeCode && permissionRequest?.toolName?.isEmpty == false
+    var permissionApprovalSuggestions: [ClaudePermissionUpdate] {
+        guard tool == .claudeCode else {
+            return []
+        }
+
+        return permissionRequest?.suggestedUpdates ?? []
     }
 
     func spotlightShowsDetailLines(at referenceDate: Date) -> Bool {
