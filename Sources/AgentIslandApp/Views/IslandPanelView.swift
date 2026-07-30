@@ -113,7 +113,6 @@ struct IslandPanelView: View {
     private var lang: LanguageManager { model.lang }
 
     @State private var isHovering = false
-    @State private var showingQuitConfirmation = false
     @State private var keepsOpenedSurfaceMounted = false
     @State private var openedSurfaceMountGeneration: UInt64 = 0
 
@@ -187,7 +186,13 @@ struct IslandPanelView: View {
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
-        .alert(model.lang.t("island.quit.confirmTitle"), isPresented: $showingQuitConfirmation) {
+        .alert(
+            model.lang.t("island.quit.confirmTitle"),
+            isPresented: Binding(
+                get: { model.isQuitConfirmationPresented },
+                set: { model.isQuitConfirmationPresented = $0 }
+            )
+        ) {
             Button(model.lang.t("island.quit.confirmAction"), role: .destructive) {
                 model.quitApplication()
             }
@@ -324,6 +329,11 @@ struct IslandPanelView: View {
         let bottomInset = 0.0
         let surfaceWidth = openedWidth + (horizontalInset * 2)
         let surfaceHeight = openedHeight + bottomInset
+        let bodyContentWidth = Self.openedBodyContentWidth(
+            openedWidth: openedWidth,
+            isExpanded: model.islandSurface.isExpanded,
+            usesNotchProfile: usesNotchAwareOpenedHeader
+        )
         let surfaceShape = OpenedIslandSurfaceShape(
             topProfile: usesNotchAwareOpenedHeader ? .notch : .topBar
         )
@@ -338,7 +348,7 @@ struct IslandPanelView: View {
                     .frame(height: closedNotchHeight)
 
                 openedContent
-                    .frame(width: openedWidth)
+                    .frame(width: bodyContentWidth)
                     .frame(maxHeight: max(0, openedHeight - closedNotchHeight), alignment: .top)
                     .clipped()
             }
@@ -352,6 +362,17 @@ struct IslandPanelView: View {
             }
         }
         .frame(width: surfaceWidth, height: surfaceHeight, alignment: .top)
+    }
+
+    nonisolated static func openedBodyContentWidth(
+        openedWidth: CGFloat,
+        isExpanded: Bool,
+        usesNotchProfile: Bool
+    ) -> CGFloat {
+        let shoulderInset = isExpanded && usesNotchProfile
+            ? NotchShape.openedTopRadius
+            : 0
+        return max(0, openedWidth - (shoulderInset * 2))
     }
 
     // MARK: - Closed state
@@ -424,7 +445,7 @@ struct IslandPanelView: View {
                 tint: .white.opacity(0.62),
                 accessibilityLabel: model.lang.t("island.quit.confirmTitle")
             ) {
-                showingQuitConfirmation = true
+                model.isQuitConfirmationPresented = true
             }
         }
     }
@@ -446,27 +467,500 @@ struct IslandPanelView: View {
         .accessibilityLabel(accessibilityLabel ?? systemName)
     }
 
+    @ViewBuilder
     private var openedContent: some View {
-        VStack(spacing: 8) {
-            if !model.hasAnyInstalledAgent {
-                installHooksHint
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
-            }
+        if model.islandSurface.isExpanded {
+            expandedSessionSurface
+        } else {
+            VStack(spacing: 8) {
+                if !model.hasAnyInstalledAgent {
+                    installHooksHint
+                        .padding(.horizontal, 18)
+                        .padding(.top, 8)
+                }
 
-            if model.shouldShowSessionBootstrapPlaceholder {
-                sessionBootstrapPlaceholder
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
-            } else if model.islandListSessions.isEmpty {
-                emptyState
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
-            } else {
-                sessionList
+                if model.shouldShowSessionBootstrapPlaceholder {
+                    sessionBootstrapPlaceholder
+                        .padding(.horizontal, 18)
+                        .padding(.top, 8)
+                } else if model.islandListSessions.isEmpty {
+                    emptyState
+                        .padding(.horizontal, 18)
+                        .padding(.top, 8)
+                } else {
+                    sessionList
+                }
+            }
+            .padding(.bottom, 0)
+        }
+    }
+
+    private var expandedSessionSurface: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            GeometryReader { geometry in
+                let widths = Self.expandedPaneWidths(
+                    availableWidth: geometry.size.width
+                )
+
+                HStack(spacing: 0) {
+                    expandedTaskNavigation(referenceDate: context.date)
+                        .frame(width: widths.navigation)
+
+                    Rectangle()
+                        .fill(.white.opacity(0.07))
+                        .frame(width: widths.separator)
+
+                    Group {
+                        if let session = model.expandedSelectedSession {
+                            expandedTaskDetail(
+                                session,
+                                referenceDate: context.date
+                            )
+                        } else {
+                            emptyState
+                                .padding(24)
+                        }
+                    }
+                    .frame(width: widths.detail)
+                    .frame(maxHeight: .infinity)
+                    .clipped()
+                }
+                .frame(
+                    width: geometry.size.width,
+                    height: geometry.size.height,
+                    alignment: .leading
+                )
+                .clipped()
             }
         }
-        .padding(.bottom, 0)
+    }
+
+    nonisolated static func expandedPaneWidths(
+        availableWidth: CGFloat
+    ) -> (
+        navigation: CGFloat,
+        separator: CGFloat,
+        detail: CGFloat
+    ) {
+        let totalWidth = max(0, availableWidth)
+        let separatorWidth = min(1, totalWidth)
+        let contentWidth = max(0, totalWidth - separatorWidth)
+        let navigationWidth = min(300, max(0, contentWidth - 360))
+
+        return (
+            navigation: navigationWidth,
+            separator: separatorWidth,
+            detail: contentWidth - navigationWidth
+        )
+    }
+
+    private func expandedTaskNavigation(
+        referenceDate: Date
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("TASKS")
+                    .font(
+                        .system(
+                            size: 11,
+                            weight: .semibold,
+                            design: .monospaced
+                        )
+                    )
+                    .tracking(1.2)
+                    .foregroundStyle(V6Palette.paper.opacity(0.58))
+                Spacer()
+                Text("\(model.islandListSessions.count)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(V6Palette.paper.opacity(0.34))
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 38)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(.white.opacity(0.055))
+                    .frame(height: 1)
+            }
+
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(
+                        model.expandedIslandSessionSections(
+                            at: referenceDate
+                        )
+                    ) { section in
+                        expandedSectionHeader(section)
+                        ForEach(section.sessions) { session in
+                            expandedTaskNavigationRow(
+                                session,
+                                referenceDate: referenceDate
+                            )
+                        }
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .background(Color.white.opacity(0.012))
+    }
+
+    private func expandedSectionHeader(
+        _ section: IslandSessionSection
+    ) -> some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(sectionTint(for: section))
+                .frame(width: 6, height: 6)
+            Text(sessionSectionTitle(for: section).uppercased())
+                .font(
+                    .system(
+                        size: 9.5,
+                        weight: .semibold,
+                        design: .monospaced
+                    )
+                )
+                .tracking(0.4)
+                .foregroundStyle(sectionLabelColor(for: section))
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 6)
+    }
+
+    private func expandedTaskNavigationRow(
+        _ session: AgentSession,
+        referenceDate: Date
+    ) -> some View {
+        let isSelected = model.expandedSelectedSession?.id == session.id
+        let tint = IslandDesignPalette.Status.tint(for: session.phase)
+        let slot = model.agentControlHardwareBadgeLabel(
+            for: session.id,
+            at: referenceDate
+        )
+
+        return Button {
+            model.selectExpandedSession(session.id)
+        } label: {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(tint)
+                    .frame(width: 7, height: 7)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(session.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(V6Palette.paper.opacity(0.9))
+                        .lineLimit(1)
+                    Text(session.spotlightStatusLabel)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(V6Palette.paper.opacity(0.42))
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                if let slot {
+                    Text(slot)
+                        .font(
+                            .system(
+                                size: 9,
+                                weight: .semibold,
+                                design: .monospaced
+                            )
+                        )
+                        .foregroundStyle(V6Palette.paper.opacity(0.5))
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 48)
+            .background(
+                isSelected
+                    ? Color.white.opacity(0.085)
+                    : Color.clear
+            )
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    Rectangle()
+                        .fill(tint)
+                        .frame(width: 2)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func expandedTaskDetail(
+        _ session: AgentSession,
+        referenceDate: Date
+    ) -> some View {
+        let history = session.providerHistoryMetadata
+
+        return ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(session.title)
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(V6Palette.paper.opacity(0.96))
+                        Text(
+                            "\(session.tool.displayName) · \(session.phase.displayName) · \(session.spotlightAgeBadge(at: referenceDate))"
+                        )
+                        .font(
+                            .system(
+                                size: 10.5,
+                                weight: .medium,
+                                design: .monospaced
+                            )
+                        )
+                        .foregroundStyle(
+                            IslandDesignPalette.Status.tint(
+                                for: session.phase
+                            ).opacity(0.84)
+                        )
+                    }
+                    Spacer()
+                    Text("READ ONLY")
+                        .font(
+                            .system(
+                                size: 9,
+                                weight: .bold,
+                                design: .monospaced
+                            )
+                        )
+                        .tracking(0.8)
+                        .foregroundStyle(V6Palette.paper.opacity(0.42))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            Color.white.opacity(0.06),
+                            in: Capsule()
+                        )
+                }
+
+                expandedMetadataGrid(session)
+                expandedActionableState(session)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("CONVERSATION / TASK HISTORY")
+                            .font(
+                                .system(
+                                    size: 10.5,
+                                    weight: .semibold,
+                                    design: .monospaced
+                                )
+                            )
+                            .tracking(0.5)
+                            .foregroundStyle(V6Palette.paper.opacity(0.62))
+                        Spacer()
+                        Text(history.coverage.label.uppercased())
+                            .font(
+                                .system(
+                                    size: 9,
+                                    weight: .bold,
+                                    design: .monospaced
+                                )
+                            )
+                            .foregroundStyle(
+                                history.coverage == .partial
+                                    ? IslandDesignPalette.Status.waitingForAnswer
+                                    : V6Palette.paper.opacity(0.34)
+                            )
+                    }
+
+                    Text(history.sourceDescription)
+                        .font(.system(size: 11))
+                        .foregroundStyle(V6Palette.paper.opacity(0.46))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if history.entries.isEmpty {
+                        Text(
+                            "No provider-backed conversation turns are available for this task."
+                        )
+                        .font(.system(size: 12))
+                        .foregroundStyle(V6Palette.paper.opacity(0.42))
+                        .padding(.vertical, 18)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .background(
+                            Color.white.opacity(0.025),
+                            in: RoundedRectangle(
+                                cornerRadius: 10,
+                                style: .continuous
+                            )
+                        )
+                    } else {
+                        ForEach(history.entries) { entry in
+                            expandedHistoryEntry(entry)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+            .padding(.bottom, 28)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private func expandedMetadataGrid(
+        _ session: AgentSession
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            expandedMetadataRow(
+                label: "Workspace",
+                value: session.jumpTarget?.workspaceName
+                    ?? "Not reported"
+            )
+            expandedMetadataRow(
+                label: "Terminal",
+                value: session.jumpTarget?.terminalApp
+                    ?? "Not attached"
+            )
+            expandedMetadataRow(
+                label: "Tracking",
+                value: session.spotlightTrackingLabel
+                    ?? "No transcript identifier"
+            )
+            if let tool = session.spotlightCurrentToolLabel {
+                expandedMetadataRow(label: "Current tool", value: tool)
+            }
+        }
+        .padding(14)
+        .background(
+            Color.white.opacity(0.028),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+    }
+
+    private func expandedMetadataRow(
+        label: String,
+        value: String
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label.uppercased())
+                .font(
+                    .system(
+                        size: 9,
+                        weight: .semibold,
+                        design: .monospaced
+                    )
+                )
+                .foregroundStyle(V6Palette.paper.opacity(0.34))
+                .frame(width: 88, alignment: .leading)
+            Text(value)
+                .font(.system(size: 11.5))
+                .foregroundStyle(V6Palette.paper.opacity(0.72))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func expandedActionableState(
+        _ session: AgentSession
+    ) -> some View {
+        if let request = session.permissionRequest {
+            expandedReadOnlyCallout(
+                title: "APPROVAL WAITING",
+                tint: IslandDesignPalette.Status.waitingForApproval
+            ) {
+                Text(request.summary)
+                if !request.affectedPath.isEmpty {
+                    Text(request.affectedPath)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(V6Palette.paper.opacity(0.48))
+                        .textSelection(.enabled)
+                }
+            }
+        } else if let prompt = session.questionPrompt {
+            expandedReadOnlyCallout(
+                title: "ANSWER WAITING",
+                tint: IslandDesignPalette.Status.waitingForAnswer
+            ) {
+                Text(prompt.title)
+                let options = prompt.questions.flatMap(\.options).map(\.label)
+                    + prompt.options
+                if !options.isEmpty {
+                    Text(options.joined(separator: "  ·  "))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(V6Palette.paper.opacity(0.5))
+                }
+            }
+        }
+    }
+
+    private func expandedReadOnlyCallout<Content: View>(
+        title: String,
+        tint: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(
+                    .system(
+                        size: 9.5,
+                        weight: .bold,
+                        design: .monospaced
+                    )
+                )
+                .tracking(0.5)
+                .foregroundStyle(tint.opacity(0.9))
+            content()
+                .font(.system(size: 12))
+                .foregroundStyle(V6Palette.paper.opacity(0.78))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            tint.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(tint.opacity(0.2), lineWidth: 1)
+        }
+    }
+
+    private func expandedHistoryEntry(
+        _ entry: ProviderHistoryEntry
+    ) -> some View {
+        let tint: Color = switch entry.kind {
+        case .user:
+            IslandDesignPalette.Status.running
+        case .assistant:
+            IslandDesignPalette.Status.completed
+        case .activity:
+            IslandDesignPalette.Status.waitingForAnswer
+        }
+
+        return VStack(alignment: .leading, spacing: 7) {
+            Text(entry.label.uppercased())
+                .font(
+                    .system(
+                        size: 9.5,
+                        weight: .semibold,
+                        design: .monospaced
+                    )
+                )
+                .foregroundStyle(tint.opacity(0.82))
+            Text(entry.text)
+                .font(.system(size: 12))
+                .foregroundStyle(V6Palette.paper.opacity(0.78))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.white.opacity(0.025),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
     }
 
     /// Persistent hint at the top of the expanded island while no agent
@@ -550,9 +1044,16 @@ struct IslandPanelView: View {
         model.agentControlDetailPresentationRequests[sessionID]
     }
 
-    /// Whether the panel was opened by a notification (show only actionable session + footer).
+    /// Whether the panel was opened by a notification.
     private var isNotificationMode: Bool {
-        model.notchOpenReason == .notification && actionableSessionID != nil
+        model.islandSurface.isNotificationCard
+    }
+
+    /// Minimal keyboard presentation and notifications both render one
+    /// identity-bound task, but only notifications offer the "show all"
+    /// transition and auto-collapse behavior.
+    private var isFocusedCardMode: Bool {
+        isNotificationMode || model.islandSurface.isSingleTask
     }
 
     private static let maxSessionListHeight: CGFloat = 560
@@ -565,8 +1066,8 @@ struct IslandPanelView: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             let referenceDate = context.date
 
-            if isNotificationMode {
-                // Notification mode: NO ScrollView — content sizes naturally
+            if isFocusedCardMode {
+                // Focused-card mode: NO ScrollView — content sizes naturally
                 sessionListContent(referenceDate: referenceDate)
                     .padding(.vertical, 2)
                     .onHover { hovering in
@@ -634,11 +1135,11 @@ struct IslandPanelView: View {
     @ViewBuilder
     private func sessionListContent(referenceDate: Date) -> some View {
         VStack(spacing: 0) {
-            if !isNotificationMode {
+            if !isFocusedCardMode {
                 sessionPanelHeader(referenceDate: referenceDate)
             }
 
-            if isNotificationMode, let session = model.activeIslandCardSession {
+            if isFocusedCardMode, let session = model.activeIslandCardSession {
                 IslandSessionRow(
                     session: session,
                     referenceDate: referenceDate,
@@ -657,6 +1158,7 @@ struct IslandPanelView: View {
                         agentControlDetailPresentationRequest(
                             for: session.id
                         ),
+                    questionDraft: questionInteractionBinding(for: session),
                     useDrawingGroup: model.notchStatus == .opened,
                     isInteractive: model.notchStatus == .opened,
                     presentation: .notification,
@@ -669,7 +1171,14 @@ struct IslandPanelView: View {
                         )
                     },
                     onApprove: { model.approvePermission(for: session.id, action: $0) },
-                    onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
+                    onAnswer: {
+                        guard let promptID = session.questionPrompt?.id else { return }
+                        model.answerQuestion(
+                            for: session.id,
+                            promptID: promptID,
+                            answer: $0
+                        )
+                    },
                     onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                         ? { model.replyToSession(session, text: $0) } : nil,
                     onJump: { model.expandNotificationToSessionList() },
@@ -681,7 +1190,7 @@ struct IslandPanelView: View {
                 .id(notificationCardIdentity(for: session))
 
                 let visibleSessionCount = model.islandListSessions.count
-                if visibleSessionCount > 1 {
+                if isNotificationMode, visibleSessionCount > 1 {
                     Button {
                         model.expandNotificationToSessionList()
                     } label: {
@@ -721,6 +1230,7 @@ struct IslandPanelView: View {
                                     agentControlDetailPresentationRequest(
                                         for: session.id
                                     ),
+                                questionDraft: questionInteractionBinding(for: session),
                                 useDrawingGroup: model.notchStatus == .opened,
                                 isInteractive: model.notchStatus == .opened,
                                 sideInset: sessionListSideInset,
@@ -732,7 +1242,14 @@ struct IslandPanelView: View {
                                     )
                                 },
                                 onApprove: { model.approvePermission(for: session.id, action: $0) },
-                                onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
+                                onAnswer: {
+                                    guard let promptID = session.questionPrompt?.id else { return }
+                                    model.answerQuestion(
+                                        for: session.id,
+                                        promptID: promptID,
+                                        answer: $0
+                                    )
+                                },
                                 onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                                     ? { model.replyToSession(session, text: $0) } : nil,
                                 onJump: { model.jumpToSession(session) },
@@ -749,7 +1266,7 @@ struct IslandPanelView: View {
                 hiddenSessionsSection(referenceDate: referenceDate)
             }
 
-            if !isNotificationMode {
+            if !isFocusedCardMode {
                 sessionPanelFooter
             }
         }
@@ -795,6 +1312,7 @@ struct IslandPanelView: View {
                             agentControlDetailPresentationRequest(
                                 for: session.id
                             ),
+                        questionDraft: questionInteractionBinding(for: session),
                         useDrawingGroup: model.notchStatus == .opened,
                         isInteractive: model.notchStatus == .opened,
                         sideInset: sessionListSideInset,
@@ -806,7 +1324,14 @@ struct IslandPanelView: View {
                             )
                         },
                         onApprove: { model.approvePermission(for: session.id, action: $0) },
-                        onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
+                        onAnswer: {
+                            guard let promptID = session.questionPrompt?.id else { return }
+                            model.answerQuestion(
+                                for: session.id,
+                                promptID: promptID,
+                                answer: $0
+                            )
+                        },
                         onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
                             ? { model.replyToSession(session, text: $0) } : nil,
                         onJump: { model.jumpToSession(session) },
@@ -831,6 +1356,27 @@ struct IslandPanelView: View {
         withAnimation(.easeInOut(duration: 0.15)) {
             proxy.scrollTo(actionableSessionID, anchor: .center)
         }
+    }
+
+    private func questionInteractionBinding(
+        for session: AgentSession
+    ) -> Binding<QuestionInteractionDraft>? {
+        guard let prompt = session.questionPrompt else { return nil }
+        return Binding(
+            get: {
+                model.questionInteractionDraft(
+                    for: session.id,
+                    prompt: prompt
+                )
+            },
+            set: {
+                model.updateQuestionInteractionDraft(
+                    $0,
+                    for: session.id,
+                    promptID: prompt.id
+                )
+            }
+        )
     }
 
     @ViewBuilder
@@ -1437,6 +1983,7 @@ private struct IslandSessionRow: View {
     var isActionable: Bool = false
     var isHardwareSelected: Bool = false
     var detailPresentationRequest: AgentControlDetailPresentationRequest?
+    var questionDraft: Binding<QuestionInteractionDraft>?
     var useDrawingGroup: Bool = true
     var isInteractive: Bool = true
     var presentation: IslandSessionRowPresentation = .list
@@ -1986,6 +2533,7 @@ private struct IslandSessionRow: View {
     private var questionActionBody: some View {
         StructuredQuestionPromptView(
             prompt: session.questionPrompt,
+            sharedDraft: questionDraft,
             lang: lang,
             onAnswer: { onAnswer?($0) }
         )
@@ -2375,13 +2923,33 @@ private struct IslandSessionRow: View {
 
 private struct StructuredQuestionPromptView: View {
     let prompt: QuestionPrompt?
+    var sharedDraft: Binding<QuestionInteractionDraft>?
     var lang: LanguageManager = .shared
     let onAnswer: (QuestionPromptResponse) -> Void
 
-    @State private var selections: [String: Set<String>] = [:]
-    @State private var freeformTexts: [String: String] = [:]
-    @State private var typedReply: String = ""
+    @State private var localDraft: QuestionInteractionDraft
     @State private var hoveredOptionKey: String?
+
+    init(
+        prompt: QuestionPrompt?,
+        sharedDraft: Binding<QuestionInteractionDraft>? = nil,
+        lang: LanguageManager = .shared,
+        onAnswer: @escaping (QuestionPromptResponse) -> Void
+    ) {
+        self.prompt = prompt
+        self.sharedDraft = sharedDraft
+        self.lang = lang
+        self.onAnswer = onAnswer
+        _localDraft = State(
+            initialValue: QuestionInteractionDraft(
+                promptID: prompt?.id ?? UUID()
+            )
+        )
+    }
+
+    private var draft: Binding<QuestionInteractionDraft> {
+        sharedDraft ?? $localDraft
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2396,8 +2964,11 @@ private struct StructuredQuestionPromptView: View {
                 freeformAnswerBody
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(structuredQuestions, id: \.question) { question in
-                        questionRow(question)
+                    ForEach(
+                        Array(structuredQuestions.enumerated()),
+                        id: \.offset
+                    ) { questionIndex, question in
+                        questionRow(question, questionIndex: questionIndex)
                     }
                 }
 
@@ -2427,7 +2998,10 @@ private struct StructuredQuestionPromptView: View {
 
     /// Renders a single question with its header, text, and vertical option list.
     @ViewBuilder
-    private func questionRow(_ question: QuestionPromptItem) -> some View {
+    private func questionRow(
+        _ question: QuestionPromptItem,
+        questionIndex: Int
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if structuredQuestions.count > 1 {
                 Text(question.header)
@@ -2442,7 +3016,12 @@ private struct StructuredQuestionPromptView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(question.options.enumerated()), id: \.element.id) { index, option in
-                    optionRow(option, optionIndex: index, question: question)
+                    optionRow(
+                        option,
+                        optionIndex: index,
+                        question: question,
+                        questionIndex: questionIndex
+                    )
                 }
             }
         }
@@ -2454,15 +3033,26 @@ private struct StructuredQuestionPromptView: View {
     private func optionRow(
         _ option: QuestionOption,
         optionIndex: Int,
-        question: QuestionPromptItem
+        question: QuestionPromptItem,
+        questionIndex: Int
     ) -> some View {
-        let isSelected = selectedLabels(for: question).contains(option.label)
+        let isSelected = draft.wrappedValue
+            .selections[questionIndex, default: []]
+            .contains(option.id)
         let key = optionKey(for: question, option: option)
         let isHovered = hoveredOptionKey == key
+        let isKeyboardFocused =
+            draft.wrappedValue.focusedQuestionIndex == questionIndex
+            && draft.wrappedValue.focusedOptionIndex == optionIndex
         let showsFreeform = option.allowsFreeform && isSelected
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                toggle(option: option.label, for: question)
+                toggle(
+                    option: option,
+                    optionIndex: optionIndex,
+                    question: question,
+                    questionIndex: questionIndex
+                )
             } label: {
                 HStack(spacing: 10) {
                     Text("\(optionIndex + 1)")
@@ -2508,7 +3098,11 @@ private struct StructuredQuestionPromptView: View {
             if showsFreeform {
                 Divider()
                     .overlay(Color.white.opacity(0.08))
-                freeformField(for: option, question: question)
+                freeformField(
+                    for: option,
+                    question: question,
+                    questionIndex: questionIndex
+                )
             }
         }
         .background(
@@ -2517,7 +3111,15 @@ private struct StructuredQuestionPromptView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(optionStrokeColor(isSelected: isSelected, isHovered: isHovered))
+                .strokeBorder(
+                    isKeyboardFocused
+                        ? IslandDesignPalette.Status.waitingForAnswer
+                        : optionStrokeColor(
+                            isSelected: isSelected,
+                            isHovered: isHovered
+                        ),
+                    lineWidth: isKeyboardFocused ? 2 : 1
+                )
         )
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.12)) {
@@ -2527,17 +3129,26 @@ private struct StructuredQuestionPromptView: View {
     }
 
     @ViewBuilder
-    private func freeformField(for option: QuestionOption, question: QuestionPromptItem) -> some View {
-        let key = freeformKey(for: question, option: option)
+    private func freeformField(
+        for option: QuestionOption,
+        question: QuestionPromptItem,
+        questionIndex: Int
+    ) -> some View {
         ReplyTextField(
             placeholder: lang.t("question.otherPlaceholder"),
             text: Binding(
-                get: { freeformTexts[key] ?? "" },
-                set: { freeformTexts[key] = $0 }
+                get: { draft.wrappedValue.freeformTexts[option.id] ?? "" },
+                set: {
+                    var value = draft.wrappedValue
+                    value.freeformTexts[option.id] = $0
+                    draft.wrappedValue = value
+                }
             ),
+            shouldFocus:
+                draft.wrappedValue.focusedFreeformOptionID == option.id,
             onSubmit: {
-                if hasCompleteSelection {
-                    onAnswer(QuestionPromptResponse(answers: answerMap))
+                if let response = resolvedResponse {
+                    onAnswer(response)
                 }
             }
         )
@@ -2564,7 +3175,15 @@ private struct StructuredQuestionPromptView: View {
             HStack(spacing: 6) {
                 ReplyTextField(
                     placeholder: lang.t("question.otherPlaceholder"),
-                    text: $typedReply,
+                    text: Binding(
+                        get: { draft.wrappedValue.typedReply },
+                        set: {
+                            var value = draft.wrappedValue
+                            value.typedReply = $0
+                            draft.wrappedValue = value
+                        }
+                    ),
+                    shouldFocus: draft.wrappedValue.focusesOpenEndedText,
                     onSubmit: {
                         if canSubmit {
                             submitAnswer()
@@ -2597,11 +3216,20 @@ private struct StructuredQuestionPromptView: View {
             return []
         }
 
+        let identityDraft = QuestionInteractionDraft(promptID: prompt.id)
         return [
             QuestionPromptItem(
                 question: prompt.title,
                 header: lang.t("question.answerNeeded"),
-                options: prompt.options.map { QuestionOption(label: $0) }
+                options: prompt.options.enumerated().map { index, label in
+                    QuestionOption(
+                        id: identityDraft.legacyOptionID(
+                            promptID: prompt.id,
+                            index: index
+                        ),
+                        label: label
+                    )
+                }
             ),
         ]
     }
@@ -2623,18 +3251,9 @@ private struct StructuredQuestionPromptView: View {
         return questionTitle.caseInsensitiveCompare(promptTitle) != .orderedSame
     }
 
-    private var answerMap: [String: String] {
-        Dictionary(uniqueKeysWithValues: structuredQuestions.compactMap { question in
-            let values = resolvedAnswers(for: question)
-            guard !values.isEmpty else {
-                return nil
-            }
-            return (question.question, values.joined(separator: ", "))
-        })
-    }
-
     private var trimmedReply: String {
-        typedReply.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft.wrappedValue.typedReply
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var showsGlobalReplyField: Bool {
@@ -2644,21 +3263,11 @@ private struct StructuredQuestionPromptView: View {
     }
 
     private var primarySelectedAnswer: String? {
-        guard structuredQuestions.count == 1,
-              let question = structuredQuestions.first else {
-            return nil
-        }
-
-        let values = resolvedAnswers(for: question)
-        guard !values.isEmpty else {
-            return nil
-        }
-
-        return values.joined(separator: ", ")
+        resolvedResponse?.rawAnswer
     }
 
     private var canSubmit: Bool {
-        !trimmedReply.isEmpty || (!structuredQuestions.isEmpty && hasCompleteSelection)
+        resolvedResponse != nil
     }
 
     private var submitButtonTitle: String {
@@ -2674,58 +3283,13 @@ private struct StructuredQuestionPromptView: View {
     }
 
     private func submitAnswer() {
-        if !trimmedReply.isEmpty {
-            onAnswer(QuestionPromptResponse(answer: trimmedReply))
-            return
-        }
-
-        onAnswer(
-            QuestionPromptResponse(
-                rawAnswer: primarySelectedAnswer,
-                answers: answerMap
-            )
-        )
+        guard let response = resolvedResponse else { return }
+        onAnswer(response)
     }
 
-    private var hasCompleteSelection: Bool {
-        structuredQuestions.allSatisfy { question in
-            let selected = selectedLabels(for: question)
-            guard !selected.isEmpty else {
-                return false
-            }
-            // When a freeform option is selected, require non-empty text.
-            for option in question.options where option.allowsFreeform && selected.contains(option.label) {
-                if trimmedFreeform(for: question, option: option).isEmpty {
-                    return false
-                }
-            }
-            return true
-        }
-    }
-
-    private func selectedLabels(for question: QuestionPromptItem) -> Set<String> {
-        selections[question.question] ?? []
-    }
-
-    private func resolvedAnswers(for question: QuestionPromptItem) -> [String] {
-        let selected = selectedLabels(for: question)
-        guard !selected.isEmpty else { return [] }
-
-        let optionOrder = question.options
-        var answers: [String] = []
-        for option in optionOrder where selected.contains(option.label) {
-            if option.allowsFreeform {
-                let text = trimmedFreeform(for: question, option: option)
-                answers.append(text.isEmpty ? option.label : text)
-            } else {
-                answers.append(option.label)
-            }
-        }
-        return answers
-    }
-
-    private func freeformKey(for question: QuestionPromptItem, option: QuestionOption) -> String {
-        "\(question.question)|\(option.label)"
+    private var resolvedResponse: QuestionPromptResponse? {
+        guard let prompt else { return nil }
+        return draft.wrappedValue.response(for: prompt)
     }
 
     private func optionKey(for question: QuestionPromptItem, option: QuestionOption) -> String {
@@ -2752,30 +3316,34 @@ private struct StructuredQuestionPromptView: View {
         return .white.opacity(0.045)
     }
 
-    private func trimmedFreeform(for question: QuestionPromptItem, option: QuestionOption) -> String {
-        (freeformTexts[freeformKey(for: question, option: option)] ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func toggle(option: String, for question: QuestionPromptItem) {
-        var selected = selections[question.question] ?? []
-
+    private func toggle(
+        option: QuestionOption,
+        optionIndex: Int,
+        question: QuestionPromptItem,
+        questionIndex: Int
+    ) {
+        var value = draft.wrappedValue
+        var selected = value.selections[questionIndex, default: []]
         if question.multiSelect {
-            if selected.contains(option) {
-                selected.remove(option)
+            if selected.contains(option.id) {
+                selected.remove(option.id)
             } else {
-                selected.insert(option)
+                selected.insert(option.id)
             }
         } else {
-            if selected.contains(option) {
-                selected.removeAll()
-            } else {
-                selected = [option]
-            }
+            selected = [option.id]
         }
 
-        typedReply = ""
-        selections[question.question] = selected
+        value.focusedQuestionIndex = questionIndex
+        value.focusedOptionIndex = optionIndex
+        value.focusedFreeformOptionID =
+            option.allowsFreeform && selected.contains(option.id)
+                ? option.id
+                : nil
+        value.focusesOpenEndedText = false
+        value.typedReply = ""
+        value.selections[questionIndex] = selected
+        draft.wrappedValue = value
     }
 }
 
@@ -2787,6 +3355,7 @@ private struct StructuredQuestionPromptView: View {
 private struct ReplyTextField: NSViewRepresentable {
     var placeholder: String
     @Binding var text: String
+    var shouldFocus = false
     var onSubmit: () -> Void
 
     func makeNSView(context: Context) -> NSTextField {
@@ -2814,6 +3383,11 @@ private struct ReplyTextField: NSViewRepresentable {
             nsView.stringValue = text
         }
         context.coordinator.onSubmit = onSubmit
+        if shouldFocus, nsView.window?.firstResponder !== nsView.currentEditor() {
+            DispatchQueue.main.async {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {

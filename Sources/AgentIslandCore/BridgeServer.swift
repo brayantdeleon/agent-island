@@ -9,6 +9,13 @@ public enum BridgePermissionResolutionResult: Equatable, Sendable {
     case notPermissionRequest
 }
 
+public enum BridgeQuestionResolutionResult: Equatable, Sendable {
+    case resolved
+    case requestNotActive
+    case promptIdentityMismatch
+    case notQuestion
+}
+
 public final class BridgeServer: @unchecked Sendable {
     private struct ClientConnection {
         let id: UUID
@@ -94,6 +101,44 @@ public final class BridgeServer: @unchecked Sendable {
     ) {
         self.socketURL = socketURL
         queue.setSpecific(key: queueKey, value: ())
+    }
+
+    public func resolveQuestion(
+        sessionID: String,
+        promptID: UUID,
+        response: QuestionPromptResponse
+    ) -> BridgeQuestionResolutionResult {
+        queue.sync {
+            if let pending = pendingClaudeInteractions[sessionID] {
+                guard case let .question(_, prompt) = pending.kind else {
+                    return .notQuestion
+                }
+                guard prompt.id == promptID else {
+                    return .promptIdentityMismatch
+                }
+                resolvePendingClaudeQuestion(
+                    sessionID: sessionID,
+                    response: response
+                )
+                return .resolved
+            }
+
+            if let pending = pendingOpenCodeInteractions[sessionID] {
+                guard case let .question(payload) = pending.kind else {
+                    return .notQuestion
+                }
+                guard payload.questionPrompt.id == promptID else {
+                    return .promptIdentityMismatch
+                }
+                resolvePendingOpenCodeQuestion(
+                    sessionID: sessionID,
+                    response: response
+                )
+                return .resolved
+            }
+
+            return .requestNotActive
+        }
     }
 
     deinit {
@@ -369,14 +414,24 @@ public final class BridgeServer: @unchecked Sendable {
             )
             send(.response(.acknowledged), to: clientID)
 
-        case let .answerQuestion(sessionID, response):
-            if pendingClaudeInteractions[sessionID] != nil {
+        case let .answerQuestion(sessionID, promptID, response):
+            if let pending = pendingClaudeInteractions[sessionID] {
+                guard case let .question(_, prompt) = pending.kind,
+                      promptID == nil || prompt.id == promptID else {
+                    send(.response(.acknowledged), to: clientID)
+                    return
+                }
                 resolvePendingClaudeQuestion(sessionID: sessionID, response: response)
                 send(.response(.acknowledged), to: clientID)
                 return
             }
 
-            if pendingOpenCodeInteractions[sessionID] != nil {
+            if let pending = pendingOpenCodeInteractions[sessionID] {
+                guard case let .question(payload) = pending.kind,
+                      promptID == nil || payload.questionPrompt.id == promptID else {
+                    send(.response(.acknowledged), to: clientID)
+                    return
+                }
                 resolvePendingOpenCodeQuestion(sessionID: sessionID, response: response)
                 send(.response(.acknowledged), to: clientID)
                 return

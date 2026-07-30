@@ -77,15 +77,22 @@ public enum CodexHookInstaller {
     private static let currentFeatureKey = CodexHooksFeatureFlagKey.current.rawValue
     private static let legacyFeatureKey = CodexHooksFeatureFlagKey.legacy.rawValue
 
-    // Keep the managed Codex install aligned with the original app's low-noise footprint.
-    // The bridge still understands richer hook events, but we do not install them by default
-    // because per-command Bash hooks produce a large amount of terminal log spam.
-    private static let eventSpecs: [(name: String, matcher: String?, timeout: Int)] = [
+    // Keep lifecycle observation low-noise and non-intercepting. In particular,
+    // PermissionRequest is opt-in because a blocking hook runs before Codex's
+    // native approval reviewer, including "Approve for me".
+    private static let lifecycleEventSpecs: [(name: String, matcher: String?, timeout: Int)] = [
         ("SessionStart", "startup|resume", managedTimeout),
         ("UserPromptSubmit", nil, managedTimeout),
-        ("PermissionRequest", nil, managedInteractiveTimeout),
         ("Stop", nil, managedTimeout),
     ]
+    private static let permissionRequestSpec = (
+        name: "PermissionRequest",
+        matcher: Optional<String>.none,
+        timeout: managedInteractiveTimeout
+    )
+    private static var allEventSpecs: [(name: String, matcher: String?, timeout: Int)] {
+        lifecycleEventSpecs + [permissionRequestSpec]
+    }
 
     public static func hookCommand(for binaryPath: String) -> String {
         shellQuote(binaryPath)
@@ -93,7 +100,8 @@ public enum CodexHookInstaller {
 
     public static func installHooksJSON(
         existingData: Data?,
-        hookCommand: String
+        hookCommand: String,
+        brokerPermissionRequests: Bool = false
     ) throws -> CodexHookFileMutation {
         var rootObject = try loadRootObject(from: existingData)
         let existingHooksObject = rootObject["hooks"] as? [String: Any] ?? [:]
@@ -108,7 +116,12 @@ public enum CodexHookInstaller {
             }
         }
 
-        for spec in eventSpecs {
+        var installedEventSpecs = lifecycleEventSpecs
+        if brokerPermissionRequests {
+            installedEventSpecs.append(permissionRequestSpec)
+        }
+
+        for spec in installedEventSpecs {
             let existingGroups = hooksObject[spec.name] as? [Any] ?? []
             let cleanedGroups = sanitizeForInstall(groups: existingGroups, replacingCommand: hookCommand)
             hooksObject[spec.name] = cleanedGroups + [
@@ -134,7 +147,7 @@ public enum CodexHookInstaller {
         var hooksObject = rootObject["hooks"] as? [String: Any] ?? [:]
         var mutated = false
 
-        for spec in eventSpecs {
+        for spec in allEventSpecs {
             let existingGroups = hooksObject[spec.name] as? [Any] ?? []
             let cleanedGroups = sanitize(groups: existingGroups, managedCommand: managedCommand)
 
@@ -156,6 +169,20 @@ public enum CodexHookInstaller {
         rootObject["hooks"] = hooksObject
         let data = try serialize(rootObject)
         return CodexHookFileMutation(contents: data, changed: mutated || data != existingData, hasRemainingHooks: true)
+    }
+
+    public static func hasManagedPermissionRequestHook(
+        in existingData: Data?,
+        managedCommand: String?
+    ) -> Bool {
+        guard let existingData,
+              let rootObject = try? loadRootObject(from: existingData),
+              let hooksObject = rootObject["hooks"] as? [String: Any],
+              let permissionGroups = hooksObject[permissionRequestSpec.name] as? [Any] else {
+            return false
+        }
+
+        return containsManagedHook(in: permissionGroups, managedCommand: managedCommand)
     }
 
     /// Enables the current Codex hooks feature flag and migrates the legacy flag when present.

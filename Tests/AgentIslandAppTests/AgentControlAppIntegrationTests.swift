@@ -14,6 +14,60 @@ struct AgentControlAppIntegrationTests {
     )
 
     @Test
+    func globalControlsCycleModeAndKeepQuitActionsOutOfApprovalRouting() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+            harness.model.islandCompactnessMode = .regular
+        }
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        harness.model.islandCompactnessMode = .regular
+        harness.transport.emit(
+            .report(
+                try globalControlReport(
+                    sequence: 1,
+                    control: .cyclePresentationMode
+                )
+            )
+        )
+        #expect(harness.model.islandCompactnessMode == .expanded)
+
+        harness.transport.emit(
+            .report(
+                try globalControlReport(
+                    sequence: 2,
+                    control: .requestQuit
+                )
+            )
+        )
+        #expect(harness.model.isQuitConfirmationPresented)
+        #expect(harness.model.notchStatus == .opened)
+
+        harness.transport.emit(
+            .report(
+                try globalControlReport(
+                    sequence: 3,
+                    control: .cancelQuit
+                )
+            )
+        )
+        #expect(!harness.model.isQuitConfirmationPresented)
+        let response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(response.messageType == .globalControlResult)
+        #expect(response.payload[9] == 0)
+        #expect(response.payload[10] == 0)
+    }
+
+    @Test
     func optInProjectsLiveSessionsAndDisableClearsTheKeyboard() throws {
         let harness = makeHarness(enabled: true)
         defer {
@@ -69,7 +123,11 @@ struct AgentControlAppIntegrationTests {
             harness.transport.sentReports[0]
         )
         #expect(hello.messageType == .hello)
-        #expect(readUInt16(hello.payload, at: 10) == 7)
+        #expect(
+            readUInt16(hello.payload, at: 10)
+                == AgentControlCapabilitySet.allV1
+                    .subtracting([.allowOnce, .deny]).rawValue
+        )
 
         harness.transport.emit(
             .report(try capabilitiesReport(sequence: hello.sequence))
@@ -315,8 +373,10 @@ struct AgentControlAppIntegrationTests {
                 )
             )
         )
-        let actionResponse = try AgentControlPacketCodec.decode(
-            harness.transport.sentReports.last!
+        let actionResponse = try latestPacket(
+            ofType: .actionResult,
+            sequence: 2,
+            in: harness.transport.sentReports
         )
         #expect(actionResponse.messageType == .actionResult)
         #expect(actionResponse.sequence == 2)
@@ -423,6 +483,481 @@ struct AgentControlAppIntegrationTests {
         #expect(
             harness.model.islandSurface
                 == .sessionList(actionableSessionID: "first")
+        )
+    }
+
+    @Test
+    func firstDigitSelectionKeepsNotificationQuestionDetailOpen() throws {
+        let harness = makeHarness(enabled: true)
+        let previousSuppression =
+            harness.model.suppressFrontmostNotifications
+        defer {
+            harness.model.suppressFrontmostNotifications =
+                previousSuppression
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        harness.model.suppressFrontmostNotifications = false
+        let now = Date()
+        let prompt = QuestionPrompt(
+            title: "Choose",
+            questions: [
+                QuestionPromptItem(
+                    question: "Which option?",
+                    header: "Choice",
+                    options: [
+                        QuestionOption(label: "A"),
+                        QuestionOption(label: "B"),
+                    ]
+                ),
+            ]
+        )
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        harness.model.applyTrackedEvent(
+            .questionAsked(
+                QuestionAsked(
+                    sessionID: "question",
+                    prompt: prompt,
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+        #expect(harness.model.notchOpenReason == .notification)
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["question"]
+                == nil
+        )
+
+        let snapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(snapshot.payload, at: 8)
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 1,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+
+        #expect(harness.model.agentControlSelectedSessionID == "question")
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["question"]?
+                .isExpanded == true
+        )
+    }
+
+    @Test
+    func pointerExpandedQuestionPushesSelectionAndKeyboardContinuesSharedDraft() throws {
+        let token: UInt64 = 0xA8A7_A6A5_A4A3_A2A1
+        let harness = makeHarness(enabled: true, selectionToken: token)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let prompt = QuestionPrompt(
+            title: "Synchronization",
+            questions: [
+                QuestionPromptItem(
+                    question: "Which option?",
+                    header: "Sync",
+                    options: [
+                        QuestionOption(label: "First"),
+                        QuestionOption(label: "Second"),
+                        QuestionOption(label: "Third"),
+                    ]
+                ),
+            ]
+        )
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .waitingForAnswer,
+                    questionPrompt: prompt
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        harness.model.setSessionDetailExpanded(true, for: "question")
+
+        let selectionUpdate = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(selectionUpdate.messageType == .selectionUpdate)
+        #expect(selectionUpdate.payload[8] == 0)
+        #expect(readUInt64(selectionUpdate.payload, at: 11) == token)
+        #expect(harness.model.agentControlSelectedSessionID == "question")
+
+        var draft = harness.model.questionInteractionDraft(
+            for: "question",
+            prompt: prompt
+        )
+        draft.focusedOptionIndex = 1
+        draft.selections[0] = [prompt.questions[0].options[1].id]
+        harness.model.updateQuestionInteractionDraft(
+            draft,
+            for: "question",
+            promptID: prompt.id
+        )
+
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 1,
+                    action: .nextQuestionOption,
+                    token: token
+                )
+            )
+        )
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 2,
+                    action: .selectQuestionOption,
+                    token: token
+                )
+            )
+        )
+
+        let synchronizedDraft = harness.model.questionInteractionDraft(
+            for: "question",
+            prompt: prompt
+        )
+        #expect(synchronizedDraft.focusedOptionIndex == 2)
+        #expect(
+            synchronizedDraft.selections[0]
+                == [prompt.questions[0].options[2].id]
+        )
+    }
+
+    @Test
+    func visibleQuestionLeaseRenewsBeyondInitialTimeoutAndCloseInvalidatesIt()
+        async throws {
+        let clock = AgentControlMutableClock(now: Date())
+        let token: UInt64 = 0x8171_6151_4131_2111
+        let harness = makeHarness(
+            enabled: true,
+            selectionToken: token,
+            dateProvider: { clock.now },
+            questionLeaseRenewalInterval: .milliseconds(50)
+        )
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let prompt = QuestionPrompt(
+            title: "Take your time",
+            options: ["First", "Second"]
+        )
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: clock.now,
+                    updatedAt: clock.now,
+                    phase: .waitingForAnswer,
+                    questionPrompt: prompt
+                ),
+            ]
+        )
+        let selectedToken = try connectAndSelectFirstSlot(harness)
+        #expect(selectedToken == token)
+        harness.model.setSessionDetailExpanded(true, for: "question")
+        let reportCountBeforeRenewal = harness.transport.sentReports.count
+
+        clock.now = clock.now.addingTimeInterval(14)
+        await waitUntil {
+            harness.transport.sentReports.count > reportCountBeforeRenewal
+                && (try? latestPacket(
+                    ofType: .selectionUpdate,
+                    in: harness.transport.sentReports
+                ).payload[20]) == 15
+        }
+        let renewal = try latestPacket(
+            ofType: .selectionUpdate,
+            in: harness.transport.sentReports
+        )
+        #expect(renewal.payload[19] != 0)
+        #expect(renewal.payload[20] == 15)
+
+        clock.now = clock.now.addingTimeInterval(2)
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 2,
+                    action: .nextQuestionOption,
+                    token: token
+                )
+            )
+        )
+        let renewedAction = try latestPacket(
+            ofType: .actionResult,
+            sequence: 2,
+            in: harness.transport.sentReports
+        )
+        #expect(
+            renewedAction.payload[10]
+                == AgentControlActionResult.acceptedForDispatch.rawValue
+        )
+
+        harness.model.notchClose()
+        #expect(harness.model.agentControlSelectedSessionID == nil)
+        let invalidation = try latestPacket(
+            ofType: .selectionUpdate,
+            in: harness.transport.sentReports
+        )
+        #expect(invalidation.payload[19] == 0)
+        #expect(invalidation.payload[20] == 1)
+
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 3,
+                    action: .nextQuestionOption,
+                    token: token
+                )
+            )
+        )
+        let closedAction = try latestPacket(
+            ofType: .actionResult,
+            sequence: 3,
+            in: harness.transport.sentReports
+        )
+        #expect(
+            closedAction.payload[10]
+                == AgentControlActionResult.noValidSelection.rawValue
+        )
+    }
+
+    @Test
+    func collapsingSelectedQuestionImmediatelyInvalidatesItsLease() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        let prompt = QuestionPrompt(
+            title: "Question",
+            options: ["First", "Second"]
+        )
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .waitingForAnswer,
+                    questionPrompt: prompt
+                ),
+            ]
+        )
+        _ = try connectAndSelectFirstSlot(harness)
+        harness.model.setSessionDetailExpanded(true, for: "question")
+
+        harness.model.setSessionDetailExpanded(false, for: "question")
+
+        #expect(harness.model.agentControlSelectedSessionID == nil)
+        let invalidation = try latestPacket(
+            ofType: .selectionUpdate,
+            in: harness.transport.sentReports
+        )
+        #expect(invalidation.payload[19] == 0)
+        #expect(invalidation.payload[20] == 1)
+    }
+
+    @Test
+    func presentationModesRouteNumberAndZeroKeysToExplicitSurfaces() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+            harness.model.islandCompactnessMode = .regular
+        }
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "first",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+                makeSession(
+                    id: "second",
+                    firstSeenAt: now.addingTimeInterval(1),
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+        let snapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(snapshot.payload, at: 8)
+
+        harness.model.islandCompactnessMode = .minimal
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 1,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.islandSurface
+                == .singleTask(sessionID: "first")
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 2,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["first"]?
+                .isExpanded == true
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 3,
+                    slotIndex: 1,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.islandSurface
+                == .singleTask(sessionID: "second")
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 4,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.notchStatus == .closed)
+        #expect(harness.model.agentControlSelectedSessionID == nil)
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 5,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.notchStatus == .opened)
+        #expect(harness.model.islandSurface == .sessionList())
+
+        harness.model.islandCompactnessMode = .expanded
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 6,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.islandSurface
+                == .expanded(selectedSessionID: "first")
+        )
+        #expect(
+            Array(
+                harness.model.expandedIslandSessionSections()
+                    .flatMap(\.sessions)
+                    .map(\.id)
+                    .prefix(2)
+            ) == ["first", "second"]
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 7,
+                    slotIndex: 1,
+                    generation: generation
+                )
+            )
+        )
+        #expect(
+            harness.model.islandSurface
+                == .expanded(selectedSessionID: "second")
+        )
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 8,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.notchStatus == .closed)
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 9,
+                    slotIndex: AgentControlProtocolV1.toggleSlotIndex,
+                    generation: generation
+                )
+            )
+        )
+        #expect(harness.model.notchStatus == .opened)
+        #expect(
+            harness.model.islandSurface
+                == .expanded(selectedSessionID: "second")
         )
     }
 
@@ -941,7 +1476,8 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
-    func staleSnapshotAndReusedSlotAreRejectedWithoutJumping() async throws {
+    func staleSnapshotAndInvalidatedReusedSlotAreRejectedWithoutJumping()
+        async throws {
         let token: UInt64 = 0x0102_0304_0506_0708
         let harness = makeHarness(enabled: true, selectionToken: token)
         defer {
@@ -1016,6 +1552,7 @@ struct AgentControlAppIntegrationTests {
                 ),
             ]
         )
+        #expect(harness.model.agentControlSelectedSessionID == nil)
         harness.transport.emit(
             .report(
                 try deviceReport(
@@ -1033,7 +1570,7 @@ struct AgentControlAppIntegrationTests {
         #expect(response.flags == [.response, .error])
         #expect(
             response.payload[10]
-                == AgentControlActionResult.slotUnassignedOrReused.rawValue
+                == AgentControlActionResult.noValidSelection.rawValue
         )
 
         try? await Task.sleep(for: .milliseconds(30))
@@ -1069,11 +1606,8 @@ struct AgentControlAppIntegrationTests {
         )
         #expect(
             readUInt16(hello.payload, at: 10)
-                == AgentControlCapabilitySet([
-                    .stateSnapshots,
-                    .selection,
-                    .jump,
-                ]).rawValue
+                == AgentControlCapabilitySet.allV1
+                    .subtracting([.allowOnce, .deny]).rawValue
         )
         harness.transport.emit(
             .report(try capabilitiesReport(sequence: hello.sequence))
@@ -1254,6 +1788,8 @@ struct AgentControlAppIntegrationTests {
         #expect(
             harness.model.state.session(id: "approval")?.phase == .running
         )
+        #expect(harness.model.notchStatus == .closed)
+        #expect(harness.model.agentControlSelectedSessionID == nil)
 
         harness.transport.emit(.report(actionReport))
         response = try AgentControlPacketCodec.decode(
@@ -1330,6 +1866,8 @@ struct AgentControlAppIntegrationTests {
         #expect(
             harness.model.state.session(id: "approval")?.phase == .completed
         )
+        #expect(harness.model.notchStatus == .closed)
+        #expect(harness.model.agentControlSelectedSessionID == nil)
         #expect(
             harness.model
                 .agentControlDetailPresentationRequests["approval"]?
@@ -1338,7 +1876,7 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
-    func replacedPermissionRequestFailsClosedWithoutCallingResolver() throws {
+    func replacedPermissionRequestImmediatelyInvalidatesSelection() throws {
         let spy = AgentControlPermissionResolutionSpy()
         let harness = makeHarness(
             enabled: true,
@@ -1383,6 +1921,7 @@ struct AgentControlAppIntegrationTests {
                 ),
             ]
         )
+        #expect(harness.model.agentControlSelectedSessionID == nil)
 
         harness.transport.emit(
             .report(
@@ -1400,14 +1939,14 @@ struct AgentControlAppIntegrationTests {
         #expect(response.flags == [.response, .error])
         #expect(
             response.payload[10]
-                == AgentControlActionResult
-                    .permissionRequestChangedOrExpired.rawValue
+                == AgentControlActionResult.noValidSelection.rawValue
         )
         #expect(spy.calls.isEmpty)
         #expect(
             harness.model.state.session(id: "approval")?
                 .permissionRequest?.id == replacement.id
         )
+        #expect(harness.model.notchStatus == .opened)
     }
 
     @Test
@@ -1503,6 +2042,247 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
+    func questionKeysNavigateSelectAndSubmitTheExactPrompt() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let prompt = QuestionPrompt(
+            title: "Environment",
+            questions: [
+                QuestionPromptItem(
+                    question: "Where should this run?",
+                    header: "Environment",
+                    options: [
+                        QuestionOption(label: "Staging"),
+                        QuestionOption(label: "Production"),
+                    ]
+                ),
+            ]
+        )
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .waitingForAnswer,
+                    questionPrompt: prompt
+                ),
+            ]
+        )
+        harness.model.isBridgeReady = true
+        let token = try connectAndSelectFirstSlot(harness)
+        let initialDraft = harness.model.questionInteractionDraft(
+            for: "question",
+            prompt: prompt
+        )
+        #expect(initialDraft.focusedOptionIndex == 0)
+
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 2,
+                    action: .nextQuestionOption,
+                    token: token
+                )
+            )
+        )
+        #expect(
+            harness.model.questionInteractionDraft(
+                for: "question",
+                prompt: prompt
+            ).focusedOptionIndex == 1
+        )
+
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 3,
+                    action: .selectQuestionOption,
+                    token: token
+                )
+            )
+        )
+        let selectedDraft = harness.model.questionInteractionDraft(
+            for: "question",
+            prompt: prompt
+        )
+        #expect(
+            selectedDraft.selections[0]
+                == [prompt.questions[0].options[1].id]
+        )
+
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 4,
+                    action: .submitQuestion,
+                    token: token
+                )
+            )
+        )
+        #expect(
+            harness.model.state.session(id: "question")?.phase == .running
+        )
+        #expect(harness.model.notchStatus == .closed)
+        #expect(harness.model.agentControlSelectedSessionID == nil)
+    }
+
+    @Test
+    func otherAnswerKeepsDraftOpenUntilTextIsComplete() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let other = QuestionOption(
+            label: "Other",
+            allowsFreeform: true
+        )
+        let prompt = QuestionPrompt(
+            title: "Target",
+            questions: [
+                QuestionPromptItem(
+                    question: "Which target?",
+                    header: "Target",
+                    options: [other]
+                ),
+            ]
+        )
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .waitingForAnswer,
+                    questionPrompt: prompt
+                ),
+            ]
+        )
+        harness.model.isBridgeReady = true
+        let token = try connectAndSelectFirstSlot(harness)
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 2,
+                    action: .selectQuestionOption,
+                    token: token
+                )
+            )
+        )
+        var draft = harness.model.questionInteractionDraft(
+            for: "question",
+            prompt: prompt
+        )
+        #expect(draft.focusedFreeformOptionID == other.id)
+
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 3,
+                    action: .submitQuestion,
+                    token: token
+                )
+            )
+        )
+        var response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(
+            response.payload[10]
+                == AgentControlActionResult.questionIncomplete.rawValue
+        )
+        #expect(harness.model.notchStatus == .opened)
+
+        draft.freeformTexts[other.id] = "Canary"
+        harness.model.updateQuestionInteractionDraft(
+            draft,
+            for: "question",
+            promptID: prompt.id
+        )
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 4,
+                    action: .submitQuestion,
+                    token: token
+                )
+            )
+        )
+        response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(
+            response.payload[10]
+                == AgentControlActionResult.acceptedForDispatch.rawValue
+        )
+        #expect(harness.model.notchStatus == .closed)
+    }
+
+    @Test
+    func changedQuestionPromptImmediatelyInvalidatesSelectionWithoutClosing()
+        throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let first = QuestionPrompt(title: "First", options: ["A", "B"])
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .waitingForAnswer,
+                    questionPrompt: first
+                ),
+            ]
+        )
+        let token = try connectAndSelectFirstSlot(harness)
+        let replacement = QuestionPrompt(
+            title: "Replacement",
+            options: ["C", "D"]
+        )
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: now,
+                    updatedAt: now.addingTimeInterval(1),
+                    phase: .waitingForAnswer,
+                    questionPrompt: replacement
+                ),
+            ]
+        )
+        #expect(harness.model.agentControlSelectedSessionID == nil)
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 2,
+                    action: .nextQuestionOption,
+                    token: token
+                )
+            )
+        )
+        let response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(
+            response.payload[10]
+                == AgentControlActionResult.noValidSelection.rawValue
+        )
+        #expect(harness.model.notchStatus == .opened)
+        #expect(
+            harness.model.state.session(id: "question")?
+                .questionPrompt?.id == replacement.id
+        )
+    }
+
+    @Test
     func expiredSelectionAndBridgeDisconnectBothFailClosed() throws {
         let spy = AgentControlPermissionResolutionSpy()
         let clock = AgentControlMutableClock(now: Date())
@@ -1533,7 +2313,13 @@ struct AgentControlAppIntegrationTests {
         )
         harness.model.isBridgeReady = true
         var token = try connectAndSelectFirstSlot(harness)
-        clock.now = clock.now.addingTimeInterval(16)
+        let approvalSelection = try latestPacket(
+            ofType: .selectionAcknowledgement,
+            sequence: 1,
+            in: harness.transport.sentReports
+        )
+        #expect(approvalSelection.payload[21] == 30)
+        clock.now = clock.now.addingTimeInterval(31)
         harness.transport.emit(
             .report(
                 try actionReport(
@@ -1636,7 +2422,8 @@ struct AgentControlAppIntegrationTests {
             UUID,
             PermissionResolution
         ) -> BridgePermissionResolutionResult)? = nil,
-        dateProvider: @escaping () -> Date = Date.init
+        dateProvider: @escaping () -> Date = Date.init,
+        questionLeaseRenewalInterval: Duration = .seconds(5)
     ) -> Harness {
         let suiteName =
             "agent-island-control-app-tests-\(UUID().uuidString)"
@@ -1676,9 +2463,13 @@ struct AgentControlAppIntegrationTests {
             agentControlDeviceSettingsStore:
                 AgentControlDeviceSettingsStore(defaults: defaults),
             agentControlPermissionResolver: permissionResolver,
+            agentControlQuestionResolver: { _, _, _ in .resolved },
             agentControlSelectionTokenGenerator: { selectionToken },
-            agentControlDateProvider: dateProvider
+            agentControlDateProvider: dateProvider,
+            agentControlQuestionLeaseRenewalInterval:
+                questionLeaseRenewalInterval
         )
+        model.islandCompactnessMode = .regular
         return (model, transport, defaults)
     }
 
@@ -1723,7 +2514,8 @@ struct AgentControlAppIntegrationTests {
         firstSeenAt: Date,
         updatedAt: Date,
         phase: SessionPhase,
-        permissionRequest: PermissionRequest? = nil
+        permissionRequest: PermissionRequest? = nil,
+        questionPrompt: QuestionPrompt? = nil
     ) -> AgentSession {
         var session = AgentSession(
             id: id,
@@ -1736,6 +2528,7 @@ struct AgentControlAppIntegrationTests {
             updatedAt: updatedAt,
             firstSeenAt: firstSeenAt,
             permissionRequest: permissionRequest,
+            questionPrompt: questionPrompt,
             jumpTarget: JumpTarget(
                 terminalApp: "Ghostty",
                 workspaceName: id,
@@ -1796,6 +2589,17 @@ struct AgentControlAppIntegrationTests {
         )
     }
 
+    private func globalControlReport(
+        sequence: UInt16,
+        control: AgentControlGlobalControl
+    ) throws -> Data {
+        try deviceReport(
+            type: .globalControlRequested,
+            sequence: sequence,
+            payload: littleEndianBytes(nonce) + [control.rawValue]
+        )
+    }
+
     private func slotSelectionReport(
         sequence: UInt16,
         slotIndex: UInt8,
@@ -1831,9 +2635,23 @@ struct AgentControlAppIntegrationTests {
     private func latestSnapshotPacket(
         in reports: [Data]
     ) throws -> AgentControlPacket {
+        try latestPacket(
+            ofType: .stateSnapshot,
+            in: reports
+        )
+    }
+
+    private func latestPacket(
+        ofType messageType: AgentControlMessageType,
+        sequence: UInt16? = nil,
+        in reports: [Data]
+    ) throws -> AgentControlPacket {
         let packets = try reports.map(AgentControlPacketCodec.decode)
         return try #require(
-            packets.last { $0.messageType == .stateSnapshot }
+            packets.last {
+                $0.messageType == messageType
+                    && (sequence == nil || $0.sequence == sequence)
+            }
         )
     }
 

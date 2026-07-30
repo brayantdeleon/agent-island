@@ -428,6 +428,21 @@ final class OverlayPanelController {
             && point.y <= rect.maxY
     }
 
+    nonisolated static func expandedPanelSize(
+        visibleFrame: NSRect
+    ) -> CGSize {
+        CGSize(
+            width: min(
+                1_080,
+                max(0, visibleFrame.width - 32)
+            ),
+            height: min(
+                760,
+                max(0, visibleFrame.height - 16)
+            )
+        )
+    }
+
     /// Hit-area width of the v6 closed pill.
     ///
     /// - On a MacBook (physical notch present) the pill is locked to
@@ -482,6 +497,12 @@ final class OverlayPanelController {
             )
         }
 
+        if model.islandSurface.isExpanded {
+            return Self.expandedPanelSize(
+                visibleFrame: screen.visibleFrame
+            )
+        }
+
         let panelWidth = openedPanelWidth(for: screen)
         let contentHeight = openedContentHeight(for: model)
         // Use at least the empty-state height so the window doesn't shrink
@@ -531,9 +552,11 @@ final class OverlayPanelController {
         }
 
         let actionableID = model.islandSurface.sessionID
-        let isNotificationMode = model.notchOpenReason == .notification && actionableID != nil
+        let isFocusedCardMode =
+            model.islandSurface.isNotificationCard
+                || model.islandSurface.isSingleTask
 
-        if isNotificationMode {
+        if isFocusedCardMode {
             // Use SwiftUI-measured height when available (accurate after first render).
             if model.measuredNotificationContentHeight > 0 {
                 return model.measuredNotificationContentHeight + Self.notificationMeasuredContentPadding

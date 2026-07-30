@@ -44,16 +44,18 @@ When the optional integration is enabled and compatible firmware is present:
    closes Agent Island without selecting an agent.
 3. Pressing a populated digit selects that agent and reveals its card in
    Agent Island. It does not jump or authorize by itself.
-4. Enter jumps to the selected agent using Agent Island's existing
-   session-scoped jump path.
+4. Enter jumps to the selected agent, or submits the selected agent's
+   complete question draft.
 5. `+` submits allow-once only when the selected agent has the exact live
    permission request represented by the selection token.
 6. `-` denies under the same identity and freshness checks.
-7. Firmware animates the number LEDs locally. Agent Island sends compact
+7. For questions, `-` advances focus and `+` selects or toggles the focused
+   answer; the draft is shared with the pointer UI and bound to the prompt ID.
+8. Firmware animates the number LEDs locally. Agent Island sends compact
    snapshots only on changes, plus a heartbeat.
-8. If the heartbeat expires, firmware clears all Agent Island state, exits
+9. If the heartbeat expires, firmware clears all Agent Island state, exits
    Agent Control, and restores ordinary keyboard behavior.
-9. Base and Fn layers remain usable and Keychron Launcher/VIA compatibility
+10. Base and Fn layers remain usable and Keychron Launcher/VIA compatibility
    is regression-tested.
 
 ## Locked Interaction Contract
@@ -64,9 +66,13 @@ When the optional integration is enabled and compatible firmware is present:
 | M5 hold | Momentary stock Fn layer |
 | `1`-`9` | Select slots 1-9 and reveal the corresponding Agent Island card |
 | `0` | Open Agent Island when closed; close it when open |
-| Enter | Jump to the selected agent |
-| `+` | Allow the selected request once |
-| `-` | Deny the selected request |
+| Enter | Submit a complete question draft, otherwise jump to the selected agent |
+| `+` | Select/toggle a question option, otherwise allow the selected request once |
+| `-` | Advance question focus, otherwise deny the selected request |
+| Circle | Refresh Agent Island state |
+| Triangle | Cycle minimal, regular, and expanded presentation modes |
+| Square | Open Settings |
+| X | Request quit confirmation; `-` cancels and `+` confirms |
 | All other keys and knob actions | Reserved in v1; emit no Agent Control action |
 
 While Agent Control is active, the digit, Enter, `+`, and `-` positions emit
@@ -77,6 +83,19 @@ M4 may enter Agent Control only after a fresh, compatible handshake. If Agent
 Island is unavailable, an M4 tap gives brief amber feedback and leaves the
 base layer active.
 
+Triangle cycles a persisted presentation preference whose default is
+`regular`. Minimal digit presses use an explicit single-task surface while
+pointer opening and `0` expose the full regular list. Regular preserves the
+existing list and remembered detail behavior. Expanded uses an explicit
+selected-task surface; digit presses replace the selection without hiding its
+detail pane, while pointer opening and `0` toggle that surface.
+
+Expanded presentation is a screen-clamped, read-only split pane. The left
+column retains the configured grouping and prefers K0 number order. The right
+column shows metadata and current approval/question context without controls,
+plus provider-backed task/conversation fields clearly labeled as partial or
+unavailable. It intentionally has no composer.
+
 ## Lighting Contract
 
 | Projected slot state | Number-key lighting |
@@ -86,7 +105,7 @@ base layer active.
 | Running | Blue pulse |
 | Waiting for actionable approval | Fast red flash |
 | Waiting for observed/non-actionable approval | Fast red flash; `+` and `-` disabled |
-| Waiting for an answer | Amber pulse |
+| Waiting for an answer | Purple pulse |
 | Recently completed | Green pulse with a full-off trough |
 
 Selection gives a brief white acknowledgement and then returns to the phase
@@ -95,7 +114,7 @@ actions give brief amber feedback.
 
 The M4 LED indicates the control layer. Cyan means Agent Control is active.
 Purple means more eligible sessions exist than the nine agent slots.
-All other LEDs are off while Agent Control is active. The smooth blue, amber,
+All other LEDs are off while Agent Control is active. The smooth blue, purple,
 and green pulses reach fully off at their trough; M5 temporarily restores the
 user's ordinary Fn-layer RGB behavior while held.
 
@@ -104,7 +123,8 @@ Project state in this priority order:
 1. `waitingForApproval` is actionable only when a `PermissionRequest` exists,
    it does not require terminal-only approval, and the identity-bound bridge
    reports that exact request as resolvable. Otherwise it is observer-only.
-2. `waitingForAnswer` is amber and never enables `+` or `-`.
+2. `waitingForAnswer` is purple and enables question navigation, selection,
+   and submission bound to the exact prompt identity.
 3. `running` is blue; v1 does not infer a different hardware state from
    process liveness alone.
 4. `completed` is green until the configured completion threshold expires.

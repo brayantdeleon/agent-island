@@ -193,7 +193,7 @@ The diagnostic host sends a ten-slot gallery:
 - `1` and `8`: running, blue pulse
 - `2` and `9`: actionable approval, fast red flash
 - `3`: observed approval, fast red flash with approval actions disabled
-- `4`: waiting for an answer, amber pulse
+- `4`: waiting for an answer, purple pulse
 - `5` and `0`: recently completed, green pulse with a full-off trough
 - `6`: assigned idle, off
 - `7`: unassigned, off
@@ -223,7 +223,7 @@ and its firmware SHA-256 is
 `5ba6d275ffdafbb0f45d6da247e83797589daf14a129566f0a4700565602a4af`.
 The production app handshake reported that exact build. Manual verification
 confirmed that non-agent LEDs remain black, completed slots pulse green to
-fully off, blue and amber share the deeper trough, and M5 still restores the
+fully off, blue and purple share the deeper trough, and M5 still restores the
 ordinary RGB effect while held.
 
 ## Round 6/7 app integration
@@ -232,7 +232,7 @@ With firmware build `0x19fb67fd` connected in Cable mode:
 
 1. Open Agent Island Settings → General.
 2. Enable **Keychron K0 Max** under **Agent Control Keyboard**.
-3. Confirm the status shows **Connected**, **USB**, protocol **v1.0**, and
+3. Confirm the status shows **Connected**, **USB**, protocol **v1.1**, and
    firmware **0x19FB67FD**.
 4. Open the island and confirm assigned sessions show `K0 · 1` through
    `K0 · 9` badges.

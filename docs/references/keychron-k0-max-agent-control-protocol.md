@@ -2,8 +2,8 @@
 
 - **Protocol:** Agent Island K0 Max Raw HID
 - **Major version:** 1
-- **Minor version:** 0
-- **Status:** Protocol v1; packet mechanics validated in Round 2, complete
+- **Minor version:** 1
+- **Status:** Protocol v1.1; packet mechanics validated in Round 2, complete
   keyboard-side behavior implemented in Round 5, and identity-bound host
   approvals implemented in Round 8
 
@@ -151,10 +151,13 @@ token from the prior connection.
 | `0x03` | `HEARTBEAT` | Host → firmware | No response |
 | `0x04` | `SELECTION_ACK` | Host → firmware | Response to `SLOT_SELECTED` |
 | `0x05` | `ACTION_RESULT` | Host → firmware | Response to `ACTION_INVOKED` |
+| `0x06` | `GLOBAL_CONTROL_RESULT` | Host → firmware | Response to `GLOBAL_CONTROL_REQUESTED` |
+| `0x07` | `SELECTION_UPDATE` | Host → firmware | No response |
 | `0x81` | `CAPABILITIES` | Firmware → host | Response to `HELLO` |
 | `0x82` | `SLOT_SELECTED` | Firmware → host | `SELECTION_ACK` |
 | `0x83` | `ACTION_INVOKED` | Firmware → host | `ACTION_RESULT` |
 | `0x84` | `LAYER_CHANGED` | Firmware → host | No response |
+| `0x85` | `GLOBAL_CONTROL_REQUESTED` | Firmware → host | `GLOBAL_CONTROL_RESULT` |
 
 Unknown message types are ignored. A response with the error flag set uses
 the same payload shape where possible and supplies a nonzero result code.
@@ -165,7 +168,7 @@ Payload:
 
 | Offset | Size | Field |
 |---:|---:|---|
-| 0 | 1 | Host protocol minor (`0`) |
+| 0 | 1 | Host protocol minor (`2`) |
 | 1 | 8 | Connection nonce |
 | 9 | 1 | Requested watchdog seconds (`6`) |
 | 10 | 2 | Host capability bits |
@@ -177,7 +180,12 @@ Host capability bits:
 - Bit 2: jump
 - Bit 3: allow once
 - Bit 4: deny
-- Bits 5-15: reserved
+- Bit 5: global symbol controls
+- Bit 6: question navigation
+- Bit 7: question selection
+- Bit 8: question submission
+- Bit 9: host-pushed pointer selection synchronization
+- Bits 10-15: reserved
 
 ## `CAPABILITIES` (`0x81`)
 
@@ -200,7 +208,7 @@ Active transport:
 - `2`: 2.4 GHz
 - `3`: Bluetooth, reported for diagnostics but unsupported in v1
 
-Firmware capability bits use the same low five meanings as the host. The host
+Firmware capability bits use the same low nine meanings as the host. The host
 must keep action handling disabled if a required capability is absent or the
 major version is incompatible.
 
@@ -209,6 +217,9 @@ the K0 Max integration is enabled. It advertises allow-once and deny only
 after the user enables the separate keyboard-approvals preference, which is
 off by default. Changing that preference invalidates the current selection
 and starts a fresh handshake.
+
+Global controls and question capabilities are advertised independently of
+the approval opt-in. They do not grant permission-resolution authority.
 
 The build identifier is the first 32 bits of a SHA-256 digest over the pinned
 Keychron commit plus the ordered paths and SHA-256 values of the local
@@ -235,7 +246,7 @@ Slot state:
 | `2` | `running` | Blue pulse | Select and jump |
 | `3` | `waitingApprovalActionable` | Fast red flash | Select, jump, allow once, deny |
 | `4` | `waitingApprovalObserved` | Fast red flash | Select and jump only |
-| `5` | `waitingAnswer` | Amber pulse | Select and jump only |
+| `5` | `waitingAnswer` | Purple pulse | Select, navigate, answer, and submit |
 | `6` | `completedRecent` | Green pulse with full-off trough | Select and jump if available |
 
 Snapshot generation increments whenever assignment identity or a projected
@@ -281,6 +292,30 @@ For the slot-9 toggle, Agent Island returns an accepted acknowledgement with
 no allowed actions and a short-lived nonzero token. This reuses the existing
 white accepted feedback without making `0` an agent selection.
 
+Agent Island persists one presentation mode, defaulting to `regular`:
+
+- `minimal`: a digit opens only that task; pressing the same digit toggles
+  its remembered detail, another digit replaces it, and `0` toggles the full
+  regular task list. Pointer opening always uses the full regular list.
+- `regular`: digits reveal and highlight tasks in the existing list, repeated
+  digits toggle remembered detail, and `0` toggles that list.
+- `expanded`: digits select tasks in the read-only split view without hiding
+  the detail pane, and `0` or pointer opening toggles the expanded view.
+
+The expanded window is clamped to the target display's visible frame. Its
+left pane preserves the configured grouping and uses K0 slot order within
+groups when the keyboard integration is enabled. The right pane shows task
+metadata, current approval or question state, and only the provider-backed
+conversation fields currently available. Those fields are labeled `Partial
+history`; providers without any such data are labeled `History unavailable`.
+The expanded surface has no reply composer or approval/question mutation
+controls.
+
+Actionable notifications use an explicit notification surface in regular
+mode, a single-task surface in minimal mode, and an expanded surface with the
+relevant task selected in expanded mode. Presentation state does not change
+permission or question identity validation.
+
 ## `SELECTION_ACK` (`0x04`)
 
 Response payload:
@@ -309,11 +344,49 @@ Allowed action bits:
 - Bit 0: jump
 - Bit 1: allow once
 - Bit 2: deny
+- Bit 3: advance question option
+- Bit 4: select or toggle question option
+- Bit 5: submit question
 
 The token is random and nonzero. It is meaningful only to Agent Island and is
 bound internally to connection nonce, slot epoch, session ID, allowed action,
-expiration, and current permission request ID when approval actions are
-available.
+expiration, and the current interaction identity. Approval actions bind the
+current permission request ID; question actions bind the current question
+prompt ID. Ordinary and question selections begin with a 15-second lifetime.
+An actionable approval selection uses a fixed 30-second lifetime and is not
+renewed.
+
+## `SELECTION_UPDATE` (`0x07`)
+
+Sent when pointer interaction expands a task detail or changes a structured
+question draft. It gives firmware the same short-lived selection context that
+a successful numbered-key selection would establish, allowing `-`, `+`, and
+Enter to continue from the pointer-selected task.
+
+Payload:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 8 | Connection nonce |
+| 8 | 1 | Protocol slot index |
+| 9 | 2 | Snapshot generation |
+| 11 | 8 | Opaque selection token |
+| 19 | 1 | Allowed action bits |
+| 20 | 1 | Token lifetime in seconds |
+
+Firmware accepts this update only for an assigned agent slot in its current
+snapshot generation, with a nonzero token and lifetime. It applies the same
+host-capability filtering and expiration rules as `SELECTION_ACK`. The host
+still binds the token to the slot epoch and exact permission or question
+identity before accepting any later action.
+
+While the exact selected question remains visibly expanded, Agent Island
+renews its 15-second lease every 5 seconds with the same token. This allows the
+user to consider a question for an arbitrary amount of time without selecting
+the task again. Renewal stops and the host immediately sends an update with no
+allowed actions when the detail collapses, the island closes, the prompt
+changes or is submitted, or the bridge disconnects. The nonce, slot epoch,
+session, and prompt checks remain mandatory on every action.
 
 ## `ACTION_INVOKED` (`0x83`)
 
@@ -333,6 +406,15 @@ Action:
 - `1`: jump
 - `2`: allow once
 - `3`: deny
+- `4`: advance question option
+- `5`: select or toggle question option
+- `6`: submit question
+
+For a selected question, `-` advances the keyboard focus, `+` selects or
+toggles the focused option, and Enter submits the complete shared draft.
+Question actions take precedence over approval actions when their allowed
+bits are present. Quit-confirmation `-` and `+` controls take precedence over
+all selected-task actions.
 
 Firmware should suppress locally impossible actions using the allowed-action
 bits, but Agent Island must still perform complete validation for every
@@ -361,6 +443,8 @@ Result:
 - `7`: unsupported
 - `8`: app busy; user may retry
 - `9`: malformed or duplicate conflict
+- `10`: question response is incomplete
+- `11`: question prompt changed or expired
 
 `accepted for dispatch` does not mean the underlying agent completed the
 operation. Firmware gives brief accepted feedback, then follows the next
@@ -370,6 +454,41 @@ For allow-once and deny, Agent Island may return accepted only after the
 identity-bound bridge has accepted the exact expected permission request.
 That bridge match consumes at most one pending hook interaction; replaying
 the same device action or request UUID cannot authorize it twice.
+
+For question submission, Agent Island may return accepted only after the
+identity-bound bridge has accepted the exact expected question prompt ID.
+Incomplete drafts and replaced prompts keep the island and device selection
+open so the user can complete or recover the response.
+
+## `GLOBAL_CONTROL_REQUESTED` (`0x85`)
+
+Payload:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 8 | Connection nonce |
+| 8 | 1 | Control |
+
+Controls are `1` refresh, `2` cycle presentation mode, `3` open Settings,
+`4` request quit confirmation, `5` cancel quit, and `6` confirm quit.
+Circle, Triangle, Square, and X emit controls 1-4 respectively. While quit
+confirmation is active, `-` emits 5 and `+` emits 6 before any selected-task
+action is considered.
+
+## `GLOBAL_CONTROL_RESULT` (`0x06`)
+
+Response payload:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 8 | Connection nonce |
+| 8 | 1 | Echoed control |
+| 9 | 1 | Result |
+| 10 | 1 | Quit confirmation active (`0` or `1`) |
+
+Results are `0` accepted, `1` unavailable, `2` stale state, and `3`
+unsupported. The final byte synchronizes the firmware's contextual `-`/`+`
+precedence with the shared app presentation model.
 
 ## `LAYER_CHANGED` (`0x84`)
 
@@ -402,8 +521,9 @@ Agent Island must validate, in order:
 4. current slot-to-session mapping;
 5. current session phase;
 6. current `PermissionRequest.id` for allow-once or deny;
-7. bridge availability;
-8. the same expected request identity inside the bridge immediately before
+7. current question prompt ID for question navigation, selection, or submit;
+8. bridge availability;
+9. the same expected request identity inside the bridge immediately before
    resolution.
 
 Failure at any step returns a nonzero action result and performs no jump or

@@ -348,6 +348,80 @@ extension AgentSession {
         }
     }
 
+    var providerHistoryMetadata: ProviderHistoryMetadata {
+        var entries: [ProviderHistoryEntry] = []
+        let initialPrompt = initialUserPromptText?.trimmedForSurface
+        let latestPrompt = latestUserPromptText?.trimmedForSurface
+        let assistant = completionAssistantMessageText?.trimmedForSurface
+
+        if let initialPrompt, !initialPrompt.isEmpty {
+            entries.append(
+                ProviderHistoryEntry(
+                    id: "initial-user",
+                    kind: .user,
+                    label: "Initial request",
+                    text: initialPrompt
+                )
+            )
+        }
+        if let latestPrompt,
+           !latestPrompt.isEmpty,
+           latestPrompt != initialPrompt {
+            entries.append(
+                ProviderHistoryEntry(
+                    id: "latest-user",
+                    kind: .user,
+                    label: "Latest request",
+                    text: latestPrompt
+                )
+            )
+        }
+        if let assistant, !assistant.isEmpty {
+            entries.append(
+                ProviderHistoryEntry(
+                    id: "latest-assistant",
+                    kind: .assistant,
+                    label: "Latest response",
+                    text: assistant
+                )
+            )
+        }
+        if let command = currentCommandPreviewText?.trimmedForSurface,
+           !command.isEmpty {
+            entries.append(
+                ProviderHistoryEntry(
+                    id: "current-activity",
+                    kind: .activity,
+                    label: displayCurrentToolName.map {
+                        "Current activity · \($0)"
+                    } ?? "Current activity",
+                    text: command
+                )
+            )
+        }
+
+        let coverage: ProviderHistoryCoverage =
+            entries.isEmpty ? .unavailable : .partial
+        let sourceDescription: String
+        if entries.isEmpty {
+            sourceDescription =
+                "\(tool.displayName) has not exposed conversation history for this task."
+        } else if trackingTranscriptPath?.trimmedForSurface.isEmpty == false {
+            sourceDescription =
+                "Latest indexed fields from \(tool.displayName)'s local transcript; earlier turns may be omitted."
+        } else {
+            sourceDescription =
+                "Latest fields exposed by \(tool.displayName)'s hooks; this is not a complete transcript."
+        }
+
+        return ProviderHistoryMetadata(
+            provider: tool,
+            coverage: coverage,
+            sourceDescription: sourceDescription,
+            entries: entries
+        )
+    }
+
     var spotlightShowsDetailLines: Bool {
         spotlightShowsDetailLines(at: .now)
     }

@@ -46,6 +46,8 @@
 "settings.general.agentControl.enable" = "自动使用 Keychron K0 Max";
 "settings.general.agentControl.approvals" = "启用键盘审批";
 "settings.general.agentControl.approvalsHelp" = "此功能涉及安全，默认关闭。+ 仅允许一次，- 拒绝；操作仅适用于 15 秒选择窗口内所选的确切请求。";
+"settings.general.agentControl.codexApprovalBroker" = "通过 Agent Island 处理 Codex 审批";
+"settings.general.agentControl.codexApprovalBrokerHelp" = "默认关闭，因此 Codex 审批规则（包括“Approve for me”）仍然有效。仅当你希望 Agent Island 或键盘取代 Codex 原生审批器时启用。";
 "settings.general.agentControl.status" = "状态";
 "settings.general.agentControl.transport" = "连接";
 "settings.general.agentControl.protocol" = "协议";

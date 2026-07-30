@@ -4,7 +4,7 @@ public enum AgentControlProtocolV1 {
     public static let commandFamily: UInt8 = 0xAC
     public static let magic: (UInt8, UInt8) = (0x41, 0x49)
     public static let majorVersion: UInt8 = 1
-    public static let minorVersion: UInt8 = 0
+    public static let minorVersion: UInt8 = 2
     public static let reportSize = 32
     public static let payloadCapacity = 22
     /// The wire format retains all ten numpad digits.
@@ -22,10 +22,13 @@ public enum AgentControlMessageType: UInt8, Sendable {
     case heartbeat = 0x03
     case selectionAcknowledgement = 0x04
     case actionResult = 0x05
+    case globalControlResult = 0x06
+    case selectionUpdate = 0x07
     case capabilities = 0x81
     case slotSelected = 0x82
     case actionInvoked = 0x83
     case layerChanged = 0x84
+    case globalControlRequested = 0x85
 }
 
 public struct AgentControlPacketFlags: OptionSet, Equatable, Sendable {
@@ -206,12 +209,22 @@ public struct AgentControlCapabilitySet: OptionSet, Equatable, Sendable {
     public static let jump = Self(rawValue: 1 << 2)
     public static let allowOnce = Self(rawValue: 1 << 3)
     public static let deny = Self(rawValue: 1 << 4)
+    public static let globalControls = Self(rawValue: 1 << 5)
+    public static let questionNavigation = Self(rawValue: 1 << 6)
+    public static let questionSelection = Self(rawValue: 1 << 7)
+    public static let questionSubmission = Self(rawValue: 1 << 8)
+    public static let hostSelectionSync = Self(rawValue: 1 << 9)
     public static let allV1: Self = [
         .stateSnapshots,
         .selection,
         .jump,
         .allowOnce,
         .deny,
+        .globalControls,
+        .questionNavigation,
+        .questionSelection,
+        .questionSubmission,
+        .hostSelectionSync,
     ]
 }
 
@@ -292,6 +305,9 @@ public enum AgentControlAction: UInt8, Equatable, Sendable {
     case jump = 1
     case allowOnce = 2
     case deny = 3
+    case nextQuestionOption = 4
+    case selectQuestionOption = 5
+    case submitQuestion = 6
 }
 
 public struct AgentControlAllowedActionSet: OptionSet, Equatable, Sendable {
@@ -304,6 +320,25 @@ public struct AgentControlAllowedActionSet: OptionSet, Equatable, Sendable {
     public static let jump = Self(rawValue: 1 << 0)
     public static let allowOnce = Self(rawValue: 1 << 1)
     public static let deny = Self(rawValue: 1 << 2)
+    public static let nextQuestionOption = Self(rawValue: 1 << 3)
+    public static let selectQuestionOption = Self(rawValue: 1 << 4)
+    public static let submitQuestion = Self(rawValue: 1 << 5)
+}
+
+public enum AgentControlGlobalControl: UInt8, Equatable, Sendable {
+    case refresh = 1
+    case cyclePresentationMode = 2
+    case openSettings = 3
+    case requestQuit = 4
+    case cancelQuit = 5
+    case confirmQuit = 6
+}
+
+public enum AgentControlGlobalControlResult: UInt8, Equatable, Sendable {
+    case accepted = 0
+    case unavailable = 1
+    case staleState = 2
+    case unsupported = 3
 }
 
 public enum AgentControlSelectionResult: UInt8, Equatable, Sendable {
@@ -326,6 +361,8 @@ public enum AgentControlActionResult: UInt8, Equatable, Sendable {
     case unsupported = 7
     case appBusy = 8
     case malformedOrDuplicateConflict = 9
+    case questionIncomplete = 10
+    case questionPromptChangedOrExpired = 11
 }
 
 public enum AgentControlLayerChangeReason: UInt8, Equatable, Sendable {
@@ -353,6 +390,10 @@ public enum AgentControlDeviceMessage: Equatable, Sendable {
         connectionNonce: UInt64,
         enabled: Bool,
         reason: AgentControlLayerChangeReason
+    )
+    case globalControlRequested(
+        connectionNonce: UInt64,
+        control: AgentControlGlobalControl
     )
 }
 
@@ -417,6 +458,24 @@ public enum AgentControlMessageCodec {
         return Data(payload)
     }
 
+    public static func selectionUpdatePayload(
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        snapshotGeneration: UInt16,
+        selectionToken: UInt64,
+        allowedActions: AgentControlAllowedActionSet,
+        lifetimeSeconds: UInt8
+    ) -> Data {
+        var payload: [UInt8] = []
+        appendUInt64(connectionNonce, to: &payload)
+        payload.append(slotIndex)
+        appendUInt16(snapshotGeneration, to: &payload)
+        appendUInt64(selectionToken, to: &payload)
+        payload.append(allowedActions.rawValue)
+        payload.append(lifetimeSeconds)
+        return Data(payload)
+    }
+
     public static func actionResultPayload(
         connectionNonce: UInt64,
         slotIndex: UInt8,
@@ -428,6 +487,20 @@ public enum AgentControlMessageCodec {
         payload.append(slotIndex)
         payload.append(action.rawValue)
         payload.append(result.rawValue)
+        return Data(payload)
+    }
+
+    public static func globalControlResultPayload(
+        connectionNonce: UInt64,
+        control: AgentControlGlobalControl,
+        result: AgentControlGlobalControlResult,
+        quitConfirmationActive: Bool
+    ) -> Data {
+        var payload: [UInt8] = []
+        appendUInt64(connectionNonce, to: &payload)
+        payload.append(control.rawValue)
+        payload.append(result.rawValue)
+        payload.append(quitConfirmationActive ? 1 : 0)
         return Data(payload)
     }
 
@@ -516,11 +589,27 @@ public enum AgentControlMessageCodec {
                 reason: reason
             )
 
+        case .globalControlRequested:
+            try requireRequestFlags(packet)
+            try require(payload, count: 9)
+            guard let control = AgentControlGlobalControl(rawValue: payload[8]) else {
+                throw AgentControlMessageCodecError.invalidValue(
+                    field: "globalControl",
+                    value: payload[8]
+                )
+            }
+            return .globalControlRequested(
+                connectionNonce: readUInt64(payload, at: 0),
+                control: control
+            )
+
         case .hello,
              .stateSnapshot,
              .heartbeat,
              .selectionAcknowledgement,
-             .actionResult:
+             .actionResult,
+             .globalControlResult,
+             .selectionUpdate:
             return nil
         }
     }

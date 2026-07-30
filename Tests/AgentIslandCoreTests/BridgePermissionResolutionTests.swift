@@ -123,12 +123,19 @@ struct BridgePermissionResolutionTests {
                 resolution: .allowOnce()
             ) == .notPermissionRequest
         )
-
-        try await observer.send(
-            .answerQuestion(
+        #expect(
+            server.resolveQuestion(
                 sessionID: "question-session",
+                promptID: UUID(),
+                response: QuestionPromptResponse(answer: "Production")
+            ) == .promptIdentityMismatch
+        )
+        #expect(
+            server.resolveQuestion(
+                sessionID: "question-session",
+                promptID: prompt.id,
                 response: QuestionPromptResponse(answer: "Staging")
-            )
+            ) == .resolved
         )
     }
 

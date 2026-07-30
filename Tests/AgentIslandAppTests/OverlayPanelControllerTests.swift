@@ -153,6 +153,83 @@ struct OverlayPanelControllerTests {
         #expect(!OverlayPanelController.shouldActivatePanel(for: nil))
     }
 
+    @Test
+    func expandedPanelUsesPreferredSizeOnLargeScreens() {
+        let size = OverlayPanelController.expandedPanelSize(
+            visibleFrame: NSRect(
+                x: 0,
+                y: 24,
+                width: 1_512,
+                height: 945
+            )
+        )
+
+        #expect(size == CGSize(width: 1_080, height: 760))
+    }
+
+    @Test
+    func expandedPanelClampsToSmallScreenVisibleFrame() {
+        let visibleFrame = NSRect(
+            x: 0,
+            y: 24,
+            width: 800,
+            height: 600
+        )
+        let size = OverlayPanelController.expandedPanelSize(
+            visibleFrame: visibleFrame
+        )
+
+        #expect(size == CGSize(width: 768, height: 584))
+        #expect(size.width <= visibleFrame.width)
+        #expect(size.height <= visibleFrame.height)
+    }
+
+    @Test(arguments: [CGFloat(1_044), CGFloat(732), CGFloat(500)])
+    func expandedPanesNeverExceedAvailableWidth(availableWidth: CGFloat) {
+        let widths = IslandPanelView.expandedPaneWidths(
+            availableWidth: availableWidth
+        )
+
+        #expect(
+            widths.navigation + widths.separator + widths.detail
+                == availableWidth
+        )
+        #expect(widths.navigation <= 300)
+        #expect(widths.detail >= 360)
+    }
+
+    @Test
+    func expandedContentFitsInsideNotchShoulders() {
+        let openedWidth = CGFloat(1_044)
+        let bodyWidth = IslandPanelView.openedBodyContentWidth(
+            openedWidth: openedWidth,
+            isExpanded: true,
+            usesNotchProfile: true
+        )
+
+        #expect(bodyWidth == openedWidth - (NotchShape.openedTopRadius * 2))
+    }
+
+    @Test
+    func regularAndTopBarContentKeepTheFullOpenedWidth() {
+        let openedWidth = CGFloat(1_044)
+
+        #expect(
+            IslandPanelView.openedBodyContentWidth(
+                openedWidth: openedWidth,
+                isExpanded: false,
+                usesNotchProfile: true
+            ) == openedWidth
+        )
+        #expect(
+            IslandPanelView.openedBodyContentWidth(
+                openedWidth: openedWidth,
+                isExpanded: true,
+                usesNotchProfile: false
+            ) == openedWidth
+        )
+    }
+
     @Test @MainActor
     func selectedCollapsedSessionDoesNotReserveExpandedDetailHeight() {
         let now = Date()

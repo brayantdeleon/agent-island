@@ -18,9 +18,11 @@ private struct AgentControlSelectionContext {
     let slotEpoch: UInt16
     let sessionID: String
     let permissionRequestID: UUID?
+    let questionPromptID: UUID?
     let selectionToken: UInt64
     let allowedActions: AgentControlAllowedActionSet
-    let expiresAt: Date
+    let lifetimeSeconds: UInt8
+    var expiresAt: Date
 }
 
 struct AgentControlDetailPresentationRequest: Equatable {
@@ -44,7 +46,11 @@ final class AppModel {
     private static let legacyIslandSessionSortDefaultsKey = "appearance.island.v8.sessionSort"
     private static let legacyCompletedStaleThresholdDefaultsKey = "appearance.island.v8.completedStaleThreshold"
     private static let appearanceProfileSettingsDefaultsKey = "appearance.island.v8.settingsProfile"
+    private static let islandCompactnessModeDefaultsKey = "appearance.island.compactnessMode"
+    private static let codexApprovalBrokerDefaultsKey =
+        "feature.codexApprovalBroker.enabled"
     private static let agentControlSelectionLifetimeSeconds: UInt8 = 15
+    private static let agentControlApprovalSelectionLifetimeSeconds: UInt8 = 30
 
     private static let syntheticClaudeSessionPrefix = "claude-process:"
     private static let liveSessionStalenessWindow: TimeInterval = 15 * 60
@@ -66,6 +72,8 @@ final class AppModel {
     var state = SessionState() {
         didSet {
             _cachedSessionBuckets = nil
+            pruneQuestionInteractionDrafts()
+            invalidateAgentControlSelectionIfInteractionChanged()
             bridgeServer.updateStateSnapshot(state)
             updateAgentControlDeviceSnapshot()
         }
@@ -93,8 +101,14 @@ final class AppModel {
     @ObservationIgnored
     private var agentControlSelection: AgentControlSelectionContext?
 
+    private(set) var questionInteractionDrafts:
+        [QuestionInteractionKey: QuestionInteractionDraft] = [:]
+
     @ObservationIgnored
     private var agentControlSelectionExpiryTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var agentControlQuestionLeaseRenewalTask: Task<Void, Never>?
 
     @ObservationIgnored
     private var agentControlDetailExpansionGeneration: UInt64 = 0
@@ -104,6 +118,9 @@ final class AppModel {
 
     @ObservationIgnored
     private let agentControlDateProvider: () -> Date
+
+    @ObservationIgnored
+    private let agentControlQuestionLeaseRenewalInterval: Duration
 
     private var hiddenSessionIdentifiers: Set<HiddenSessionIdentifier> = []
 
@@ -121,6 +138,17 @@ final class AppModel {
     }
 
     var selectedSessionID: String?
+    var islandCompactnessMode: IslandCompactnessMode = .regular {
+        didSet {
+            guard islandCompactnessMode != oldValue else { return }
+            UserDefaults.standard.set(
+                islandCompactnessMode.rawValue,
+                forKey: Self.islandCompactnessModeDefaultsKey
+            )
+            synchronizeVisibleSurfaceWithCompactnessMode()
+            refreshOverlayPlacementIfVisible()
+        }
+    }
     private(set) var agentControlSelectedSessionID: String?
     private(set) var agentControlDetailPresentationRequests:
         [String: AgentControlDetailPresentationRequest] = [:]
@@ -371,6 +399,22 @@ final class AppModel {
             updateAgentControlDeviceSnapshot()
         }
     }
+    var codexApprovalBrokerEnabled: Bool = false {
+        didSet {
+            guard hasFinishedInit,
+                  codexApprovalBrokerEnabled != oldValue else {
+                return
+            }
+
+            UserDefaults.standard.set(
+                codexApprovalBrokerEnabled,
+                forKey: Self.codexApprovalBrokerDefaultsKey
+            )
+            hooks.setCodexPermissionRequestBrokerEnabled(
+                codexApprovalBrokerEnabled
+            )
+        }
+    }
     var launchAtLoginEnabled: Bool = false {
         didSet {
             guard !isApplyingLaunchAtLogin, hasFinishedInit, launchAtLoginEnabled != oldValue else { return }
@@ -582,8 +626,14 @@ final class AppModel {
 
         relay.onAnswerQuestion = { [weak self] sessionID, answer in
             Task { @MainActor [weak self] in
-                self?.answerQuestion(
+                guard let self,
+                      let promptID = self.state.session(id: sessionID)?
+                        .questionPrompt?.id else {
+                    return
+                }
+                self.answerQuestion(
                     for: sessionID,
+                    promptID: promptID,
                     answer: QuestionPromptResponse(answer: answer)
                 )
             }
@@ -624,6 +674,13 @@ final class AppModel {
         UUID,
         PermissionResolution
     ) -> BridgePermissionResolutionResult)?
+
+    @ObservationIgnored
+    private let injectedAgentControlQuestionResolver: ((
+        String,
+        UUID,
+        QuestionPromptResponse
+    ) -> BridgeQuestionResolutionResult)?
 
     @ObservationIgnored
     private var bridgeClient = LocalBridgeClient()
@@ -712,10 +769,16 @@ final class AppModel {
             UUID,
             PermissionResolution
         ) -> BridgePermissionResolutionResult)? = nil,
+        agentControlQuestionResolver: ((
+            String,
+            UUID,
+            QuestionPromptResponse
+        ) -> BridgeQuestionResolutionResult)? = nil,
         agentControlSelectionTokenGenerator: @escaping () -> UInt64 = {
             UInt64.random(in: 1...UInt64.max)
         },
         agentControlDateProvider: @escaping () -> Date = Date.init,
+        agentControlQuestionLeaseRenewalInterval: Duration = .seconds(5),
         discovery: SessionDiscoveryCoordinator = SessionDiscoveryCoordinator()
     ) {
         self.terminalJumpAction = terminalJumpAction
@@ -729,9 +792,13 @@ final class AppModel {
         self.agentControlDeviceSettingsStore = agentControlDeviceSettingsStore
         self.injectedAgentControlPermissionResolver =
             agentControlPermissionResolver
+        self.injectedAgentControlQuestionResolver =
+            agentControlQuestionResolver
         self.agentControlSelectionTokenGenerator =
             agentControlSelectionTokenGenerator
         self.agentControlDateProvider = agentControlDateProvider
+        self.agentControlQuestionLeaseRenewalInterval =
+            agentControlQuestionLeaseRenewalInterval
         self.hiddenSessionIdentifiers = hiddenSessionStore.load()
         UserDefaults.standard.register(defaults: [
             Self.showDockIconDefaultsKey: true,
@@ -750,10 +817,21 @@ final class AppModel {
             )
         }
         completionReplyEnabled = UserDefaults.standard.bool(forKey: Self.completionReplyEnabledDefaultsKey)
+        islandCompactnessMode = IslandCompactnessMode(
+            rawValue: UserDefaults.standard.string(
+                forKey: Self.islandCompactnessModeDefaultsKey
+            ) ?? ""
+        ) ?? .regular
         agentControlKeyboardEnabled =
             agentControlDeviceSettingsStore.loadEnabled()
         agentControlKeyboardApprovalsEnabled =
             agentControlDeviceSettingsStore.loadApprovalActionsEnabled()
+        codexApprovalBrokerEnabled = UserDefaults.standard.bool(
+            forKey: Self.codexApprovalBrokerDefaultsKey
+        )
+        hooks.setCodexPermissionRequestBrokerEnabled(
+            codexApprovalBrokerEnabled
+        )
         agentControlDeviceCoordinator.setApprovalActionsEnabled(
             agentControlKeyboardApprovalsEnabled
         )
@@ -777,6 +855,9 @@ final class AppModel {
         overlay.startObservingDisplayChanges()
         overlay.onStatusMessage = { [weak self] message in
             self?.lastActionMessage = message
+        }
+        overlay.onNotchClosed = { [weak self] in
+            self?.invalidateAgentControlSelection()
         }
         overlay.activeIslandCardSessionAccessor = { [weak self] in
             self?.activeIslandCardSession
@@ -966,6 +1047,43 @@ final class AppModel {
                 guard !list.isEmpty else { return nil }
                 return IslandSessionSection(id: "project-\(name)", title: name, sessions: list)
             }
+        }
+    }
+
+    func expandedIslandSessionSections(
+        at referenceDate: Date = .now
+    ) -> [IslandSessionSection] {
+        let sections = islandSessionSections(at: referenceDate)
+        guard agentControlKeyboardEnabled else {
+            return sections
+        }
+
+        let slotOrder = Dictionary(
+            uniqueKeysWithValues:
+                agentControlSlotProjection(at: referenceDate)
+                    .assignedSlots
+                    .map { ($0.sessionID, $0.index) }
+        )
+        return sections.map { section in
+            let originalOrder = Dictionary(
+                uniqueKeysWithValues:
+                    section.sessions.enumerated().map {
+                        ($0.element.id, $0.offset)
+                    }
+            )
+            return IslandSessionSection(
+                id: section.id,
+                title: section.title,
+                sessions: section.sessions.sorted { lhs, rhs in
+                    let lhsSlot = slotOrder[lhs.id] ?? Int.max
+                    let rhsSlot = slotOrder[rhs.id] ?? Int.max
+                    if lhsSlot != rhsSlot {
+                        return lhsSlot < rhsSlot
+                    }
+                    return originalOrder[lhs.id, default: 0]
+                        < originalOrder[rhs.id, default: 0]
+                }
+            )
         }
     }
 
@@ -1375,8 +1493,59 @@ final class AppModel {
         case .layerChanged:
             clearAgentControlSelection()
 
+        case let .globalControlRequested(connectionNonce, control):
+            handleAgentControlGlobalControl(
+                requestSequence: event.sequence,
+                connectionNonce: connectionNonce,
+                control: control
+            )
+
         case .capabilities:
             break
+        }
+    }
+
+    private func handleAgentControlGlobalControl(
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        control: AgentControlGlobalControl
+    ) {
+        var result: AgentControlGlobalControlResult = .accepted
+
+        switch control {
+        case .refresh:
+            refreshSessionsManually()
+        case .cyclePresentationMode:
+            islandCompactnessMode = islandCompactnessMode.next
+        case .openSettings:
+            notchClose()
+            showSettings()
+        case .requestQuit:
+            notchOpen(reason: .click)
+            isQuitConfirmationPresented = true
+        case .cancelQuit:
+            if isQuitConfirmationPresented {
+                isQuitConfirmationPresented = false
+            } else {
+                result = .staleState
+            }
+        case .confirmQuit:
+            if isQuitConfirmationPresented {
+                isQuitConfirmationPresented = false
+            } else {
+                result = .staleState
+            }
+        }
+
+        let sent = agentControlDeviceCoordinator.sendGlobalControlResult(
+            requestSequence: requestSequence,
+            connectionNonce: connectionNonce,
+            control: control,
+            result: result,
+            quitConfirmationActive: isQuitConfirmationPresented
+        )
+        if control == .confirmQuit, result == .accepted, sent {
+            quitApplication()
         }
     }
 
@@ -1449,32 +1618,10 @@ final class AppModel {
             return
         }
 
-        let slotEpoch = snapshot.slotEpochs[index]
-        let selectionToken = makeAgentControlSelectionToken()
-        var allowedActions: AgentControlAllowedActionSet = []
-        if canJumpToAgentControlSession(session) {
-            allowedActions.insert(.jump)
-        }
-        let permissionRequestID: UUID?
-        if canResolveAgentControlPermission(for: session),
-           let requestID = session.permissionRequest?.id {
-            allowedActions.formUnion([.allowOnce, .deny])
-            permissionRequestID = requestID
-        } else {
-            permissionRequestID = nil
-        }
-        let lifetimeSeconds = Self.agentControlSelectionLifetimeSeconds
-        let selection = AgentControlSelectionContext(
-            connectionNonce: connectionNonce,
-            slotIndex: slotIndex,
-            slotEpoch: slotEpoch,
-            sessionID: session.id,
-            permissionRequestID: permissionRequestID,
-            selectionToken: selectionToken,
-            allowedActions: allowedActions,
-            expiresAt: agentControlDateProvider().addingTimeInterval(
-                TimeInterval(lifetimeSeconds)
-            )
+        let selection = makeAgentControlSelection(
+            for: session,
+            snapshot: snapshot,
+            slotIndex: slotIndex
         )
 
         guard agentControlDeviceCoordinator.sendSelectionAcknowledgement(
@@ -1482,10 +1629,10 @@ final class AppModel {
             connectionNonce: connectionNonce,
             slotIndex: slotIndex,
             result: .accepted,
-            slotEpoch: slotEpoch,
-            selectionToken: selectionToken,
-            allowedActions: allowedActions,
-            lifetimeSeconds: lifetimeSeconds
+            slotEpoch: selection.slotEpoch,
+            selectionToken: selection.selectionToken,
+            allowedActions: selection.allowedActions,
+            lifetimeSeconds: selection.lifetimeSeconds
         ) else {
             return
         }
@@ -1495,16 +1642,33 @@ final class AppModel {
         let rememberedDetailState =
             agentControlDetailPresentationRequests[session.id]?.isExpanded
                 ?? false
-        let expandsDetail = previouslySelectedSessionID == session.id
-            ? !rememberedDetailState
-            : rememberedDetailState
+        let expandsDetail: Bool
+        if islandCompactnessMode == .expanded {
+            expandsDetail = true
+        } else if notchStatus == .opened,
+                  islandSurface.sessionID == session.id,
+                  notchOpenReason == .notification {
+            expandsDetail = true
+        } else {
+            expandsDetail = previouslySelectedSessionID == session.id
+                ? !rememberedDetailState
+                : rememberedDetailState
+        }
         requestAgentControlDetailPresentation(
             for: session.id,
             isExpanded: expandsDetail
         )
+        let surface: IslandSurface = switch islandCompactnessMode {
+        case .minimal:
+            .singleTask(sessionID: session.id)
+        case .regular:
+            .sessionList(actionableSessionID: session.id)
+        case .expanded:
+            .expanded(selectedSessionID: session.id)
+        }
         notchOpen(
             reason: .click,
-            surface: .sessionList(actionableSessionID: session.id)
+            surface: surface
         )
     }
 
@@ -1524,21 +1688,56 @@ final class AppModel {
             )
     }
 
+    private func synchronizeVisibleSurfaceWithCompactnessMode() {
+        guard notchStatus == .opened else {
+            return
+        }
+
+        let sessionID =
+            islandSurface.sessionID
+                ?? selectedSessionID
+                ?? focusedSession?.id
+        switch islandCompactnessMode {
+        case .minimal:
+            islandSurface = sessionID.map {
+                .singleTask(sessionID: $0)
+            }
+                ?? .sessionList()
+        case .regular:
+            islandSurface = notchOpenReason == .notification
+                ? sessionID.map {
+                    .notification(sessionID: $0)
+                }
+                    ?? .sessionList()
+                : .sessionList(actionableSessionID: sessionID)
+        case .expanded:
+            islandSurface = .expanded(selectedSessionID: sessionID)
+        }
+    }
+
     func setSessionDetailExpanded(
         _ isExpanded: Bool,
         for sessionID: String
     ) {
-        guard state.session(id: sessionID) != nil,
-              agentControlDetailPresentationRequests[sessionID]?.isExpanded
-                != isExpanded else {
+        guard state.session(id: sessionID) != nil else {
             return
         }
-
-        requestAgentControlDetailPresentation(
-            for: sessionID,
-            isExpanded: isExpanded
-        )
-        refreshOverlayPlacementIfVisible()
+        if !isExpanded,
+           agentControlSelectedSessionID == sessionID,
+           agentControlSelection?.questionPromptID != nil {
+            invalidateAgentControlSelection()
+        }
+        if agentControlDetailPresentationRequests[sessionID]?.isExpanded
+            != isExpanded {
+            requestAgentControlDetailPresentation(
+                for: sessionID,
+                isExpanded: isExpanded
+            )
+            refreshOverlayPlacementIfVisible()
+        }
+        if isExpanded {
+            ensureAgentControlSelectionForPointer(sessionID: sessionID)
+        }
     }
 
     private func handleAgentControlIslandToggle(
@@ -1558,12 +1757,140 @@ final class AppModel {
         ) else {
             return
         }
-        toggleOverlay()
+        switch islandCompactnessMode {
+        case .minimal:
+            if notchStatus == .opened {
+                notchClose()
+            } else {
+                notchOpen(reason: .click, surface: .sessionList())
+            }
+        case .regular:
+            toggleOverlay()
+        case .expanded:
+            if notchStatus == .opened,
+               islandSurface.isExpanded {
+                notchClose()
+            } else {
+                notchOpen(
+                    reason: .click,
+                    surface: .expanded(
+                        selectedSessionID:
+                            selectedSessionID
+                                ?? focusedSession?.id
+                    )
+                )
+            }
+        }
     }
 
     private func makeAgentControlSelectionToken() -> UInt64 {
         let token = agentControlSelectionTokenGenerator()
         return token == 0 ? 1 : token
+    }
+
+    private func makeAgentControlSelection(
+        for session: AgentSession,
+        snapshot: AgentControlDeviceSnapshot,
+        slotIndex: UInt8
+    ) -> AgentControlSelectionContext {
+        var allowedActions: AgentControlAllowedActionSet = []
+        if canJumpToAgentControlSession(session) {
+            allowedActions.insert(.jump)
+        }
+        let permissionRequestID: UUID?
+        if canResolveAgentControlPermission(for: session),
+           let requestID = session.permissionRequest?.id {
+            allowedActions.formUnion([.allowOnce, .deny])
+            permissionRequestID = requestID
+        } else {
+            permissionRequestID = nil
+        }
+        let questionPromptID: UUID?
+        if session.phase == .waitingForAnswer,
+           let prompt = session.questionPrompt {
+            questionPromptID = prompt.id
+            if prompt.questions.isEmpty && prompt.options.isEmpty {
+                allowedActions.insert(.submitQuestion)
+            } else {
+                allowedActions.formUnion([
+                    .nextQuestionOption,
+                    .selectQuestionOption,
+                    .submitQuestion,
+                ])
+            }
+            prepareQuestionInteraction(for: session.id, prompt: prompt)
+        } else {
+            questionPromptID = nil
+        }
+        let lifetimeSeconds =
+            permissionRequestID == nil
+                ? Self.agentControlSelectionLifetimeSeconds
+                : Self.agentControlApprovalSelectionLifetimeSeconds
+
+        return AgentControlSelectionContext(
+            connectionNonce: snapshot.connectionNonce,
+            slotIndex: slotIndex,
+            slotEpoch: snapshot.slotEpochs[Int(slotIndex)],
+            sessionID: session.id,
+            permissionRequestID: permissionRequestID,
+            questionPromptID: questionPromptID,
+            selectionToken: makeAgentControlSelectionToken(),
+            allowedActions: allowedActions,
+            lifetimeSeconds: lifetimeSeconds,
+            expiresAt: agentControlDateProvider().addingTimeInterval(
+                TimeInterval(lifetimeSeconds)
+            )
+        )
+    }
+
+    private func ensureAgentControlSelectionForPointer(
+        sessionID: String
+    ) {
+        guard agentControlKeyboardModeActive,
+              let snapshot = agentControlDeviceCoordinator.currentSnapshot,
+              let session = state.session(id: sessionID),
+              let index = snapshot.content.slots
+                .prefix(AgentControlProtocolV1.agentSlotCount)
+                .firstIndex(where: { $0?.identity == sessionID }) else {
+            return
+        }
+
+        let currentPermissionRequestID = canResolveAgentControlPermission(
+            for: session
+        ) ? session.permissionRequest?.id : nil
+        let currentQuestionPromptID =
+            session.phase == .waitingForAnswer
+                ? session.questionPrompt?.id
+                : nil
+        if let selection = agentControlSelection,
+           selection.sessionID == sessionID,
+           selection.permissionRequestID == currentPermissionRequestID,
+           selection.questionPromptID == currentQuestionPromptID,
+           agentControlDateProvider() < selection.expiresAt {
+            renewAgentControlQuestionLeaseIfEligible(
+                selectionToken: selection.selectionToken
+            )
+            return
+        }
+
+        let slotIndex = UInt8(index)
+        let selection = makeAgentControlSelection(
+            for: session,
+            snapshot: snapshot,
+            slotIndex: slotIndex
+        )
+        guard agentControlDeviceCoordinator.sendSelectionUpdate(
+            connectionNonce: snapshot.connectionNonce,
+            slotIndex: slotIndex,
+            snapshotGeneration: snapshot.generation,
+            selectionToken: selection.selectionToken,
+            allowedActions: selection.allowedActions,
+            lifetimeSeconds: selection.lifetimeSeconds
+        ) else {
+            return
+        }
+        setAgentControlSelection(selection)
+        select(sessionID: sessionID)
     }
 
     private func setAgentControlSelection(
@@ -1572,6 +1899,14 @@ final class AppModel {
         clearAgentControlSelection()
         agentControlSelection = selection
         agentControlSelectedSessionID = selection.sessionID
+        scheduleAgentControlSelectionExpiry(for: selection)
+        scheduleAgentControlQuestionLeaseRenewal(for: selection)
+    }
+
+    private func scheduleAgentControlSelectionExpiry(
+        for selection: AgentControlSelectionContext
+    ) {
+        agentControlSelectionExpiryTask?.cancel()
         let delay = max(
             selection.expiresAt.timeIntervalSince(agentControlDateProvider()),
             0
@@ -1590,9 +1925,142 @@ final class AppModel {
         }
     }
 
+    private func scheduleAgentControlQuestionLeaseRenewal(
+        for selection: AgentControlSelectionContext
+    ) {
+        agentControlQuestionLeaseRenewalTask?.cancel()
+        agentControlQuestionLeaseRenewalTask = nil
+        guard selection.questionPromptID != nil else {
+            return
+        }
+
+        agentControlQuestionLeaseRenewalTask = Task {
+            @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(
+                        for: agentControlQuestionLeaseRenewalInterval
+                    )
+                } catch {
+                    return
+                }
+                guard agentControlSelection?.selectionToken
+                        == selection.selectionToken else {
+                    return
+                }
+                renewAgentControlQuestionLeaseIfEligible(
+                    selectionToken: selection.selectionToken
+                )
+            }
+        }
+    }
+
+    private func renewAgentControlQuestionLeaseIfEligible(
+        selectionToken: UInt64
+    ) {
+        guard var selection = agentControlSelection,
+              selection.selectionToken == selectionToken,
+              selection.questionPromptID != nil,
+              isAgentControlQuestionSelectionVisible(selection),
+              let snapshot = agentControlDeviceCoordinator.currentSnapshot,
+              snapshot.connectionNonce == selection.connectionNonce,
+              Int(selection.slotIndex) < snapshot.content.slots.count,
+              Int(selection.slotIndex) < snapshot.slotEpochs.count,
+              snapshot.content.slots[Int(selection.slotIndex)]?.identity
+                == selection.sessionID,
+              snapshot.slotEpochs[Int(selection.slotIndex)]
+                == selection.slotEpoch else {
+            return
+        }
+
+        guard agentControlDeviceCoordinator.sendSelectionUpdate(
+            connectionNonce: snapshot.connectionNonce,
+            slotIndex: selection.slotIndex,
+            snapshotGeneration: snapshot.generation,
+            selectionToken: selection.selectionToken,
+            allowedActions: selection.allowedActions,
+            lifetimeSeconds: selection.lifetimeSeconds
+        ) else {
+            return
+        }
+
+        selection.expiresAt = agentControlDateProvider().addingTimeInterval(
+            TimeInterval(selection.lifetimeSeconds)
+        )
+        agentControlSelection = selection
+        scheduleAgentControlSelectionExpiry(for: selection)
+    }
+
+    private func isAgentControlQuestionSelectionVisible(
+        _ selection: AgentControlSelectionContext
+    ) -> Bool {
+        guard notchStatus == .opened,
+              agentControlSelectedSessionID == selection.sessionID,
+              state.session(id: selection.sessionID)?.questionPrompt?.id
+                == selection.questionPromptID else {
+            return false
+        }
+        if islandSurface.isExpanded {
+            return expandedSelectedSession?.id == selection.sessionID
+        }
+        if agentControlDetailPresentationRequests[selection.sessionID]?
+            .isExpanded == true {
+            return true
+        }
+        return notchOpenReason == .notification
+            && islandSurface.sessionID == selection.sessionID
+    }
+
+    private func invalidateAgentControlSelectionIfInteractionChanged() {
+        guard let selection = agentControlSelection,
+              let session = state.session(id: selection.sessionID) else {
+            if agentControlSelection != nil {
+                invalidateAgentControlSelection()
+            }
+            return
+        }
+
+        if let promptID = selection.questionPromptID,
+           session.phase != .waitingForAnswer
+            || session.questionPrompt?.id != promptID {
+            invalidateAgentControlSelection()
+            return
+        }
+        if let requestID = selection.permissionRequestID,
+           session.phase != .waitingForApproval
+            || session.permissionRequest?.id != requestID {
+            invalidateAgentControlSelection()
+        }
+    }
+
+    private func invalidateAgentControlSelection() {
+        if let selection = agentControlSelection,
+           let snapshot = agentControlDeviceCoordinator.currentSnapshot,
+           snapshot.connectionNonce == selection.connectionNonce,
+           Int(selection.slotIndex) < snapshot.content.slots.count,
+           Int(selection.slotIndex) < snapshot.slotEpochs.count,
+           snapshot.content.slots[Int(selection.slotIndex)]?.identity
+                == selection.sessionID,
+           snapshot.slotEpochs[Int(selection.slotIndex)]
+                == selection.slotEpoch {
+            _ = agentControlDeviceCoordinator.sendSelectionUpdate(
+                connectionNonce: snapshot.connectionNonce,
+                slotIndex: selection.slotIndex,
+                snapshotGeneration: snapshot.generation,
+                selectionToken: selection.selectionToken,
+                allowedActions: [],
+                lifetimeSeconds: 1
+            )
+        }
+        clearAgentControlSelection()
+    }
+
     private func clearAgentControlSelection() {
         agentControlSelectionExpiryTask?.cancel()
         agentControlSelectionExpiryTask = nil
+        agentControlQuestionLeaseRenewalTask?.cancel()
+        agentControlQuestionLeaseRenewalTask = nil
         agentControlSelection = nil
         agentControlSelectedSessionID = nil
     }
@@ -1618,7 +2086,8 @@ final class AppModel {
         action: AgentControlAction,
         selectionToken: UInt64
     ) {
-        if action != .jump, !agentControlKeyboardApprovalsEnabled {
+        if (action == .allowOnce || action == .deny),
+           !agentControlKeyboardApprovalsEnabled {
             sendAgentControlActionResult(
                 requestSequence: requestSequence,
                 connectionNonce: connectionNonce,
@@ -1703,6 +2172,18 @@ final class AppModel {
 
         case .allowOnce, .deny:
             handleAgentControlPermissionResolution(
+                session,
+                selection: selection,
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action
+            )
+
+        case .nextQuestionOption,
+             .selectQuestionOption,
+             .submitQuestion:
+            handleAgentControlQuestionAction(
                 session,
                 selection: selection,
                 requestSequence: requestSequence,
@@ -1816,13 +2297,189 @@ final class AppModel {
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
         clearAgentControlSelection()
-        _ = sendAgentControlActionResult(
+        guard sendAgentControlActionResult(
             requestSequence: requestSequence,
             connectionNonce: connectionNonce,
             slotIndex: slotIndex,
             action: action,
             result: .acceptedForDispatch
+        ) else {
+            return
+        }
+        notchClose()
+    }
+
+    private func handleAgentControlQuestionAction(
+        _ session: AgentSession,
+        selection: AgentControlSelectionContext,
+        requestSequence: UInt16,
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        action: AgentControlAction
+    ) {
+        guard session.phase == .waitingForAnswer,
+              let expectedPromptID = selection.questionPromptID,
+              let prompt = session.questionPrompt,
+              prompt.id == expectedPromptID else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .questionPromptChangedOrExpired
+            )
+            return
+        }
+
+        let key = QuestionInteractionKey(
+            sessionID: session.id,
+            promptID: prompt.id
         )
+        var draft = questionInteractionDraft(for: session.id, prompt: prompt)
+
+        switch action {
+        case .nextQuestionOption:
+            advanceQuestionFocus(&draft, prompt: prompt)
+            questionInteractionDrafts[key] = draft
+        case .selectQuestionOption:
+            toggleFocusedQuestionOption(&draft, prompt: prompt)
+            questionInteractionDrafts[key] = draft
+        case .submitQuestion:
+            guard let response = draft.response(for: prompt) else {
+                lastActionMessage = "Choose an answer for every required question."
+                _ = sendAgentControlActionResult(
+                    requestSequence: requestSequence,
+                    connectionNonce: connectionNonce,
+                    slotIndex: slotIndex,
+                    action: action,
+                    result: .questionIncomplete
+                )
+                return
+            }
+            guard isBridgeReady else {
+                sendAgentControlActionResult(
+                    requestSequence: requestSequence,
+                    connectionNonce: connectionNonce,
+                    slotIndex: slotIndex,
+                    action: action,
+                    result: .transportUnavailable
+                )
+                return
+            }
+            let resolutionResult = injectedAgentControlQuestionResolver?(
+                session.id,
+                prompt.id,
+                response
+            ) ?? bridgeServer.resolveQuestion(
+                sessionID: session.id,
+                promptID: prompt.id,
+                response: response
+            )
+            guard resolutionResult == .resolved else {
+                sendAgentControlActionResult(
+                    requestSequence: requestSequence,
+                    connectionNonce: connectionNonce,
+                    slotIndex: slotIndex,
+                    action: action,
+                    result: resolutionResult == .promptIdentityMismatch
+                        ? .questionPromptChangedOrExpired
+                        : .transportUnavailable
+                )
+                return
+            }
+            state.answerQuestion(sessionID: session.id, response: response)
+            questionInteractionDrafts.removeValue(forKey: key)
+            synchronizeSelection()
+            refreshOverlayPlacementIfVisible()
+            clearAgentControlSelection()
+            guard sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .acceptedForDispatch
+            ) else {
+                return
+            }
+            notchClose()
+            lastActionMessage = "Sent answer for \(session.title)."
+        case .jump, .allowOnce, .deny:
+            return
+        }
+
+        if action != .submitQuestion {
+            _ = sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .acceptedForDispatch
+            )
+        }
+    }
+
+    private func advanceQuestionFocus(
+        _ draft: inout QuestionInteractionDraft,
+        prompt: QuestionPrompt
+    ) {
+        let counts = prompt.questions.isEmpty
+            ? [prompt.options.count]
+            : prompt.questions.map(\.options.count)
+        guard !counts.isEmpty, counts.contains(where: { $0 > 0 }) else {
+            draft.focusesOpenEndedText = true
+            return
+        }
+
+        var questionIndex = min(draft.focusedQuestionIndex, counts.count - 1)
+        var optionIndex = draft.focusedOptionIndex + 1
+        if optionIndex >= counts[questionIndex] {
+            repeat {
+                questionIndex = (questionIndex + 1) % counts.count
+            } while counts[questionIndex] == 0
+            optionIndex = 0
+        }
+        draft.focusedQuestionIndex = questionIndex
+        draft.focusedOptionIndex = optionIndex
+        draft.focusedFreeformOptionID = nil
+        draft.focusesOpenEndedText = false
+    }
+
+    private func toggleFocusedQuestionOption(
+        _ draft: inout QuestionInteractionDraft,
+        prompt: QuestionPrompt
+    ) {
+        let questionIndex = draft.focusedQuestionIndex
+        let optionIndex = draft.focusedOptionIndex
+        guard let optionID = draft.optionID(
+            for: prompt,
+            questionIndex: questionIndex,
+            optionIndex: optionIndex
+        ) else {
+            draft.focusesOpenEndedText = true
+            return
+        }
+
+        let isMultiSelect = prompt.questions.indices.contains(questionIndex)
+            && prompt.questions[questionIndex].multiSelect
+        var selected = draft.selections[questionIndex, default: []]
+        if isMultiSelect {
+            if selected.contains(optionID) {
+                selected.remove(optionID)
+            } else {
+                selected.insert(optionID)
+            }
+        } else {
+            selected = [optionID]
+        }
+        draft.selections[questionIndex] = selected
+        draft.typedReply = ""
+        let option = prompt.questions.indices.contains(questionIndex)
+            && prompt.questions[questionIndex].options.indices.contains(optionIndex)
+            ? prompt.questions[questionIndex].options[optionIndex]
+            : nil
+        draft.focusedFreeformOptionID =
+            option?.allowsFreeform == true ? optionID : nil
+        draft.focusesOpenEndedText = false
     }
 
     private func allowedAction(
@@ -1835,6 +2492,12 @@ final class AppModel {
             .allowOnce
         case .deny:
             .deny
+        case .nextQuestionOption:
+            .nextQuestionOption
+        case .selectQuestionOption:
+            .selectQuestionOption
+        case .submitQuestion:
+            .submitQuestion
         }
     }
 
@@ -1846,7 +2509,8 @@ final class AppModel {
         action: AgentControlAction,
         result: AgentControlActionResult
     ) -> Bool {
-        if result != .acceptedForDispatch {
+        if result != .acceptedForDispatch,
+           result != .questionIncomplete {
             clearAgentControlSelection()
         }
         return agentControlDeviceCoordinator.sendActionResult(
@@ -1978,12 +2642,66 @@ final class AppModel {
         return surfacedSessions.first
     }
 
+    var defaultInteractiveIslandSurface: IslandSurface {
+        switch islandCompactnessMode {
+        case .minimal, .regular:
+            .sessionList()
+        case .expanded:
+            .expanded(
+                selectedSessionID:
+                    selectedSessionID
+                        ?? focusedSession?.id
+            )
+        }
+    }
+
+    private func presentationSurface(
+        for notificationSurface: IslandSurface
+    ) -> IslandSurface {
+        guard let sessionID = notificationSurface.sessionID else {
+            return notificationSurface
+        }
+
+        switch islandCompactnessMode {
+        case .minimal:
+            return .singleTask(sessionID: sessionID)
+        case .regular:
+            return .sessionList(actionableSessionID: sessionID)
+        case .expanded:
+            select(sessionID: sessionID)
+            return .expanded(selectedSessionID: sessionID)
+        }
+    }
+
     var activeIslandCardSession: AgentSession? {
         guard let sessionID = islandSurface.sessionID else {
             return nil
         }
 
         return state.session(id: sessionID)
+    }
+
+    var expandedSelectedSession: AgentSession? {
+        let surfaceSessionID: String? = {
+            if case let .expanded(selectedSessionID) = islandSurface {
+                return selectedSessionID
+            }
+            return nil
+        }()
+        if let sessionID = surfaceSessionID ?? selectedSessionID,
+           let session = state.session(id: sessionID),
+           islandListSessions.contains(where: { $0.id == session.id }) {
+            return session
+        }
+        return islandListSessions.first
+    }
+
+    func selectExpandedSession(_ sessionID: String) {
+        guard islandListSessions.contains(where: { $0.id == sessionID }) else {
+            return
+        }
+        select(sessionID: sessionID)
+        islandSurface = .expanded(selectedSessionID: sessionID)
     }
 
     var hasAnySession: Bool {
@@ -2221,7 +2939,15 @@ final class AppModel {
     // MARK: - Overlay forwarding
 
     func toggleOverlay() { overlay.toggleOverlay() }
-    func notchOpen(reason: NotchOpenReason, surface: IslandSurface = .sessionList()) { overlay.notchOpen(reason: reason, surface: surface) }
+    func notchOpen(
+        reason: NotchOpenReason,
+        surface: IslandSurface? = nil
+    ) {
+        overlay.notchOpen(
+            reason: reason,
+            surface: surface ?? defaultInteractiveIslandSurface
+        )
+    }
     func notchClose() { overlay.notchClose() }
     func notchPop() { overlay.notchPop() }
     func performBootAnimation() { overlay.performBootAnimation() }
@@ -2245,7 +2971,10 @@ final class AppModel {
                 isExpanded: true
             )
         }
-        overlay.presentNotificationSurface(surface)
+        overlay.presentNotificationSurface(
+            surface,
+            as: presentationSurface(for: surface)
+        )
     }
     private func reconcileIslandSurfaceAfterStateChange() { overlay.reconcileIslandSurfaceAfterStateChange() }
     private func dismissNotificationSurfaceIfPresent(for sessionID: String) { overlay.dismissNotificationSurfaceIfPresent(for: sessionID) }
@@ -2256,6 +2985,10 @@ final class AppModel {
     var showsNotificationCard: Bool { overlay.showsNotificationCard }
     var shouldDeferTimedNotificationAutoCollapse: Bool { overlay.shouldDeferTimedNotificationAutoCollapse }
     var hasPendingNotificationAutoCollapse: Bool { overlay.hasPendingNotificationAutoCollapse }
+    var isQuitConfirmationPresented: Bool {
+        get { overlay.isQuitConfirmationPresented }
+        set { overlay.isQuitConfirmationPresented = newValue }
+    }
 
     func loadDebugSnapshot(
         _ snapshot: IslandDebugSnapshot,
@@ -2319,7 +3052,11 @@ final class AppModel {
         }
 
         send(
-            .answerQuestion(sessionID: session.id, response: QuestionPromptResponse(answer: answer)),
+            .answerQuestion(
+                sessionID: session.id,
+                promptID: session.questionPrompt?.id,
+                response: QuestionPromptResponse(answer: answer)
+            ),
             userMessage: "Sending answer \"\(answer)\" for \(session.title)."
         )
     }
@@ -2447,6 +3184,7 @@ final class AppModel {
             requestID: requestID,
             resolution: resolution
         ) else {
+            lastActionMessage = "That permission request is no longer active."
             return
         }
 
@@ -2455,6 +3193,8 @@ final class AppModel {
             isExpanded: false
         )
         dismissNotificationSurfaceIfPresent(for: session.id)
+        clearAgentControlSelection()
+        notchClose()
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
         send(
@@ -2473,18 +3213,82 @@ final class AppModel {
         synchronizeSelection()
     }
 
-    func answerQuestion(for sessionID: String, answer: QuestionPromptResponse) {
-        guard let session = state.session(id: sessionID) else {
+    func questionInteractionDraft(
+        for sessionID: String,
+        prompt: QuestionPrompt
+    ) -> QuestionInteractionDraft {
+        prepareQuestionInteraction(for: sessionID, prompt: prompt)
+        return questionInteractionDrafts[
+            QuestionInteractionKey(sessionID: sessionID, promptID: prompt.id)
+        ]!
+    }
+
+    func updateQuestionInteractionDraft(
+        _ draft: QuestionInteractionDraft,
+        for sessionID: String,
+        promptID: UUID
+    ) {
+        guard draft.promptID == promptID,
+              state.session(id: sessionID)?.questionPrompt?.id == promptID else {
+            return
+        }
+        questionInteractionDrafts[
+            QuestionInteractionKey(sessionID: sessionID, promptID: promptID)
+        ] = draft
+        ensureAgentControlSelectionForPointer(sessionID: sessionID)
+    }
+
+    private func prepareQuestionInteraction(
+        for sessionID: String,
+        prompt: QuestionPrompt
+    ) {
+        let key = QuestionInteractionKey(
+            sessionID: sessionID,
+            promptID: prompt.id
+        )
+        guard questionInteractionDrafts[key] == nil else { return }
+        var draft = QuestionInteractionDraft(promptID: prompt.id)
+        draft.focusesOpenEndedText =
+            prompt.questions.isEmpty && prompt.options.isEmpty
+        questionInteractionDrafts[key] = draft
+    }
+
+    private func pruneQuestionInteractionDrafts() {
+        questionInteractionDrafts = questionInteractionDrafts.filter { key, _ in
+            state.session(id: key.sessionID)?.questionPrompt?.id == key.promptID
+        }
+    }
+
+    func answerQuestion(
+        for sessionID: String,
+        promptID: UUID,
+        answer: QuestionPromptResponse
+    ) {
+        guard let session = state.session(id: sessionID),
+              session.phase == .waitingForAnswer,
+              session.questionPrompt?.id == promptID else {
+            lastActionMessage = "That question is no longer active."
             return
         }
 
-        dismissNotificationSurfaceIfPresent(for: sessionID)
         state.answerQuestion(sessionID: session.id, response: answer)
+        questionInteractionDrafts.removeValue(
+            forKey: QuestionInteractionKey(
+                sessionID: sessionID,
+                promptID: promptID
+            )
+        )
+        clearAgentControlSelection()
+        notchClose()
         synchronizeSelection()
         refreshOverlayPlacementIfVisible()
 
         send(
-            .answerQuestion(sessionID: session.id, response: answer),
+            .answerQuestion(
+                sessionID: session.id,
+                promptID: promptID,
+                response: answer
+            ),
             userMessage: "Sending answer for \(session.title)."
         )
     }
@@ -2738,6 +3542,7 @@ final class AppModel {
                 // on upgrade. Must run after status reads and before any
                 // install decision.
                 self.hooks.migrateIntentStoreIfNeeded()
+                self.hooks.reconcileCodexPermissionRequestBrokerIfNeeded()
 
                 // Install only hooks the user has not explicitly opted out of.
                 // `shouldAutoInstall` skips `.uninstalled` agents and agents

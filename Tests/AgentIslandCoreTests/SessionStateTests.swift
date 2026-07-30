@@ -1286,15 +1286,34 @@ struct SessionStateTests {
         #expect(managedStopHook?["statusMessage"] == nil)
 
         let sessionStartGroups = hooks?["SessionStart"] as? [[String: Any]]
+        #expect(sessionStartGroups?.contains(where: { $0["matcher"] as? String == "startup|resume" }) == true)
+        #expect(hooks?["PermissionRequest"] == nil)
+        #expect(hooks?["PreToolUse"] == nil)
+        #expect(hooks?["PostToolUse"] == nil)
+    }
+
+    @Test
+    func codexHookInstallerAddsPermissionBrokerOnlyWhenExplicitlyEnabled() throws {
+        let command = "'/tmp/AgentIslandHooks'"
+        let mutation = try CodexHookInstaller.installHooksJSON(
+            existingData: nil,
+            hookCommand: command,
+            brokerPermissionRequests: true
+        )
+
+        let root = try jsonObject(from: mutation.contents)
+        let hooks = root["hooks"] as? [String: Any]
         let permissionGroups = hooks?["PermissionRequest"] as? [[String: Any]]
         let managedPermissionHook = permissionGroups?
             .compactMap { $0["hooks"] as? [[String: Any]] }
             .flatMap { $0 }
-            .first(where: { $0["command"] as? String == "'/tmp/AgentIslandHooks'" })
-        #expect(sessionStartGroups?.contains(where: { $0["matcher"] as? String == "startup|resume" }) == true)
+            .first(where: { $0["command"] as? String == command })
+
         #expect(managedPermissionHook?["timeout"] as? Int == CodexHookInstaller.managedInteractiveTimeout)
-        #expect(hooks?["PreToolUse"] == nil)
-        #expect(hooks?["PostToolUse"] == nil)
+        #expect(CodexHookInstaller.hasManagedPermissionRequestHook(
+            in: mutation.contents,
+            managedCommand: command
+        ))
     }
 
     @Test
@@ -1365,7 +1384,7 @@ struct SessionStateTests {
             .compactMap { $0["command"] as? String } ?? []
 
         #expect(preToolCommands == ["/usr/bin/printf"])
-        #expect(permissionCommands == ["'/tmp/new-release/AgentIslandHooks'"])
+        #expect(permissionCommands.isEmpty)
         #expect(hooks?["PostToolUse"] == nil)
         #expect(stopCommands.contains("/usr/bin/true"))
         #expect(stopCommands.contains("'/tmp/new-release/AgentIslandHooks'"))
@@ -1436,7 +1455,7 @@ struct SessionStateTests {
             .flatMap { $0 }
             .compactMap { $0["command"] as? String } ?? []
 
-        #expect(permissionCommands == [replacement])
+        #expect(permissionCommands.isEmpty)
         #expect(stopCommands.filter { $0 == replacement }.count == 1)
         #expect(stopCommands.contains("/usr/bin/true"))
         #expect(!stopCommands.contains(where: { $0.contains("OpenIslandHooks") }))
@@ -1827,6 +1846,7 @@ struct SessionStateTests {
         let installed = try manager.install(hooksBinaryURL: hooksBinaryURL)
         #expect(installed.featureFlagEnabled)
         #expect(installed.managedHooksPresent)
+        #expect(!installed.brokersPermissionRequests)
         #expect(installed.hooksBinaryURL?.path == managedHooksBinaryURL.standardizedFileURL.path)
         #expect(installed.manifest?.hookCommand == CodexHookInstaller.hookCommand(for: managedHooksBinaryURL.path))
         #expect(FileManager.default.isExecutableFile(atPath: managedHooksBinaryURL.path))
@@ -1850,6 +1870,49 @@ struct SessionStateTests {
         let uninstalled = try manager.uninstall()
         #expect(!uninstalled.managedHooksPresent)
         #expect(!FileManager.default.fileExists(atPath: uninstalled.manifestURL.path))
+    }
+
+    @Test
+    func codexHookInstallationManagerMigratesPermissionBrokerToNativeReview() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-island-tests-\(UUID().uuidString)", isDirectory: true)
+        let codexDirectory = rootURL.appendingPathComponent(".codex", isDirectory: true)
+        let managedHooksBinaryURL = rootURL
+            .appendingPathComponent("managed", isDirectory: true)
+            .appendingPathComponent("AgentIslandHooks")
+        let manager = CodexHookInstallationManager(
+            codexDirectory: codexDirectory,
+            managedHooksBinaryURL: managedHooksBinaryURL
+        )
+        let hooksBinaryURL = rootURL
+            .appendingPathComponent("build", isDirectory: true)
+            .appendingPathComponent("AgentIslandHooks")
+
+        try FileManager.default.createDirectory(
+            at: hooksBinaryURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("codex-hook".utf8).write(to: hooksBinaryURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: hooksBinaryURL.path
+        )
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let brokered = try manager.install(
+            hooksBinaryURL: hooksBinaryURL,
+            brokerPermissionRequests: true
+        )
+        #expect(brokered.brokersPermissionRequests)
+
+        let nativeReview = try manager.install(hooksBinaryURL: hooksBinaryURL)
+        #expect(nativeReview.managedHooksPresent)
+        #expect(!nativeReview.brokersPermissionRequests)
+
+        let hooksData = try Data(contentsOf: nativeReview.hooksURL)
+        let root = try jsonObject(from: hooksData)
+        let hooks = root["hooks"] as? [String: Any]
+        #expect(hooks?["PermissionRequest"] == nil)
     }
 
     @Test

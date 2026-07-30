@@ -275,6 +275,14 @@ enum HarnessArtifactRecorder {
             "sessionList"
         case let .sessionList(actionableSessionID: sessionID?):
             "sessionList:actionable(\(sessionID))"
+        case let .notification(sessionID):
+            "notification(\(sessionID))"
+        case let .singleTask(sessionID):
+            "singleTask(\(sessionID))"
+        case .expanded(selectedSessionID: nil):
+            "expanded"
+        case let .expanded(selectedSessionID: sessionID?):
+            "expanded:selected(\(sessionID))"
         }
     }
 

@@ -37,6 +37,7 @@ final class HookInstallationCoordinator {
     var isGeminiHookSetupBusy = false
     var isKimiHookSetupBusy = false
     var isClaudeUsageSetupBusy = false
+    private var codexPermissionRequestBrokerEnabled = false
 
     @ObservationIgnored
     var onStatusMessage: ((String) -> Void)?
@@ -818,6 +819,28 @@ final class HookInstallationCoordinator {
         }
     }
 
+    /// Keeps the blocking Codex PermissionRequest hook aligned with the
+    /// explicit keyboard-approval preference. Lifecycle hooks remain installed
+    /// either way, so Codex's native reviewer is authoritative by default.
+    func setCodexPermissionRequestBrokerEnabled(_ enabled: Bool) {
+        guard codexPermissionRequestBrokerEnabled != enabled else { return }
+        codexPermissionRequestBrokerEnabled = enabled
+
+        guard codexHooksInstalled, hooksBinaryURL != nil else { return }
+        installCodexHooks()
+    }
+
+    func reconcileCodexPermissionRequestBrokerIfNeeded() {
+        guard let status = codexHookStatus,
+              status.managedHooksPresent,
+              status.brokersPermissionRequests != codexPermissionRequestBrokerEnabled,
+              hooksBinaryURL != nil else {
+            return
+        }
+
+        installCodexHooks()
+    }
+
     // MARK: - Intent store migration
 
     /// Reconciles the persisted intent store with the hook status currently
@@ -852,7 +875,10 @@ final class HookInstallationCoordinator {
         }
 
         updateCodexHooks(userMessage: "Installing Codex hooks.", intent: .installed) { manager in
-            try manager.install(hooksBinaryURL: hooksBinaryURL)
+            try manager.install(
+                hooksBinaryURL: hooksBinaryURL,
+                brokerPermissionRequests: self.codexPermissionRequestBrokerEnabled
+            )
         }
     }
 

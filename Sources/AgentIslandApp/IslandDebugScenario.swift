@@ -93,7 +93,7 @@ enum IslandDebugScenario: String, CaseIterable, Identifiable {
                 previewHeight: 330,
                 notchStatus: .opened,
                 notchOpenReason: .notification,
-                islandSurface: .sessionList(actionableSessionID: session.id),
+                islandSurface: .notification(sessionID: session.id),
                 sessions: DebugSessionFactory.notificationSessions(lead: session, now: now),
                 selectedSessionID: session.id
             )
@@ -106,7 +106,7 @@ enum IslandDebugScenario: String, CaseIterable, Identifiable {
                 previewHeight: 270,
                 notchStatus: .opened,
                 notchOpenReason: .notification,
-                islandSurface: .sessionList(actionableSessionID: session.id),
+                islandSurface: .notification(sessionID: session.id),
                 sessions: DebugSessionFactory.notificationSessions(lead: session, now: now),
                 selectedSessionID: session.id
             )
@@ -119,7 +119,7 @@ enum IslandDebugScenario: String, CaseIterable, Identifiable {
                 previewHeight: 250,
                 notchStatus: .opened,
                 notchOpenReason: .notification,
-                islandSurface: .sessionList(actionableSessionID: session.id),
+                islandSurface: .notification(sessionID: session.id),
                 sessions: DebugSessionFactory.notificationSessions(lead: session, now: now),
                 selectedSessionID: session.id
             )
@@ -132,7 +132,7 @@ enum IslandDebugScenario: String, CaseIterable, Identifiable {
                 previewHeight: 290,
                 notchStatus: .opened,
                 notchOpenReason: .notification,
-                islandSurface: .sessionList(actionableSessionID: session.id),
+                islandSurface: .notification(sessionID: session.id),
                 sessions: DebugSessionFactory.notificationSessions(lead: session, now: now),
                 selectedSessionID: session.id
             )
