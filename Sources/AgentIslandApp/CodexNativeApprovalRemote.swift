@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import OSLog
 import AgentIslandCore
 
 enum CodexNativeApprovalRemoteError: Error, LocalizedError {
@@ -38,6 +39,10 @@ enum CodexNativeApprovalRemoteError: Error, LocalizedError {
 /// decision. Codex remains authoritative for policy and auto-review; Agent
 /// Island only focuses the exact task and invokes the visible native control.
 struct CodexNativeApprovalRemote {
+    private static let logger = Logger(
+        subsystem: "app.agentisland.dev",
+        category: "CodexNativeApprovalRemote"
+    )
     private static let codexBundleIdentifier = "com.openai.codex"
     private static let activationTimeout: Duration = .seconds(2)
     private static let controlTimeout: Duration = .seconds(2)
@@ -61,6 +66,7 @@ struct CodexNativeApprovalRemote {
             throw CodexNativeApprovalRemoteError.appUnavailable
         }
         guard AXIsProcessTrusted() else {
+            Self.logger.error("Accessibility permission is not trusted.")
             throw CodexNativeApprovalRemoteError.accessibilityPermissionRequired
         }
 
@@ -90,6 +96,12 @@ struct CodexNativeApprovalRemote {
             kAXFocusedWindowAttribute,
             of: applicationElement
         ) ?? applicationElement
+        let searchRootTitle =
+            Self.stringAttribute(kAXTitleAttribute, of: searchRoot)
+                ?? "<untitled>"
+        Self.logger.notice(
+            "Searching focused Codex window: \(searchRootTitle, privacy: .public)"
+        )
         let preferredLabel = approved
             ? session.permissionRequest?.primaryActionTitle
             : session.permissionRequest?.secondaryActionTitle
@@ -108,16 +120,30 @@ struct CodexNativeApprovalRemote {
         }
 
         guard !controls.isEmpty else {
+            let visibleLabels = Self.pressableControlLabels(in: searchRoot)
+                .joined(separator: " | ")
+            Self.logger.error(
+                "No approval control matched. Pressable labels: \(visibleLabels, privacy: .public)"
+            )
             throw CodexNativeApprovalRemoteError.approvalControlUnavailable
         }
 
         var lastFailure: AXError?
         for control in controls {
+            let candidateLabels = Self.accessibleLabels(for: control)
+                .sorted()
+                .joined(separator: " | ")
+            Self.logger.notice(
+                "Pressing Codex candidate: \(candidateLabels, privacy: .public)"
+            )
             let result = AXUIElementPerformAction(
                 control,
                 kAXPressAction as CFString
             )
             guard result == .success else {
+                Self.logger.error(
+                    "AXPress failed with error \(result.rawValue, privacy: .public)."
+                )
                 lastFailure = result
                 continue
             }
@@ -128,8 +154,12 @@ struct CodexNativeApprovalRemote {
                     !Self.isAvailable(control)
                 }
             ) {
+                Self.logger.notice("Codex approval control disappeared.")
                 return
             }
+            Self.logger.error(
+                "AXPress returned success but the candidate remained available."
+            )
         }
 
         if let lastFailure {
@@ -180,6 +210,31 @@ struct CodexNativeApprovalRemote {
         return matches
             .sorted { $0.score > $1.score }
             .map(\.element)
+    }
+
+    private static func pressableControlLabels(
+        in root: AXUIElement
+    ) -> [String] {
+        var queue: [AXUIElement] = [root]
+        var cursor = 0
+        var labels: [String] = []
+
+        while cursor < queue.count,
+              cursor < maximumVisitedElements {
+            let element = queue[cursor]
+            cursor += 1
+
+            if isPressableControl(element) {
+                let text = accessibleLabels(for: element)
+                    .sorted()
+                    .joined(separator: " / ")
+                if !text.isEmpty {
+                    labels.append(text)
+                }
+            }
+            queue.append(contentsOf: childElements(of: element))
+        }
+        return labels
     }
 
     private static func matchScore(
