@@ -4,6 +4,7 @@ public typealias ClaudeHookJSONValue = CodexHookJSONValue
 
 public enum ClaudePermissionMode: String, Codable, Sendable {
     case `default`
+    case manual
     case acceptEdits
     case plan
     case dontAsk
@@ -144,16 +145,20 @@ public enum ClaudePermissionUpdate: Equatable, Codable, Sendable {
         case let .addRules(destination, rules, _):
             guard let rule = rules.first else { return "Yes, always allow" }
             let action = Self.actionVerb(for: rule.toolName)
-            let path = Self.shortenedPath(rule.ruleContent)
+            let target = Self.ruleTarget(for: rule)
             let scope = Self.scopeLabel(for: destination)
-            if let path {
+            let additionalRuleCount = rules.count - 1
+            let additionalRules = additionalRuleCount > 0
+                ? " and \(additionalRuleCount) more"
+                : ""
+            if let target {
                 return scope.isEmpty
-                    ? "Yes, allow \(action) \(path)"
-                    : "Yes, allow \(action) \(path) \(scope)"
+                    ? "Yes, allow \(action) \(target)\(additionalRules)"
+                    : "Yes, allow \(action) \(target)\(additionalRules) \(scope)"
             }
             return scope.isEmpty
-                ? "Yes, always allow \(rule.toolName)"
-                : "Yes, always allow \(rule.toolName) \(scope)"
+                ? "Yes, always allow \(rule.toolName)\(additionalRules)"
+                : "Yes, always allow \(rule.toolName)\(additionalRules) \(scope)"
         case let .setMode(_, mode):
             switch mode {
             case .acceptEdits:
@@ -162,7 +167,7 @@ public enum ClaudePermissionUpdate: Equatable, Codable, Sendable {
                 return "Yes, and bypass permissions"
             case .plan:
                 return "Plan Mode"
-            case .default:
+            case .default, .manual:
                 return "Manual Mode"
             case .auto:
                 return "Auto Mode"
@@ -188,6 +193,21 @@ public enum ClaudePermissionUpdate: Equatable, Codable, Sendable {
         }
     }
 
+    private static func ruleTarget(for rule: ClaudePermissionRuleValue) -> String? {
+        guard let content = rule.ruleContent, !content.isEmpty else {
+            return nil
+        }
+
+        switch rule.toolName {
+        case "Read", "Write", "Edit", "Glob", "Grep":
+            return shortenedPath(content)
+        case "Bash":
+            return "`\(content)`"
+        default:
+            return content
+        }
+    }
+
     private static func shortenedPath(_ ruleContent: String?) -> String? {
         guard let content = ruleContent, !content.isEmpty else { return nil }
         // Strip leading slashes and glob suffixes for cleaner display
@@ -199,11 +219,11 @@ public enum ClaudePermissionUpdate: Equatable, Codable, Sendable {
 
     private static func scopeLabel(for destination: ClaudePermissionUpdateDestination) -> String {
         switch destination {
-        case .projectSettings: return "from this project"
+        case .projectSettings: return "for this shared project"
         case .userSettings: return "globally"
-        case .localSettings: return ""
+        case .localSettings: return "for this project"
         case .session: return "for this session"
-        case .cliArg: return ""
+        case .cliArg: return "for this run"
         }
     }
 }
