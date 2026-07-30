@@ -43,6 +43,7 @@ enum agent_island_message {
     AI_MSG_SELECTION_ACK  = 0x04,
     AI_MSG_ACTION_RESULT  = 0x05,
     AI_MSG_GLOBAL_RESULT  = 0x06,
+    AI_MSG_SELECTION_UPDATE = 0x07,
     AI_MSG_CAPABILITIES   = 0x81,
     AI_MSG_SLOT_SELECTED  = 0x82,
     AI_MSG_ACTION_INVOKED = 0x83,
@@ -81,7 +82,7 @@ enum agent_island_constants {
     AI_MAGIC_0                 = 0x41,
     AI_MAGIC_1                 = 0x49,
     AI_PROTOCOL_MAJOR          = 0x01,
-    AI_PROTOCOL_MINOR          = 0x01,
+    AI_PROTOCOL_MINOR          = 0x02,
     AI_RESPONSE_FLAG           = 0x01,
     AI_ERROR_FLAG              = 0x02,
     AI_KNOWN_FLAGS             = AI_RESPONSE_FLAG | AI_ERROR_FLAG,
@@ -98,7 +99,8 @@ enum agent_island_constants {
     AI_CAP_QUESTION_NAVIGATION = 1U << 6,
     AI_CAP_QUESTION_SELECTION  = 1U << 7,
     AI_CAP_QUESTION_SUBMISSION = 1U << 8,
-    AI_ALL_CAPABILITIES        = 0x1FF,
+    AI_CAP_HOST_SELECTION_SYNC = 1U << 9,
+    AI_ALL_CAPABILITIES        = 0x3FF,
     AI_ALLOWED_ACTIONS         = 0x3F,
     AI_MAX_SLOT_STATE          = 6,
     AI_RESPONSE_TIMEOUT_MS     = 2000,
@@ -502,6 +504,57 @@ static void ai_handle_heartbeat(const uint8_t *packet) {
     ai_refresh_watchdog();
 }
 
+static void ai_handle_selection_update(const uint8_t *packet) {
+    const uint8_t *payload = &packet[9];
+    uint16_t       sequence;
+    uint8_t        slot;
+    uint8_t        allowed_actions;
+    const uint8_t *token;
+
+    if (packet[5] != 0 ||
+        packet[8] != 21 ||
+        !(ai_host_capabilities & AI_CAP_HOST_SELECTION_SYNC) ||
+        !ai_nonce_matches(payload)) {
+        return;
+    }
+
+    sequence = ai_read_u16(&packet[6]);
+    if (!ai_sequence_is_newer(sequence, ai_last_host_sequence)) {
+        return;
+    }
+
+    slot  = payload[8];
+    token = &payload[11];
+    if (!ai_snapshot_seen ||
+        ai_read_u16(&payload[9]) != ai_snapshot_generation ||
+        slot >= AI_SLOT_COUNT - 1 ||
+        ai_slot_states[slot] == 0 ||
+        payload[20] == 0 ||
+        !ai_bytes_are_nonzero(token, sizeof(ai_selection_token))) {
+        return;
+    }
+
+    allowed_actions = payload[19] & AI_ALLOWED_ACTIONS;
+    if (!(ai_host_capabilities & AI_CAP_JUMP)) {
+        allowed_actions &= ~(1U << (AI_ACTION_JUMP - 1));
+    }
+    if (!(ai_host_capabilities & AI_CAP_ALLOW_ONCE)) {
+        allowed_actions &= ~(1U << (AI_ACTION_ALLOW_ONCE - 1));
+    }
+    if (!(ai_host_capabilities & AI_CAP_DENY)) {
+        allowed_actions &= ~(1U << (AI_ACTION_DENY - 1));
+    }
+
+    ai_pending_selection          = false;
+    ai_selected_slot              = slot;
+    ai_allowed_actions            = allowed_actions;
+    ai_selection_lifetime_seconds = payload[20];
+    ai_selection_timer            = timer_read32();
+    memcpy(ai_selection_token, token, sizeof(ai_selection_token));
+    ai_last_host_sequence = sequence;
+    ai_refresh_watchdog();
+}
+
 static void ai_handle_selection_ack(const uint8_t *packet) {
     const uint8_t *payload = &packet[9];
     uint8_t        slot;
@@ -665,6 +718,9 @@ bool keychron_raw_hid_receive_user(uint8_t src, uint8_t *data, uint8_t length) {
             break;
         case AI_MSG_GLOBAL_RESULT:
             ai_handle_global_result(data);
+            break;
+        case AI_MSG_SELECTION_UPDATE:
+            ai_handle_selection_update(data);
             break;
     }
     return true;

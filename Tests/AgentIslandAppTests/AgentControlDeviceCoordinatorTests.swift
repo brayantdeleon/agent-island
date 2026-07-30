@@ -24,7 +24,7 @@ struct AgentControlDeviceCoordinatorTests {
         #expect(hello.sequence == 1)
         #expect(
             [UInt8](hello.payload)
-                == [1, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 6, 0xE7, 0x01]
+                == [2, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 6, 0xE7, 0x03]
         )
 
         harness.transport.emit(
@@ -60,6 +60,10 @@ struct AgentControlDeviceCoordinatorTests {
             Scenario(name: "minor", minor: AgentControlProtocolV1.minorVersion + 1),
             Scenario(name: "slot count", slotCount: 9),
             Scenario(name: "snapshots", capabilities: [.selection]),
+            Scenario(
+                name: "pointer selection sync",
+                capabilities: .allV1.subtracting(.hostSelectionSync)
+            ),
             Scenario(
                 name: "reserved capabilities",
                 capabilities: AgentControlCapabilitySet(rawValue: 1 << 15)
@@ -268,11 +272,28 @@ struct AgentControlDeviceCoordinatorTests {
                 result: .staleOrUnknownToken
             )
         )
+        #expect(
+            harness.coordinator.sendSelectionUpdate(
+                connectionNonce: firstNonce,
+                slotIndex: 2,
+                snapshotGeneration: 11,
+                selectionToken: 99,
+                allowedActions: [
+                    .nextQuestionOption,
+                    .selectQuestionOption,
+                    .submitQuestion,
+                ],
+                lifetimeSeconds: 15
+            )
+        )
 
         let selection = try AgentControlPacketCodec.decode(
-            harness.transport.sentReports[harness.transport.sentReports.count - 2]
+            harness.transport.sentReports[harness.transport.sentReports.count - 3]
         )
         let action = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[harness.transport.sentReports.count - 2]
+        )
+        let pointerSelection = try AgentControlPacketCodec.decode(
             harness.transport.sentReports.last!
         )
         #expect(selection.messageType == .selectionAcknowledgement)
@@ -286,6 +307,13 @@ struct AgentControlDeviceCoordinatorTests {
             action.payload[10]
                 == AgentControlActionResult.staleOrUnknownToken.rawValue
         )
+        #expect(pointerSelection.messageType == .selectionUpdate)
+        #expect(pointerSelection.flags.isEmpty)
+        #expect(pointerSelection.payload[8] == 2)
+        #expect(readUInt16(pointerSelection.payload, at: 9) == 11)
+        #expect(readUInt64(pointerSelection.payload, at: 11) == 99)
+        #expect(pointerSelection.payload[19] == 0x38)
+        #expect(pointerSelection.payload[20] == 15)
     }
 
     @Test

@@ -485,6 +485,180 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
+    func firstDigitSelectionKeepsNotificationQuestionDetailOpen() throws {
+        let harness = makeHarness(enabled: true)
+        let previousSuppression =
+            harness.model.suppressFrontmostNotifications
+        defer {
+            harness.model.suppressFrontmostNotifications =
+                previousSuppression
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        harness.model.suppressFrontmostNotifications = false
+        let now = Date()
+        let prompt = QuestionPrompt(
+            title: "Choose",
+            questions: [
+                QuestionPromptItem(
+                    question: "Which option?",
+                    header: "Choice",
+                    options: [
+                        QuestionOption(label: "A"),
+                        QuestionOption(label: "B"),
+                    ]
+                ),
+            ]
+        )
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .running
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        harness.model.applyTrackedEvent(
+            .questionAsked(
+                QuestionAsked(
+                    sessionID: "question",
+                    prompt: prompt,
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+        #expect(harness.model.notchOpenReason == .notification)
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["question"]
+                == nil
+        )
+
+        let snapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let generation = readUInt16(snapshot.payload, at: 8)
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 1,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+
+        #expect(harness.model.agentControlSelectedSessionID == "question")
+        #expect(
+            harness.model.agentControlDetailPresentationRequests["question"]?
+                .isExpanded == true
+        )
+    }
+
+    @Test
+    func pointerExpandedQuestionPushesSelectionAndKeyboardContinuesSharedDraft() throws {
+        let token: UInt64 = 0xA8A7_A6A5_A4A3_A2A1
+        let harness = makeHarness(enabled: true, selectionToken: token)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let prompt = QuestionPrompt(
+            title: "Synchronization",
+            questions: [
+                QuestionPromptItem(
+                    question: "Which option?",
+                    header: "Sync",
+                    options: [
+                        QuestionOption(label: "First"),
+                        QuestionOption(label: "Second"),
+                        QuestionOption(label: "Third"),
+                    ]
+                ),
+            ]
+        )
+        let now = Date()
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .waitingForAnswer,
+                    questionPrompt: prompt
+                ),
+            ]
+        )
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+
+        harness.model.setSessionDetailExpanded(true, for: "question")
+
+        let selectionUpdate = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(selectionUpdate.messageType == .selectionUpdate)
+        #expect(selectionUpdate.payload[8] == 0)
+        #expect(readUInt64(selectionUpdate.payload, at: 11) == token)
+        #expect(harness.model.agentControlSelectedSessionID == "question")
+
+        var draft = harness.model.questionInteractionDraft(
+            for: "question",
+            prompt: prompt
+        )
+        draft.focusedOptionIndex = 1
+        draft.selections[0] = [prompt.questions[0].options[1].id]
+        harness.model.updateQuestionInteractionDraft(
+            draft,
+            for: "question",
+            promptID: prompt.id
+        )
+
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 1,
+                    action: .nextQuestionOption,
+                    token: token
+                )
+            )
+        )
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 2,
+                    action: .selectQuestionOption,
+                    token: token
+                )
+            )
+        )
+
+        let synchronizedDraft = harness.model.questionInteractionDraft(
+            for: "question",
+            prompt: prompt
+        )
+        #expect(synchronizedDraft.focusedOptionIndex == 2)
+        #expect(
+            synchronizedDraft.selections[0]
+                == [prompt.questions[0].options[2].id]
+        )
+    }
+
+    @Test
     func presentationModesRouteNumberAndZeroKeysToExplicitSurfaces() throws {
         let harness = makeHarness(enabled: true)
         defer {

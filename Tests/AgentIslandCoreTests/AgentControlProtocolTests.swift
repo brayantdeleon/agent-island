@@ -19,9 +19,9 @@ struct AgentControlProtocolTests {
 
         #expect(
             report.hexString
-                == "ac414901010001000c01efcdab896745230106ff010000000000000000000024"
+                == "ac414901010001000c02efcdab896745230106ff0300000000000000000000ec"
         )
-        #expect(report.last == 0x24)
+        #expect(report.last == 0xEC)
         #expect(try AgentControlPacketCodec.decode(report).payload == payload)
     }
 
@@ -161,6 +161,20 @@ struct AgentControlProtocolTests {
                 result: .acceptedForDispatch
             )
         )
+        let pointerSelection = [UInt8](
+            AgentControlMessageCodec.selectionUpdatePayload(
+                connectionNonce: nonce,
+                slotIndex: 4,
+                snapshotGeneration: 0x5678,
+                selectionToken: 0xA8A7_A6A5_A4A3_A2A1,
+                allowedActions: [
+                    .nextQuestionOption,
+                    .selectQuestionOption,
+                    .submitQuestion,
+                ],
+                lifetimeSeconds: 15
+            )
+        )
 
         #expect(selection.count == 22)
         #expect(
@@ -177,6 +191,15 @@ struct AgentControlProtocolTests {
                 8, 7, 6, 5, 4, 3, 2, 1,
                 4, AgentControlAction.jump.rawValue,
                 AgentControlActionResult.acceptedForDispatch.rawValue,
+            ]
+        )
+        #expect(
+            pointerSelection == [
+                8, 7, 6, 5, 4, 3, 2, 1,
+                4, 0x78, 0x56,
+                0xA1, 0xA2, 0xA3, 0xA4,
+                0xA5, 0xA6, 0xA7, 0xA8,
+                0x38, 15,
             ]
         )
     }
@@ -302,7 +325,13 @@ struct AgentControlProtocolTests {
     ) throws -> Data {
         var payload = littleEndianBytes(nonce)
         payload += [AgentControlProtocolV1.minorVersion, 10]
-        payload += [0xFF, 0x01]
+        payload += [
+            UInt8(truncatingIfNeeded: AgentControlCapabilitySet.allV1.rawValue),
+            UInt8(
+                truncatingIfNeeded:
+                    AgentControlCapabilitySet.allV1.rawValue >> 8
+            ),
+        ]
         payload += [transport.rawValue, 6]
         payload += [
             UInt8(truncatingIfNeeded: buildIdentifier),

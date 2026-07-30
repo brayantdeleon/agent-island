@@ -306,6 +306,7 @@ final class AgentControlDeviceCoordinator {
             .questionNavigation,
             .questionSelection,
             .questionSubmission,
+            .hostSelectionSync,
         ]
         if approvalActionsEnabled {
             capabilities.formUnion([.allowOnce, .deny])
@@ -433,6 +434,8 @@ final class AgentControlDeviceCoordinator {
             incompatibility = "Firmware exposes \(capabilities.slotCount) slots instead of 10."
         } else if !capabilities.capabilities.contains(.stateSnapshots) {
             incompatibility = "Firmware does not support state snapshots."
+        } else if !capabilities.capabilities.contains(.hostSelectionSync) {
+            incompatibility = "Firmware does not support pointer selection synchronization."
         } else if capabilities.capabilities.rawValue
                     & ~AgentControlCapabilitySet.allV1.rawValue != 0 {
             incompatibility = "Firmware advertises unknown capability bits."
@@ -537,6 +540,39 @@ final class AgentControlDeviceCoordinator {
                         allowedActions: allowedActions,
                         lifetimeSeconds: lifetimeSeconds
                     )
+            )
+            return true
+        } catch {
+            scheduleTransportRestart(after: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func sendSelectionUpdate(
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        snapshotGeneration: UInt16,
+        selectionToken: UInt64,
+        allowedActions: AgentControlAllowedActionSet,
+        lifetimeSeconds: UInt8
+    ) -> Bool {
+        guard diagnostics.state == .ready,
+              connectionNonce == self.connectionNonce else {
+            return false
+        }
+
+        do {
+            _ = try sendPacket(
+                messageType: .selectionUpdate,
+                payload: AgentControlMessageCodec.selectionUpdatePayload(
+                    connectionNonce: connectionNonce,
+                    slotIndex: slotIndex,
+                    snapshotGeneration: snapshotGeneration,
+                    selectionToken: selectionToken,
+                    allowedActions: allowedActions,
+                    lifetimeSeconds: lifetimeSeconds
+                )
             )
             return true
         } catch {

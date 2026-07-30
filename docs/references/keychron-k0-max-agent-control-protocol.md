@@ -152,6 +152,7 @@ token from the prior connection.
 | `0x04` | `SELECTION_ACK` | Host → firmware | Response to `SLOT_SELECTED` |
 | `0x05` | `ACTION_RESULT` | Host → firmware | Response to `ACTION_INVOKED` |
 | `0x06` | `GLOBAL_CONTROL_RESULT` | Host → firmware | Response to `GLOBAL_CONTROL_REQUESTED` |
+| `0x07` | `SELECTION_UPDATE` | Host → firmware | No response |
 | `0x81` | `CAPABILITIES` | Firmware → host | Response to `HELLO` |
 | `0x82` | `SLOT_SELECTED` | Firmware → host | `SELECTION_ACK` |
 | `0x83` | `ACTION_INVOKED` | Firmware → host | `ACTION_RESULT` |
@@ -167,7 +168,7 @@ Payload:
 
 | Offset | Size | Field |
 |---:|---:|---|
-| 0 | 1 | Host protocol minor (`1`) |
+| 0 | 1 | Host protocol minor (`2`) |
 | 1 | 8 | Connection nonce |
 | 9 | 1 | Requested watchdog seconds (`6`) |
 | 10 | 2 | Host capability bits |
@@ -183,7 +184,8 @@ Host capability bits:
 - Bit 6: question navigation
 - Bit 7: question selection
 - Bit 8: question submission
-- Bits 9-15: reserved
+- Bit 9: host-pushed pointer selection synchronization
+- Bits 10-15: reserved
 
 ## `CAPABILITIES` (`0x81`)
 
@@ -351,6 +353,30 @@ bound internally to connection nonce, slot epoch, session ID, allowed action,
 expiration, and the current interaction identity. Approval actions bind the
 current permission request ID; question actions bind the current question
 prompt ID.
+
+## `SELECTION_UPDATE` (`0x07`)
+
+Sent when pointer interaction expands a task detail or changes a structured
+question draft. It gives firmware the same short-lived selection context that
+a successful numbered-key selection would establish, allowing `-`, `+`, and
+Enter to continue from the pointer-selected task.
+
+Payload:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 8 | Connection nonce |
+| 8 | 1 | Protocol slot index |
+| 9 | 2 | Snapshot generation |
+| 11 | 8 | Opaque selection token |
+| 19 | 1 | Allowed action bits |
+| 20 | 1 | Token lifetime in seconds |
+
+Firmware accepts this update only for an assigned agent slot in its current
+snapshot generation, with a nonzero token and lifetime. It applies the same
+host-capability filtering and expiration rules as `SELECTION_ACK`. The host
+still binds the token to the slot epoch and exact permission or question
+identity before accepting any later action.
 
 ## `ACTION_INVOKED` (`0x83`)
 

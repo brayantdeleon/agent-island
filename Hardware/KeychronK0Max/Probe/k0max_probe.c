@@ -19,7 +19,7 @@ enum {
     AI_MAGIC_0         = 0x41,
     AI_MAGIC_1         = 0x49,
     AI_PROTOCOL_MAJOR  = 0x01,
-    AI_PROTOCOL_MINOR  = 0x01,
+    AI_PROTOCOL_MINOR  = 0x02,
     AI_RESPONSE_FLAG   = 0x01,
     AI_REPORT_SIZE     = 32,
     AI_PAYLOAD_MAX     = 22,
@@ -33,6 +33,8 @@ enum {
     AI_MSG_HEARTBEAT      = 0x03,
     AI_MSG_SELECTION_ACK  = 0x04,
     AI_MSG_ACTION_RESULT  = 0x05,
+    AI_MSG_GLOBAL_RESULT  = 0x06,
+    AI_MSG_SELECTION_UPDATE = 0x07,
     AI_MSG_CAPABILITIES   = 0x81,
     AI_MSG_SLOT_SELECTED  = 0x82,
     AI_MSG_ACTION_INVOKED = 0x83,
@@ -427,7 +429,7 @@ static bool send_hello(probe_context_t *context) {
     memcpy(&payload[1], context->nonce, sizeof(context->nonce));
     payload[9]  = AI_WATCHDOG_SECONDS;
     payload[10] = 0xFF;
-    payload[11] = 0x01;
+    payload[11] = 0x03;
     return send_packet(context, AI_MSG_HELLO, 0, context->sequence++, payload, sizeof(payload));
 }
 

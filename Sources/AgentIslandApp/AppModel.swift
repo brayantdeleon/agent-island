@@ -1603,60 +1603,21 @@ final class AppModel {
             return
         }
 
-        let slotEpoch = snapshot.slotEpochs[index]
-        let selectionToken = makeAgentControlSelectionToken()
-        var allowedActions: AgentControlAllowedActionSet = []
-        if canJumpToAgentControlSession(session) {
-            allowedActions.insert(.jump)
-        }
-        let permissionRequestID: UUID?
-        if canResolveAgentControlPermission(for: session),
-           let requestID = session.permissionRequest?.id {
-            allowedActions.formUnion([.allowOnce, .deny])
-            permissionRequestID = requestID
-        } else {
-            permissionRequestID = nil
-        }
-        let questionPromptID: UUID?
-        if session.phase == .waitingForAnswer,
-           let prompt = session.questionPrompt {
-            questionPromptID = prompt.id
-            if prompt.questions.isEmpty && prompt.options.isEmpty {
-                allowedActions.insert(.submitQuestion)
-            } else {
-                allowedActions.formUnion([
-                    .nextQuestionOption,
-                    .selectQuestionOption,
-                    .submitQuestion,
-                ])
-            }
-            prepareQuestionInteraction(for: session.id, prompt: prompt)
-        } else {
-            questionPromptID = nil
-        }
-        let lifetimeSeconds = Self.agentControlSelectionLifetimeSeconds
-        let selection = AgentControlSelectionContext(
-            connectionNonce: connectionNonce,
-            slotIndex: slotIndex,
-            slotEpoch: slotEpoch,
-            sessionID: session.id,
-            permissionRequestID: permissionRequestID,
-            questionPromptID: questionPromptID,
-            selectionToken: selectionToken,
-            allowedActions: allowedActions,
-            expiresAt: agentControlDateProvider().addingTimeInterval(
-                TimeInterval(lifetimeSeconds)
-            )
+        let selection = makeAgentControlSelection(
+            for: session,
+            snapshot: snapshot,
+            slotIndex: slotIndex
         )
+        let lifetimeSeconds = Self.agentControlSelectionLifetimeSeconds
 
         guard agentControlDeviceCoordinator.sendSelectionAcknowledgement(
             requestSequence: requestSequence,
             connectionNonce: connectionNonce,
             slotIndex: slotIndex,
             result: .accepted,
-            slotEpoch: slotEpoch,
-            selectionToken: selectionToken,
-            allowedActions: allowedActions,
+            slotEpoch: selection.slotEpoch,
+            selectionToken: selection.selectionToken,
+            allowedActions: selection.allowedActions,
             lifetimeSeconds: lifetimeSeconds
         ) else {
             return
@@ -1669,6 +1630,10 @@ final class AppModel {
                 ?? false
         let expandsDetail: Bool
         if islandCompactnessMode == .expanded {
+            expandsDetail = true
+        } else if notchStatus == .opened,
+                  islandSurface.sessionID == session.id,
+                  notchOpenReason == .notification {
             expandsDetail = true
         } else {
             expandsDetail = previouslySelectedSessionID == session.id
@@ -1740,8 +1705,13 @@ final class AppModel {
         _ isExpanded: Bool,
         for sessionID: String
     ) {
-        guard state.session(id: sessionID) != nil,
-              agentControlDetailPresentationRequests[sessionID]?.isExpanded
+        guard state.session(id: sessionID) != nil else {
+            return
+        }
+        if isExpanded {
+            ensureAgentControlSelectionForPointer(sessionID: sessionID)
+        }
+        guard agentControlDetailPresentationRequests[sessionID]?.isExpanded
                 != isExpanded else {
             return
         }
@@ -1799,6 +1769,103 @@ final class AppModel {
     private func makeAgentControlSelectionToken() -> UInt64 {
         let token = agentControlSelectionTokenGenerator()
         return token == 0 ? 1 : token
+    }
+
+    private func makeAgentControlSelection(
+        for session: AgentSession,
+        snapshot: AgentControlDeviceSnapshot,
+        slotIndex: UInt8
+    ) -> AgentControlSelectionContext {
+        var allowedActions: AgentControlAllowedActionSet = []
+        if canJumpToAgentControlSession(session) {
+            allowedActions.insert(.jump)
+        }
+        let permissionRequestID: UUID?
+        if canResolveAgentControlPermission(for: session),
+           let requestID = session.permissionRequest?.id {
+            allowedActions.formUnion([.allowOnce, .deny])
+            permissionRequestID = requestID
+        } else {
+            permissionRequestID = nil
+        }
+        let questionPromptID: UUID?
+        if session.phase == .waitingForAnswer,
+           let prompt = session.questionPrompt {
+            questionPromptID = prompt.id
+            if prompt.questions.isEmpty && prompt.options.isEmpty {
+                allowedActions.insert(.submitQuestion)
+            } else {
+                allowedActions.formUnion([
+                    .nextQuestionOption,
+                    .selectQuestionOption,
+                    .submitQuestion,
+                ])
+            }
+            prepareQuestionInteraction(for: session.id, prompt: prompt)
+        } else {
+            questionPromptID = nil
+        }
+
+        return AgentControlSelectionContext(
+            connectionNonce: snapshot.connectionNonce,
+            slotIndex: slotIndex,
+            slotEpoch: snapshot.slotEpochs[Int(slotIndex)],
+            sessionID: session.id,
+            permissionRequestID: permissionRequestID,
+            questionPromptID: questionPromptID,
+            selectionToken: makeAgentControlSelectionToken(),
+            allowedActions: allowedActions,
+            expiresAt: agentControlDateProvider().addingTimeInterval(
+                TimeInterval(Self.agentControlSelectionLifetimeSeconds)
+            )
+        )
+    }
+
+    private func ensureAgentControlSelectionForPointer(
+        sessionID: String
+    ) {
+        guard agentControlKeyboardModeActive,
+              let snapshot = agentControlDeviceCoordinator.currentSnapshot,
+              let session = state.session(id: sessionID),
+              let index = snapshot.content.slots
+                .prefix(AgentControlProtocolV1.agentSlotCount)
+                .firstIndex(where: { $0?.identity == sessionID }) else {
+            return
+        }
+
+        let currentPermissionRequestID = canResolveAgentControlPermission(
+            for: session
+        ) ? session.permissionRequest?.id : nil
+        let currentQuestionPromptID =
+            session.phase == .waitingForAnswer
+                ? session.questionPrompt?.id
+                : nil
+        if let selection = agentControlSelection,
+           selection.sessionID == sessionID,
+           selection.permissionRequestID == currentPermissionRequestID,
+           selection.questionPromptID == currentQuestionPromptID,
+           agentControlDateProvider() < selection.expiresAt {
+            return
+        }
+
+        let slotIndex = UInt8(index)
+        let selection = makeAgentControlSelection(
+            for: session,
+            snapshot: snapshot,
+            slotIndex: slotIndex
+        )
+        guard agentControlDeviceCoordinator.sendSelectionUpdate(
+            connectionNonce: snapshot.connectionNonce,
+            slotIndex: slotIndex,
+            snapshotGeneration: snapshot.generation,
+            selectionToken: selection.selectionToken,
+            allowedActions: selection.allowedActions,
+            lifetimeSeconds: Self.agentControlSelectionLifetimeSeconds
+        ) else {
+            return
+        }
+        setAgentControlSelection(selection)
+        select(sessionID: sessionID)
     }
 
     private func setAgentControlSelection(
@@ -3002,6 +3069,7 @@ final class AppModel {
         questionInteractionDrafts[
             QuestionInteractionKey(sessionID: sessionID, promptID: promptID)
         ] = draft
+        ensureAgentControlSelectionForPointer(sessionID: sessionID)
     }
 
     private func prepareQuestionInteraction(

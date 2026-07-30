@@ -4,7 +4,7 @@ public enum AgentControlProtocolV1 {
     public static let commandFamily: UInt8 = 0xAC
     public static let magic: (UInt8, UInt8) = (0x41, 0x49)
     public static let majorVersion: UInt8 = 1
-    public static let minorVersion: UInt8 = 1
+    public static let minorVersion: UInt8 = 2
     public static let reportSize = 32
     public static let payloadCapacity = 22
     /// The wire format retains all ten numpad digits.
@@ -23,6 +23,7 @@ public enum AgentControlMessageType: UInt8, Sendable {
     case selectionAcknowledgement = 0x04
     case actionResult = 0x05
     case globalControlResult = 0x06
+    case selectionUpdate = 0x07
     case capabilities = 0x81
     case slotSelected = 0x82
     case actionInvoked = 0x83
@@ -212,6 +213,7 @@ public struct AgentControlCapabilitySet: OptionSet, Equatable, Sendable {
     public static let questionNavigation = Self(rawValue: 1 << 6)
     public static let questionSelection = Self(rawValue: 1 << 7)
     public static let questionSubmission = Self(rawValue: 1 << 8)
+    public static let hostSelectionSync = Self(rawValue: 1 << 9)
     public static let allV1: Self = [
         .stateSnapshots,
         .selection,
@@ -222,6 +224,7 @@ public struct AgentControlCapabilitySet: OptionSet, Equatable, Sendable {
         .questionNavigation,
         .questionSelection,
         .questionSubmission,
+        .hostSelectionSync,
     ]
 }
 
@@ -455,6 +458,24 @@ public enum AgentControlMessageCodec {
         return Data(payload)
     }
 
+    public static func selectionUpdatePayload(
+        connectionNonce: UInt64,
+        slotIndex: UInt8,
+        snapshotGeneration: UInt16,
+        selectionToken: UInt64,
+        allowedActions: AgentControlAllowedActionSet,
+        lifetimeSeconds: UInt8
+    ) -> Data {
+        var payload: [UInt8] = []
+        appendUInt64(connectionNonce, to: &payload)
+        payload.append(slotIndex)
+        appendUInt16(snapshotGeneration, to: &payload)
+        appendUInt64(selectionToken, to: &payload)
+        payload.append(allowedActions.rawValue)
+        payload.append(lifetimeSeconds)
+        return Data(payload)
+    }
+
     public static func actionResultPayload(
         connectionNonce: UInt64,
         slotIndex: UInt8,
@@ -587,7 +608,8 @@ public enum AgentControlMessageCodec {
              .heartbeat,
              .selectionAcknowledgement,
              .actionResult,
-             .globalControlResult:
+             .globalControlResult,
+             .selectionUpdate:
             return nil
         }
     }
