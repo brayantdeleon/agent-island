@@ -3477,7 +3477,7 @@ final class AppModel {
                   let session = state.session(id: payload.sessionID),
                   session.phase == .waitingForApproval,
                   session.permissionRequest?.resolutionRoute == .nativeCodex,
-                  payload.timestamp > session.updatedAt else {
+                  payload.timestamp >= session.updatedAt else {
                 return nil
             }
             return (payload.sessionID, payload.timestamp)

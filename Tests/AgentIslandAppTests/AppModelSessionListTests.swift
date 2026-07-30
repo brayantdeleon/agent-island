@@ -1470,7 +1470,23 @@ struct AppModelSessionListTests {
         )
 
         // A newer timeline update means Codex's own reviewer finished and
-        // tool execution resumed.
+        // tool execution resumed. The rollout reducer emits metadata first
+        // with the same timestamp as the activity record, so that ordering
+        // must not make the activity look stale.
+        model.applyTrackedEvent(
+            .sessionMetadataUpdated(
+                SessionMetadataUpdated(
+                    sessionID: "native-approval",
+                    codexMetadata: CodexSessionMetadata(
+                        currentTool: "exec_command",
+                        currentCommandPreview: "osascript"
+                    ),
+                    timestamp: now.addingTimeInterval(3)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .rollout
+        )
         for sessionID in ["native-approval", "routed-approval"] {
             model.applyTrackedEvent(
                 .activityUpdated(
