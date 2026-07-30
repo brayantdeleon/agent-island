@@ -8,7 +8,7 @@ public struct CodexHookInstallationStatus: Equatable, Sendable {
     public var hooksBinaryURL: URL?
     public var featureFlagEnabled: Bool
     public var managedHooksPresent: Bool
-    public var brokersPermissionRequests: Bool
+    public var permissionRequestHookInstalled: Bool
     public var manifest: CodexHookInstallerManifest?
 
     public init(
@@ -19,7 +19,7 @@ public struct CodexHookInstallationStatus: Equatable, Sendable {
         hooksBinaryURL: URL?,
         featureFlagEnabled: Bool,
         managedHooksPresent: Bool,
-        brokersPermissionRequests: Bool,
+        permissionRequestHookInstalled: Bool,
         manifest: CodexHookInstallerManifest?
     ) {
         self.codexDirectory = codexDirectory
@@ -29,7 +29,7 @@ public struct CodexHookInstallationStatus: Equatable, Sendable {
         self.hooksBinaryURL = hooksBinaryURL
         self.featureFlagEnabled = featureFlagEnabled
         self.managedHooksPresent = managedHooksPresent
-        self.brokersPermissionRequests = brokersPermissionRequests
+        self.permissionRequestHookInstalled = permissionRequestHookInstalled
         self.manifest = manifest
     }
 }
@@ -66,7 +66,7 @@ public final class CodexHookInstallationManager: @unchecked Sendable {
             existingData: hooksData,
             managedCommand: managedCommand
         ))?.changed) == true
-        let brokersPermissionRequests = CodexHookInstaller.hasManagedPermissionRequestHook(
+        let permissionRequestHookInstalled = CodexHookInstaller.hasManagedPermissionRequestHook(
             in: hooksData,
             managedCommand: managedCommand
         )
@@ -79,7 +79,7 @@ public final class CodexHookInstallationManager: @unchecked Sendable {
             hooksBinaryURL: resolvedHooksBinaryURL,
             featureFlagEnabled: CodexHookInstaller.isCodexHooksFeatureEnabled(in: configContents),
             managedHooksPresent: managedHooksPresent,
-            brokersPermissionRequests: brokersPermissionRequests,
+            permissionRequestHookInstalled: permissionRequestHookInstalled,
             manifest: manifest
         )
     }
@@ -87,7 +87,7 @@ public final class CodexHookInstallationManager: @unchecked Sendable {
     @discardableResult
     public func install(
         hooksBinaryURL: URL,
-        brokerPermissionRequests: Bool = false
+        installPermissionRequestHook: Bool = false
     ) throws -> CodexHookInstallationStatus {
         try fileManager.createDirectory(at: codexDirectory, withIntermediateDirectories: true)
 
@@ -112,7 +112,7 @@ public final class CodexHookInstallationManager: @unchecked Sendable {
         let hooksMutation = try CodexHookInstaller.installHooksJSON(
             existingData: existingHooks,
             hookCommand: command,
-            brokerPermissionRequests: brokerPermissionRequests
+            installPermissionRequestHook: installPermissionRequestHook
         )
 
         if featureMutation.changed, fileManager.fileExists(atPath: configURL.path) {

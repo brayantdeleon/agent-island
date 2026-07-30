@@ -1372,6 +1372,152 @@ struct AppModelSessionListTests {
     }
 
     @Test
+    func newerRolloutActivityClearsOnlyNativeCodexApproval() {
+        let now = Date(timeIntervalSince1970: 2_700)
+        let suiteName =
+            "AppModelSessionListTests.NativeApproval.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(
+            true,
+            forKey:
+                AgentControlDeviceSettingsStore
+                    .approvalActionsDefaultsKey
+        )
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let model = AppModel(
+            agentControlDeviceSettingsStore:
+                AgentControlDeviceSettingsStore(defaults: defaults)
+        )
+        model.suppressFrontmostNotifications = false
+        model.codexApprovalBrokerEnabled = false
+        var nativeSession = listSession(
+            id: "native-approval",
+            phase: .running,
+            updatedAt: now
+        )
+        nativeSession.jumpTarget = JumpTarget(
+            terminalApp: "Codex.app",
+            workspaceName: "agent-island",
+            paneTitle: "Codex",
+            workingDirectory: "/tmp/agent-island",
+            codexThreadID: nativeSession.id
+        )
+        nativeSession.isCodexAppSession = true
+        model.state = SessionState(
+            sessions: [
+                nativeSession,
+                listSession(
+                    id: "routed-approval",
+                    phase: .running,
+                    updatedAt: now
+                ),
+            ]
+        )
+
+        model.applyTrackedEvent(
+            .activityUpdated(
+                SessionActivityUpdated(
+                    sessionID: "native-approval",
+                    summary: "Needs native approval",
+                    phase: .waitingForApproval,
+                    timestamp: now.addingTimeInterval(2)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .rollout
+        )
+        #expect(
+            model.state.session(id: "native-approval")?
+                .permissionRequest?.resolutionRoute == .nativeCodex
+        )
+        model.applyTrackedEvent(
+            .permissionRequested(
+                PermissionRequested(
+                    sessionID: "routed-approval",
+                    request: PermissionRequest(
+                        title: "Run command",
+                        summary: "Needs routed approval",
+                        affectedPath: "osascript"
+                    ),
+                    timestamp: now.addingTimeInterval(2)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .bridge
+        )
+
+        // A rollout record written before the hook event is stale and cannot
+        // prove that Codex resumed after approval.
+        model.applyTrackedEvent(
+            .activityUpdated(
+                SessionActivityUpdated(
+                    sessionID: "native-approval",
+                    summary: "Running command.",
+                    phase: .running,
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .rollout
+        )
+        #expect(
+            model.state.session(id: "native-approval")?
+                .permissionRequest != nil
+        )
+
+        // A newer timeline update means Codex's own reviewer finished and
+        // tool execution resumed. The rollout reducer emits metadata first
+        // with the same timestamp as the activity record, so that ordering
+        // must not make the activity look stale.
+        model.applyTrackedEvent(
+            .sessionMetadataUpdated(
+                SessionMetadataUpdated(
+                    sessionID: "native-approval",
+                    codexMetadata: CodexSessionMetadata(
+                        currentTool: "exec_command",
+                        currentCommandPreview: "osascript"
+                    ),
+                    timestamp: now.addingTimeInterval(3)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .rollout
+        )
+        for sessionID in ["native-approval", "routed-approval"] {
+            model.applyTrackedEvent(
+                .activityUpdated(
+                    SessionActivityUpdated(
+                        sessionID: sessionID,
+                        summary: "Thinking.",
+                        phase: .running,
+                        timestamp: now.addingTimeInterval(3)
+                    )
+                ),
+                updateLastActionMessage: false,
+                ingress: .rollout
+            )
+        }
+
+        #expect(
+            model.state.session(id: "native-approval")?
+                .permissionRequest == nil
+        )
+        #expect(
+            model.agentControlDetailPresentationRequests[
+                "native-approval"
+            ]?.isExpanded == false
+        )
+        #expect(
+            model.state.session(id: "routed-approval")?
+                .permissionRequest != nil
+        )
+    }
+
+    @Test
     func hoverOpenedSessionListAutoCollapsesOnPointerExit() {
         let model = AppModel()
         model.notchStatus = .opened

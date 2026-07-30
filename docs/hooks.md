@@ -78,7 +78,7 @@ change. Not yet handled.
 
 ### Default managed installation
 
-The managed Codex hook installer (`CodexHookInstaller`) installs `SessionStart`, `UserPromptSubmit`, and `Stop` by default. This keeps lifecycle observation low-noise and leaves Codex's native approval policy and reviewer authoritative. `PermissionRequest` is installed only when the user explicitly enables **Route Codex approvals through Agent Island**, because a blocking permission hook runs before Codex's native reviewer and would otherwise override modes such as **Approve for me**. This routing preference is separate from the general keyboard-approval capability. Per-command `PreToolUse` / `PostToolUse` hooks remain opt-in because they can add terminal log noise.
+The managed Codex hook installer (`CodexHookInstaller`) installs `SessionStart`, `UserPromptSubmit`, and `Stop` by default. This keeps lifecycle observation low-noise. `PermissionRequest` is added when keyboard approval actions are enabled or when the user explicitly enables **Route Codex approvals through Agent Island**. With routing off, the hook publishes the exact request and immediately returns no decision, so Codex's native reviewer—including **Approve for me**—remains authoritative; Agent Island can then focus the exact Codex task and press its native Allow or Deny control. With routing on, the hook stays blocked until Agent Island returns the decision. Per-command `PreToolUse` / `PostToolUse` hooks remain opt-in because they can add terminal log noise.
 
 The installer chooses the Codex hook feature flag that the local Codex CLI advertises. Newer Codex builds use `[features].hooks = true`; older builds use the legacy `[features].codex_hooks = true`. Status checks recognize both keys, and managed installs migrate between them when the local Codex version changes.
 
@@ -123,20 +123,22 @@ The app can block a command by writing this to stdout:
 
 #### `PermissionRequest`
 
-When Codex approval routing is enabled, the managed `PermissionRequest` hook has a 1-hour timeout so the user can approve or deny from the UI or keyboard. This opt-in routing replaces Codex's native approval reviewer for intercepted requests.
+The managed `PermissionRequest` hook has a 1-hour safety timeout. In native-remote mode it returns immediately without a decision after publishing the request. When Codex approval routing is enabled, it instead waits so the user can approve or deny from the UI or keyboard; this opt-in routing replaces Codex's native approval reviewer for intercepted requests.
 
 The same managed hook can cover Codex CLI and local Codex Desktop threads after
 Codex has loaded and trusted the active `~/.codex` hook configuration. Codex Desktop's
 app-server status is observer-only in Agent Island: it can report that a thread
 is waiting, but its separately launched app-server connection cannot answer the
-Desktop client's JSON-RPC approval request. Only a live blocking
-`PermissionRequest` hook creates approval buttons in Agent Island.
+Desktop client's JSON-RPC approval request. A live `PermissionRequest` hook
+provides the exact request needed for approval buttons. In native-remote mode
+those buttons invoke Codex Desktop's own controls; in routed mode they resolve
+the blocked hook directly.
 
 Codex may omit `transcript_path` from a hook payload. Agent Island still accepts
 `PreToolUse` and `PermissionRequest` events from Codex Desktop in that case so a
 real approval cannot be mistaken for an internal title-generation invocation.
 
-Permission resolution is request-bound rather than session-bound. The app
+Direct permission resolution is request-bound rather than session-bound. The app
 sends both the session ID and the exact `PermissionRequest.id` that was shown
 to the user. The bridge resolves only when that UUID still belongs to the
 blocked hook process; a replaced request, question, replay, or disconnected
