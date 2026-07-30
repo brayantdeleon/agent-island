@@ -3467,6 +3467,21 @@ final class AppModel {
             }
             return payload.sessionID
         }()
+        let timelineResolvedNativePermission: (
+            sessionID: String,
+            timestamp: Date
+        )? = {
+            guard ingress == .rollout,
+                  case let .activityUpdated(payload) = event,
+                  payload.phase != .waitingForApproval,
+                  let session = state.session(id: payload.sessionID),
+                  session.phase == .waitingForApproval,
+                  session.permissionRequest?.resolutionRoute == .nativeCodex,
+                  payload.timestamp > session.updatedAt else {
+                return nil
+            }
+            return (payload.sessionID, payload.timestamp)
+        }()
 
         // Guard: don't let rollout events downgrade a session from completed
         // back to running. The bridge's sessionCompleted is authoritative; the
@@ -3491,19 +3506,21 @@ final class AppModel {
             return
         }
 
-        state.apply(event)
-        if case let .permissionRequested(payload) = event,
-           payload.request.resolutionRoute == .nativeCodex {
-            codexAppServer.monitorNativeApprovalResolution(
-                threadID: payload.sessionID
-            )
-        } else if state.session(id: event.sessionID)?
-            .permissionRequest == nil {
-            codexAppServer.cancelNativeApprovalMonitor(
-                threadID: event.sessionID
+        if let timelineResolvedNativePermission {
+            state.apply(
+                .actionableStateResolved(
+                    ActionableStateResolved(
+                        sessionID: timelineResolvedNativePermission.sessionID,
+                        summary: "Codex resumed work.",
+                        timestamp: timelineResolvedNativePermission.timestamp
+                    )
+                )
             )
         }
-        if let resolvedPermissionSessionID {
+        state.apply(event)
+        if let resolvedPermissionSessionID =
+            resolvedPermissionSessionID
+                ?? timelineResolvedNativePermission?.sessionID {
             requestAgentControlDetailPresentation(
                 for: resolvedPermissionSessionID,
                 isExpanded: false
