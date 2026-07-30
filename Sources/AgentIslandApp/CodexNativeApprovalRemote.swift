@@ -50,6 +50,7 @@ struct CodexNativeApprovalRemote {
     )
     private static let codexBundleIdentifier = "com.openai.codex"
     private static let activationTimeout: Duration = .seconds(2)
+    private static let backgroundActivationGuardDelay: Duration = .milliseconds(250)
     private static let backgroundControlTimeout: Duration = .seconds(1)
     private static let crossAppSettleDelay: Duration = .milliseconds(400)
     private static let controlTimeout: Duration = .seconds(4)
@@ -96,8 +97,9 @@ struct CodexNativeApprovalRemote {
                app: app,
                labels: labels
            ) {
+            await Self.restorePreviousApp(previousFrontmostApp)
             Self.logger.notice(
-                "Resolved Codex approval without foreground activation."
+                "Resolved Codex approval through the guarded background path."
             )
             return
         }
@@ -277,6 +279,11 @@ struct CodexNativeApprovalRemote {
                 != Self.codexBundleIdentifier else {
             return false
         }
+        try? await Task.sleep(for: Self.backgroundActivationGuardDelay)
+        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                != Self.codexBundleIdentifier else {
+            return false
+        }
 
         let application = AXUIElementCreateApplication(app.processIdentifier)
         let accessibilityResult = AXUIElementSetAttributeValue(
@@ -320,43 +327,8 @@ struct CodexNativeApprovalRemote {
         Self.logger.notice(
             "Targeting background Codex candidate \(candidateLabels, privacy: .public)."
         )
-
-        if Self.focusForBackgroundKeyboard(control),
-           NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-                != Self.codexBundleIdentifier,
-           Self.pressReturn(inProcess: app.processIdentifier) {
-            Self.logger.notice(
-                "Sent Return to the focused background Codex candidate."
-            )
-            if await waitUntil(
-                timeout: Self.pointerAttemptTimeout,
-                condition: {
-                    !Self.isAvailable(control)
-                }
-            ) {
-                Self.logger.notice(
-                    "Background Codex candidate disappeared after Return."
-                )
-                return true
-            }
-            Self.logger.notice(
-                "Background Codex candidate remained after Return."
-            )
-        }
-
-        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-                != Self.codexBundleIdentifier else {
-            return false
-        }
-        let currentApplication = AXUIElementCreateApplication(
-            app.processIdentifier
-        )
-        guard let pointerControl = Self.findApprovalControls(
-            inApplication: currentApplication,
-            matching: labels
-        ).first,
-              Self.clickCenter(
-                  of: pointerControl,
+        guard Self.clickCenter(
+                  of: control,
                   delivery: .process(app.processIdentifier)
               ) else {
             return false
@@ -364,7 +336,7 @@ struct CodexNativeApprovalRemote {
         if await waitUntil(
             timeout: Self.pointerAttemptTimeout,
             condition: {
-                !Self.isAvailable(pointerControl)
+                !Self.isAvailable(control)
             }
         ) {
             Self.logger.notice(
@@ -610,65 +582,6 @@ struct CodexNativeApprovalRemote {
         }
     }
 
-    private static func focusForBackgroundKeyboard(
-        _ element: AXUIElement
-    ) -> Bool {
-        var settable = DarwinBoolean(false)
-        let settableResult = AXUIElementIsAttributeSettable(
-            element,
-            kAXFocusedAttribute as CFString,
-            &settable
-        )
-        guard settableResult == .success, settable.boolValue else {
-            logger.notice(
-                "Background Codex candidate does not expose settable focus."
-            )
-            return false
-        }
-        let focusResult = AXUIElementSetAttributeValue(
-            element,
-            kAXFocusedAttribute as CFString,
-            kCFBooleanTrue
-        )
-        guard focusResult == .success,
-              boolAttribute(kAXFocusedAttribute, of: element) == true else {
-            logger.notice(
-                "Could not verify focus on the background Codex candidate."
-            )
-            return false
-        }
-        return true
-    }
-
-    private static func pressReturn(inProcess processIdentifier: pid_t) -> Bool {
-        guard CGPreflightPostEventAccess() else {
-            _ = CGRequestPostEventAccess()
-            logger.error(
-                "Input-control permission is unavailable; requested PostEvent access."
-            )
-            return false
-        }
-        let source = CGEventSource(stateID: .combinedSessionState)
-        guard let keyDown = CGEvent(
-            keyboardEventSource: source,
-            virtualKey: 36,
-            keyDown: true
-        ),
-              let keyUp = CGEvent(
-                  keyboardEventSource: source,
-                  virtualKey: 36,
-                  keyDown: false
-              ) else {
-            logger.error(
-                "Could not create Return events for background Codex approval."
-            )
-            return false
-        }
-        keyDown.postToPid(processIdentifier)
-        keyUp.postToPid(processIdentifier)
-        return true
-    }
-
     private static func clickCenter(
         of element: AXUIElement,
         delivery: PointerDelivery
@@ -743,11 +656,36 @@ struct CodexNativeApprovalRemote {
             logger.error("Could not create pointer events for Codex approval.")
             return false
         }
+        let targetWindowNumber: CGWindowID?
+        switch delivery {
+        case .foreground:
+            targetWindowNumber = nil
+        case let .process(processIdentifier):
+            targetWindowNumber = windowNumber(
+                for: element,
+                processIdentifier: processIdentifier
+            )
+            guard targetWindowNumber != nil else {
+                logger.notice(
+                    "Could not identify the background Codex window."
+                )
+                return false
+            }
+        }
         for event in events.compactMap(\.self) {
             switch delivery {
             case .foreground:
                 event.post(tap: .cghidEventTap)
             case let .process(processIdentifier):
+                let windowNumber = Int64(targetWindowNumber ?? 0)
+                event.setIntegerValueField(
+                    .mouseEventWindowUnderMousePointer,
+                    value: windowNumber
+                )
+                event.setIntegerValueField(
+                    .mouseEventWindowUnderMousePointerThatCanHandleThisEvent,
+                    value: windowNumber
+                )
                 event.postToPid(processIdentifier)
             }
         }
@@ -761,6 +699,54 @@ struct CodexNativeApprovalRemote {
             restoreEvent.post(tap: .cghidEventTap)
         }
         return true
+    }
+
+    private static func windowNumber(
+        for element: AXUIElement,
+        processIdentifier: pid_t
+    ) -> CGWindowID? {
+        let window = elementAttribute(kAXWindowAttribute, of: element)
+            ?? element
+        guard let position = pointAttribute(
+            kAXPositionAttribute,
+            of: window
+        ),
+              let size = sizeAttribute(
+                  kAXSizeAttribute,
+                  of: window
+              ),
+              let windowInfo = CGWindowListCopyWindowInfo(
+                  [.optionAll, .excludeDesktopElements],
+                  kCGNullWindowID
+              ) as? [[CFString: Any]] else {
+            return nil
+        }
+        let accessibilityFrame = CGRect(origin: position, size: size)
+        let candidates = windowInfo.compactMap {
+            info -> (number: CGWindowID, distance: CGFloat)? in
+            guard let ownerPID = info[kCGWindowOwnerPID] as? NSNumber,
+                  ownerPID.int32Value == processIdentifier,
+                  let number = info[kCGWindowNumber] as? NSNumber,
+                  let bounds = info[kCGWindowBounds] as? NSDictionary,
+                  let frame = CGRect(
+                      dictionaryRepresentation: bounds
+                  ) else {
+                return nil
+            }
+            let distance =
+                abs(frame.minX - accessibilityFrame.minX)
+                + abs(frame.minY - accessibilityFrame.minY)
+                + abs(frame.width - accessibilityFrame.width)
+                + abs(frame.height - accessibilityFrame.height)
+            return (number.uint32Value, distance)
+        }
+        let match = candidates.min { $0.distance < $1.distance }
+        if let match {
+            logger.notice(
+                "Matched background Codex window \(match.number, privacy: .public) with frame distance \(match.distance, privacy: .public)."
+            )
+        }
+        return match?.number
     }
 
     private static func accessibleLabels(for element: AXUIElement) -> Set<String> {
