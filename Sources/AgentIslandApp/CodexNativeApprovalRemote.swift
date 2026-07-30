@@ -193,7 +193,7 @@ struct CodexNativeApprovalRemote {
                     Self.logger.notice(
                         "Codex approval control disappeared after pointer activation."
                     )
-                    Self.restorePreviousApp(previousFrontmostApp)
+                    await Self.restorePreviousApp(previousFrontmostApp)
                     return
                 }
                 Self.logger.error(
@@ -224,7 +224,7 @@ struct CodexNativeApprovalRemote {
                 }
             ) {
                 Self.logger.notice("Codex approval control disappeared.")
-                Self.restorePreviousApp(previousFrontmostApp)
+                await Self.restorePreviousApp(previousFrontmostApp)
                 return
             }
             Self.logger.error(
@@ -410,7 +410,7 @@ struct CodexNativeApprovalRemote {
     @MainActor
     private static func restorePreviousApp(
         _ previousApp: NSRunningApplication?
-    ) {
+    ) async {
         guard let previousApp,
               previousApp.bundleIdentifier != codexBundleIdentifier,
               !previousApp.isTerminated,
@@ -418,10 +418,35 @@ struct CodexNativeApprovalRemote {
                 == codexBundleIdentifier else {
             return
         }
-        let restored = previousApp.activate()
+        let restored = previousApp.activate(options: [.activateAllWindows])
         logger.notice(
             "Restored previous app \(previousApp.localizedName ?? previousApp.bundleIdentifier ?? "<unknown>", privacy: .public): \(restored, privacy: .public)."
         )
+        guard !restored,
+              let bundleURL = previousApp.bundleURL else {
+            return
+        }
+
+        // Some multi-process apps (notably Chrome) reject direct activation
+        // even when their NSRunningApplication is valid. Ask LaunchServices to
+        // reuse and activate that existing bundle without creating an instance.
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+        configuration.createsNewApplicationInstance = false
+        do {
+            let reopenedApp = try await NSWorkspace.shared.openApplication(
+                at: bundleURL,
+                configuration: configuration
+            )
+            logger.notice(
+                "Restored previous app through LaunchServices: \(reopenedApp.localizedName ?? reopenedApp.bundleIdentifier ?? "<unknown>", privacy: .public)."
+            )
+        } catch {
+            logger.error(
+                "Could not restore previous app through LaunchServices: \(error.localizedDescription, privacy: .public)."
+            )
+        }
     }
 
     private static func clickCenter(of element: AXUIElement) -> Bool {
