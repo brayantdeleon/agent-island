@@ -3492,6 +3492,17 @@ final class AppModel {
         }
 
         state.apply(event)
+        if case let .permissionRequested(payload) = event,
+           payload.request.resolutionRoute == .nativeCodex {
+            codexAppServer.monitorNativeApprovalResolution(
+                threadID: payload.sessionID
+            )
+        } else if state.session(id: event.sessionID)?
+            .permissionRequest == nil {
+            codexAppServer.cancelNativeApprovalMonitor(
+                threadID: event.sessionID
+            )
+        }
         if let resolvedPermissionSessionID {
             requestAgentControlDetailPresentation(
                 for: resolvedPermissionSessionID,

@@ -11,11 +11,26 @@ import AgentIslandCore
 @Observable
 @MainActor
 final class CodexAppServerCoordinator {
+    typealias ThreadStatusReader =
+        @MainActor (String) async throws -> CodexThreadStatus?
+
     @ObservationIgnored
     private var client: CodexAppServerClient?
 
     @ObservationIgnored
     private var connectTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var nativeApprovalMonitorTasks: [String: Task<Void, Never>] = [:]
+
+    @ObservationIgnored
+    private let injectedThreadStatusReader: ThreadStatusReader?
+
+    @ObservationIgnored
+    private let nativeApprovalPollInterval: Duration
+
+    @ObservationIgnored
+    private let nativeApprovalInitialGracePeriod: Duration
 
     /// Callback to emit AgentEvents into AppModel.
     @ObservationIgnored
@@ -32,6 +47,17 @@ final class CodexAppServerCoordinator {
     var isSessionTracked: ((String) -> Bool)?
 
     private(set) var isConnected = false
+
+    init(
+        threadStatusReader: ThreadStatusReader? = nil,
+        nativeApprovalPollInterval: Duration = .milliseconds(200),
+        nativeApprovalInitialGracePeriod: Duration = .seconds(2)
+    ) {
+        injectedThreadStatusReader = threadStatusReader
+        self.nativeApprovalPollInterval = nativeApprovalPollInterval
+        self.nativeApprovalInitialGracePeriod =
+            nativeApprovalInitialGracePeriod
+    }
 
     // MARK: - Public API
 
@@ -88,6 +114,58 @@ final class CodexAppServerCoordinator {
         client?.stop()
         client = nil
         isConnected = false
+        nativeApprovalMonitorTasks.values.forEach { $0.cancel() }
+        nativeApprovalMonitorTasks.removeAll()
+    }
+
+    /// Reconciles a mirrored native approval until Codex reports that the
+    /// exact thread has left `waitingOnApproval`. Desktop does not reliably
+    /// emit a status-changed notification for that intermediate transition,
+    /// so polling prevents a stale card from remaining until turn completion.
+    func monitorNativeApprovalResolution(threadID: String) {
+        nativeApprovalMonitorTasks[threadID]?.cancel()
+        nativeApprovalMonitorTasks[threadID] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let clock = ContinuousClock()
+            let graceDeadline = clock.now.advanced(
+                by: nativeApprovalInitialGracePeriod
+            )
+            var observedWaiting = false
+
+            while !Task.isCancelled {
+                do {
+                    if let status = try await readThreadStatus(threadID: threadID) {
+                        if status.isWaitingOnApproval {
+                            observedWaiting = true
+                        } else if observedWaiting || clock.now >= graceDeadline {
+                            nativeApprovalMonitorTasks.removeValue(
+                                forKey: threadID
+                            )
+                            onEvent?(
+                                .activityUpdated(
+                                    SessionActivityUpdated(
+                                        sessionID: threadID,
+                                        summary: "Codex resumed work.",
+                                        phase: .running,
+                                        timestamp: .now
+                                    )
+                                )
+                            )
+                            return
+                        }
+                    }
+                } catch {
+                    // The normal app-server reconnect loop owns connection
+                    // diagnostics. Keep this short-lived reconciliation quiet.
+                }
+
+                try? await Task.sleep(for: nativeApprovalPollInterval)
+            }
+        }
+    }
+
+    func cancelNativeApprovalMonitor(threadID: String) {
+        nativeApprovalMonitorTasks.removeValue(forKey: threadID)?.cancel()
     }
 
     // MARK: - Thread sync
@@ -114,6 +192,17 @@ final class CodexAppServerCoordinator {
         } catch {
             onStatusMessage?("Failed to list loaded Codex threads: \(error.localizedDescription)")
         }
+    }
+
+    private func readThreadStatus(
+        threadID: String
+    ) async throws -> CodexThreadStatus? {
+        if let injectedThreadStatusReader {
+            return try await injectedThreadStatusReader(threadID)
+        }
+        return try await client?.listLoadedThreads()
+            .first(where: { $0.id == threadID })?
+            .status
     }
 
     // MARK: - Notification handling
