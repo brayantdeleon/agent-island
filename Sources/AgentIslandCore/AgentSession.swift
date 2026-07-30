@@ -175,6 +175,13 @@ public struct JumpTarget: Equatable, Codable, Sendable {
     }
 }
 
+public enum PermissionResolutionRoute: String, Equatable, Codable, Sendable {
+    /// Agent Island owns the blocked hook and returns the approval decision.
+    case agentIsland
+    /// Codex Desktop owns the prompt; Agent Island only presses its native UI.
+    case nativeCodex
+}
+
 public struct PermissionRequest: Equatable, Identifiable, Codable, Sendable {
     public var id: UUID
     public var title: String
@@ -187,6 +194,7 @@ public struct PermissionRequest: Equatable, Identifiable, Codable, Sendable {
     public var toolUseID: String?
     public var suggestedUpdates: [ClaudePermissionUpdate]
     public var requiresTerminalApproval: Bool
+    public var resolutionRoute: PermissionResolutionRoute
 
     public init(
         id: UUID = UUID(),
@@ -199,7 +207,8 @@ public struct PermissionRequest: Equatable, Identifiable, Codable, Sendable {
         toolName: String? = nil,
         toolUseID: String? = nil,
         suggestedUpdates: [ClaudePermissionUpdate] = [],
-        requiresTerminalApproval: Bool = false
+        requiresTerminalApproval: Bool = false,
+        resolutionRoute: PermissionResolutionRoute = .agentIsland
     ) {
         self.id = id
         self.title = title
@@ -212,6 +221,47 @@ public struct PermissionRequest: Equatable, Identifiable, Codable, Sendable {
         self.toolUseID = toolUseID
         self.suggestedUpdates = suggestedUpdates
         self.requiresTerminalApproval = requiresTerminalApproval
+        self.resolutionRoute = resolutionRoute
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case summary
+        case detail
+        case affectedPath
+        case primaryActionTitle
+        case secondaryActionTitle
+        case toolName
+        case toolUseID
+        case suggestedUpdates
+        case requiresTerminalApproval
+        case resolutionRoute
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        summary = try container.decode(String.self, forKey: .summary)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        affectedPath = try container.decode(String.self, forKey: .affectedPath)
+        primaryActionTitle = try container.decode(String.self, forKey: .primaryActionTitle)
+        secondaryActionTitle = try container.decode(String.self, forKey: .secondaryActionTitle)
+        toolName = try container.decodeIfPresent(String.self, forKey: .toolName)
+        toolUseID = try container.decodeIfPresent(String.self, forKey: .toolUseID)
+        suggestedUpdates = try container.decodeIfPresent(
+            [ClaudePermissionUpdate].self,
+            forKey: .suggestedUpdates
+        ) ?? []
+        requiresTerminalApproval = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .requiresTerminalApproval
+        ) ?? false
+        resolutionRoute = try container.decodeIfPresent(
+            PermissionResolutionRoute.self,
+            forKey: .resolutionRoute
+        ) ?? .agentIsland
     }
 }
 

@@ -1807,6 +1807,92 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
+    func nativeCodexApprovalUsesDesktopRemoteWithoutBridge() async throws {
+        var remoteCalls: [(sessionID: String, approved: Bool)] = []
+        let harness = makeHarness(
+            enabled: true,
+            approvalActionsEnabled: true,
+            nativeCodexApprovalAction: { session, approved in
+                remoteCalls.append((session.id, approved))
+            }
+        )
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+
+        let request = PermissionRequest(
+            title: "Edit",
+            summary: "Edit a file",
+            affectedPath: "/tmp/file",
+            resolutionRoute: .nativeCodex
+        )
+        let now = Date()
+        var session = makeSession(
+            id: "codex-native-approval",
+            firstSeenAt: now,
+            updatedAt: now,
+            phase: .waitingForApproval,
+            permissionRequest: request
+        )
+        session.title = "Codex approval"
+        session.tool = .codex
+        session.jumpTarget = JumpTarget(
+            terminalApp: "Codex.app",
+            workspaceName: "agent-island",
+            paneTitle: "Codex approval",
+            workingDirectory: "/tmp/agent-island",
+            codexThreadID: session.id
+        )
+        harness.model.state = SessionState(sessions: [session])
+        harness.model.isBridgeReady = false
+
+        let token = try connectAndSelectFirstSlot(harness)
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 2,
+                    action: .allowOnce,
+                    token: token
+                )
+            )
+        )
+
+        let response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(
+            response.payload[10]
+                == AgentControlActionResult.acceptedForDispatch.rawValue
+        )
+        await waitUntil { remoteCalls.count == 1 }
+        #expect(remoteCalls.first?.sessionID == session.id)
+        #expect(remoteCalls.first?.approved == true)
+        #expect(
+            harness.model.state.session(id: session.id)?.phase
+                == .waitingForApproval
+        )
+        #expect(
+            harness.model.agentControlSelectedSessionID == session.id
+        )
+
+        harness.model.applyTrackedEvent(
+            .activityUpdated(
+                SessionActivityUpdated(
+                    sessionID: session.id,
+                    summary: "Codex resumed work.",
+                    phase: .running,
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .rollout
+        )
+        #expect(
+            harness.model.state.session(id: session.id)?.phase == .running
+        )
+    }
+
+    @Test
     func denialUsesTheSelectedRequestAndCompletesTheSession() throws {
         let spy = AgentControlPermissionResolutionSpy()
         let harness = makeHarness(
@@ -2422,6 +2508,11 @@ struct AgentControlAppIntegrationTests {
             UUID,
             PermissionResolution
         ) -> BridgePermissionResolutionResult)? = nil,
+        nativeCodexApprovalAction:
+            @escaping @MainActor (AgentSession, Bool) async throws -> Void = {
+                _,
+                _ in
+            },
         dateProvider: @escaping () -> Date = Date.init,
         questionLeaseRenewalInterval: Duration = .seconds(5)
     ) -> Harness {
@@ -2464,6 +2555,7 @@ struct AgentControlAppIntegrationTests {
                 AgentControlDeviceSettingsStore(defaults: defaults),
             agentControlPermissionResolver: permissionResolver,
             agentControlQuestionResolver: { _, _, _ in .resolved },
+            nativeCodexApprovalAction: nativeCodexApprovalAction,
             agentControlSelectionTokenGenerator: { selectionToken },
             agentControlDateProvider: dateProvider,
             agentControlQuestionLeaseRenewalInterval:

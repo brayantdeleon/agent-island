@@ -1298,7 +1298,7 @@ struct SessionStateTests {
         let mutation = try CodexHookInstaller.installHooksJSON(
             existingData: nil,
             hookCommand: command,
-            brokerPermissionRequests: true
+            installPermissionRequestHook: true
         )
 
         let root = try jsonObject(from: mutation.contents)
@@ -1846,7 +1846,7 @@ struct SessionStateTests {
         let installed = try manager.install(hooksBinaryURL: hooksBinaryURL)
         #expect(installed.featureFlagEnabled)
         #expect(installed.managedHooksPresent)
-        #expect(!installed.brokersPermissionRequests)
+        #expect(!installed.permissionRequestHookInstalled)
         #expect(installed.hooksBinaryURL?.path == managedHooksBinaryURL.standardizedFileURL.path)
         #expect(installed.manifest?.hookCommand == CodexHookInstaller.hookCommand(for: managedHooksBinaryURL.path))
         #expect(FileManager.default.isExecutableFile(atPath: managedHooksBinaryURL.path))
@@ -1901,13 +1901,13 @@ struct SessionStateTests {
 
         let brokered = try manager.install(
             hooksBinaryURL: hooksBinaryURL,
-            brokerPermissionRequests: true
+            installPermissionRequestHook: true
         )
-        #expect(brokered.brokersPermissionRequests)
+        #expect(brokered.permissionRequestHookInstalled)
 
         let nativeReview = try manager.install(hooksBinaryURL: hooksBinaryURL)
         #expect(nativeReview.managedHooksPresent)
-        #expect(!nativeReview.brokersPermissionRequests)
+        #expect(!nativeReview.permissionRequestHookInstalled)
 
         let hooksData = try Data(contentsOf: nativeReview.hooksURL)
         let root = try jsonObject(from: hooksData)

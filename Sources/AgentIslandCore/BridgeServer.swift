@@ -16,6 +16,13 @@ public enum BridgeQuestionResolutionResult: Equatable, Sendable {
     case notQuestion
 }
 
+public enum CodexPermissionRequestHandlingMode: Equatable, Sendable {
+    /// Hold the hook open until Agent Island returns a decision.
+    case broker
+    /// Publish the request, then immediately defer to Codex Desktop.
+    case observeNative
+}
+
 public final class BridgeServer: @unchecked Sendable {
     private struct ClientConnection {
         let id: UUID
@@ -85,6 +92,8 @@ public final class BridgeServer: @unchecked Sendable {
     private var pendingClaudeInteractions: [String: PendingClaudeInteraction] = [:]
     private var pendingOpenCodeInteractions: [String: PendingOpenCodeInteraction] = [:]
     private var pendingCursorInteractions: [String: PendingCursorInteraction] = [:]
+    private var codexPermissionRequestHandlingMode:
+        CodexPermissionRequestHandlingMode = .broker
     /// Caches Agent tool description from preToolUse for use by the next subagentStart.
     private var pendingAgentDescriptions: [String: String] = [:]
     /// Maps toolUseID → temporary task ID for TaskCreate, so postToolUse can update with real ID.
@@ -101,6 +110,18 @@ public final class BridgeServer: @unchecked Sendable {
     ) {
         self.socketURL = socketURL
         queue.setSpecific(key: queueKey, value: ())
+    }
+
+    public func setCodexPermissionRequestHandlingMode(
+        _ mode: CodexPermissionRequestHandlingMode
+    ) {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            codexPermissionRequestHandlingMode = mode
+        } else {
+            queue.sync {
+                codexPermissionRequestHandlingMode = mode
+            }
+        }
     }
 
     public func resolveQuestion(
@@ -561,7 +582,11 @@ public final class BridgeServer: @unchecked Sendable {
                 primaryActionTitle: "Allow",
                 secondaryActionTitle: "Deny",
                 toolName: payload.toolName,
-                toolUseID: payload.toolUseID
+                toolUseID: payload.toolUseID,
+                resolutionRoute:
+                    codexPermissionRequestHandlingMode == .observeNative
+                        ? .nativeCodex
+                        : .agentIsland
             )
             emit(
                 .permissionRequested(
@@ -573,11 +598,17 @@ public final class BridgeServer: @unchecked Sendable {
                 )
             )
 
-            pendingApprovals[payload.sessionID] = PendingApproval(
-                clientID: clientID,
-                hookEventName: .permissionRequest,
-                requestID: request.id
-            )
+            if codexPermissionRequestHandlingMode == .observeNative {
+                // No stdout directive means "no decision" to Codex. Its native
+                // reviewer (including Approve for me) remains authoritative.
+                send(.response(.acknowledged), to: clientID)
+            } else {
+                pendingApprovals[payload.sessionID] = PendingApproval(
+                    clientID: clientID,
+                    hookEventName: .permissionRequest,
+                    requestID: request.id
+                )
+            }
 
         case .postToolUse:
             ensureSessionExists(for: payload)
