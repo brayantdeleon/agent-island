@@ -373,8 +373,10 @@ struct AgentControlAppIntegrationTests {
                 )
             )
         )
-        let actionResponse = try AgentControlPacketCodec.decode(
-            harness.transport.sentReports.last!
+        let actionResponse = try latestPacket(
+            ofType: .actionResult,
+            sequence: 2,
+            in: harness.transport.sentReports
         )
         #expect(actionResponse.messageType == .actionResult)
         #expect(actionResponse.sequence == 2)
@@ -656,6 +658,140 @@ struct AgentControlAppIntegrationTests {
             synchronizedDraft.selections[0]
                 == [prompt.questions[0].options[2].id]
         )
+    }
+
+    @Test
+    func visibleQuestionLeaseRenewsBeyondInitialTimeoutAndCloseInvalidatesIt()
+        async throws {
+        let clock = AgentControlMutableClock(now: Date())
+        let token: UInt64 = 0x8171_6151_4131_2111
+        let harness = makeHarness(
+            enabled: true,
+            selectionToken: token,
+            dateProvider: { clock.now },
+            questionLeaseRenewalInterval: .milliseconds(50)
+        )
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let prompt = QuestionPrompt(
+            title: "Take your time",
+            options: ["First", "Second"]
+        )
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: clock.now,
+                    updatedAt: clock.now,
+                    phase: .waitingForAnswer,
+                    questionPrompt: prompt
+                ),
+            ]
+        )
+        let selectedToken = try connectAndSelectFirstSlot(harness)
+        #expect(selectedToken == token)
+        harness.model.setSessionDetailExpanded(true, for: "question")
+        let reportCountBeforeRenewal = harness.transport.sentReports.count
+
+        clock.now = clock.now.addingTimeInterval(14)
+        await waitUntil {
+            harness.transport.sentReports.count > reportCountBeforeRenewal
+                && (try? latestPacket(
+                    ofType: .selectionUpdate,
+                    in: harness.transport.sentReports
+                ).payload[20]) == 15
+        }
+        let renewal = try latestPacket(
+            ofType: .selectionUpdate,
+            in: harness.transport.sentReports
+        )
+        #expect(renewal.payload[19] != 0)
+        #expect(renewal.payload[20] == 15)
+
+        clock.now = clock.now.addingTimeInterval(2)
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 2,
+                    action: .nextQuestionOption,
+                    token: token
+                )
+            )
+        )
+        let renewedAction = try latestPacket(
+            ofType: .actionResult,
+            sequence: 2,
+            in: harness.transport.sentReports
+        )
+        #expect(
+            renewedAction.payload[10]
+                == AgentControlActionResult.acceptedForDispatch.rawValue
+        )
+
+        harness.model.notchClose()
+        #expect(harness.model.agentControlSelectedSessionID == nil)
+        let invalidation = try latestPacket(
+            ofType: .selectionUpdate,
+            in: harness.transport.sentReports
+        )
+        #expect(invalidation.payload[19] == 0)
+        #expect(invalidation.payload[20] == 1)
+
+        harness.transport.emit(
+            .report(
+                try actionReport(
+                    sequence: 3,
+                    action: .nextQuestionOption,
+                    token: token
+                )
+            )
+        )
+        let closedAction = try latestPacket(
+            ofType: .actionResult,
+            sequence: 3,
+            in: harness.transport.sentReports
+        )
+        #expect(
+            closedAction.payload[10]
+                == AgentControlActionResult.noValidSelection.rawValue
+        )
+    }
+
+    @Test
+    func collapsingSelectedQuestionImmediatelyInvalidatesItsLease() throws {
+        let harness = makeHarness(enabled: true)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        let prompt = QuestionPrompt(
+            title: "Question",
+            options: ["First", "Second"]
+        )
+        harness.model.state = SessionState(
+            sessions: [
+                makeSession(
+                    id: "question",
+                    firstSeenAt: now,
+                    updatedAt: now,
+                    phase: .waitingForAnswer,
+                    questionPrompt: prompt
+                ),
+            ]
+        )
+        _ = try connectAndSelectFirstSlot(harness)
+        harness.model.setSessionDetailExpanded(true, for: "question")
+
+        harness.model.setSessionDetailExpanded(false, for: "question")
+
+        #expect(harness.model.agentControlSelectedSessionID == nil)
+        let invalidation = try latestPacket(
+            ofType: .selectionUpdate,
+            in: harness.transport.sentReports
+        )
+        #expect(invalidation.payload[19] == 0)
+        #expect(invalidation.payload[20] == 1)
     }
 
     @Test
@@ -1340,7 +1476,8 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
-    func staleSnapshotAndReusedSlotAreRejectedWithoutJumping() async throws {
+    func staleSnapshotAndInvalidatedReusedSlotAreRejectedWithoutJumping()
+        async throws {
         let token: UInt64 = 0x0102_0304_0506_0708
         let harness = makeHarness(enabled: true, selectionToken: token)
         defer {
@@ -1415,6 +1552,7 @@ struct AgentControlAppIntegrationTests {
                 ),
             ]
         )
+        #expect(harness.model.agentControlSelectedSessionID == nil)
         harness.transport.emit(
             .report(
                 try deviceReport(
@@ -1432,7 +1570,7 @@ struct AgentControlAppIntegrationTests {
         #expect(response.flags == [.response, .error])
         #expect(
             response.payload[10]
-                == AgentControlActionResult.slotUnassignedOrReused.rawValue
+                == AgentControlActionResult.noValidSelection.rawValue
         )
 
         try? await Task.sleep(for: .milliseconds(30))
@@ -1738,7 +1876,7 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
-    func replacedPermissionRequestFailsClosedWithoutCallingResolver() throws {
+    func replacedPermissionRequestImmediatelyInvalidatesSelection() throws {
         let spy = AgentControlPermissionResolutionSpy()
         let harness = makeHarness(
             enabled: true,
@@ -1783,6 +1921,7 @@ struct AgentControlAppIntegrationTests {
                 ),
             ]
         )
+        #expect(harness.model.agentControlSelectedSessionID == nil)
 
         harness.transport.emit(
             .report(
@@ -1800,8 +1939,7 @@ struct AgentControlAppIntegrationTests {
         #expect(response.flags == [.response, .error])
         #expect(
             response.payload[10]
-                == AgentControlActionResult
-                    .permissionRequestChangedOrExpired.rawValue
+                == AgentControlActionResult.noValidSelection.rawValue
         )
         #expect(spy.calls.isEmpty)
         #expect(
@@ -2085,7 +2223,8 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
-    func changedQuestionPromptRejectsTheOldSelectionWithoutClosing() throws {
+    func changedQuestionPromptImmediatelyInvalidatesSelectionWithoutClosing()
+        throws {
         let harness = makeHarness(enabled: true)
         defer {
             harness.model.agentControlKeyboardEnabled = false
@@ -2119,6 +2258,7 @@ struct AgentControlAppIntegrationTests {
                 ),
             ]
         )
+        #expect(harness.model.agentControlSelectedSessionID == nil)
         harness.transport.emit(
             .report(
                 try actionReport(
@@ -2133,8 +2273,7 @@ struct AgentControlAppIntegrationTests {
         )
         #expect(
             response.payload[10]
-                == AgentControlActionResult
-                    .questionPromptChangedOrExpired.rawValue
+                == AgentControlActionResult.noValidSelection.rawValue
         )
         #expect(harness.model.notchStatus == .opened)
         #expect(
@@ -2174,7 +2313,13 @@ struct AgentControlAppIntegrationTests {
         )
         harness.model.isBridgeReady = true
         var token = try connectAndSelectFirstSlot(harness)
-        clock.now = clock.now.addingTimeInterval(16)
+        let approvalSelection = try latestPacket(
+            ofType: .selectionAcknowledgement,
+            sequence: 1,
+            in: harness.transport.sentReports
+        )
+        #expect(approvalSelection.payload[21] == 30)
+        clock.now = clock.now.addingTimeInterval(31)
         harness.transport.emit(
             .report(
                 try actionReport(
@@ -2277,7 +2422,8 @@ struct AgentControlAppIntegrationTests {
             UUID,
             PermissionResolution
         ) -> BridgePermissionResolutionResult)? = nil,
-        dateProvider: @escaping () -> Date = Date.init
+        dateProvider: @escaping () -> Date = Date.init,
+        questionLeaseRenewalInterval: Duration = .seconds(5)
     ) -> Harness {
         let suiteName =
             "agent-island-control-app-tests-\(UUID().uuidString)"
@@ -2319,7 +2465,9 @@ struct AgentControlAppIntegrationTests {
             agentControlPermissionResolver: permissionResolver,
             agentControlQuestionResolver: { _, _, _ in .resolved },
             agentControlSelectionTokenGenerator: { selectionToken },
-            agentControlDateProvider: dateProvider
+            agentControlDateProvider: dateProvider,
+            agentControlQuestionLeaseRenewalInterval:
+                questionLeaseRenewalInterval
         )
         model.islandCompactnessMode = .regular
         return (model, transport, defaults)
@@ -2487,9 +2635,23 @@ struct AgentControlAppIntegrationTests {
     private func latestSnapshotPacket(
         in reports: [Data]
     ) throws -> AgentControlPacket {
+        try latestPacket(
+            ofType: .stateSnapshot,
+            in: reports
+        )
+    }
+
+    private func latestPacket(
+        ofType messageType: AgentControlMessageType,
+        sequence: UInt16? = nil,
+        in reports: [Data]
+    ) throws -> AgentControlPacket {
         let packets = try reports.map(AgentControlPacketCodec.decode)
         return try #require(
-            packets.last { $0.messageType == .stateSnapshot }
+            packets.last {
+                $0.messageType == messageType
+                    && (sequence == nil || $0.sequence == sequence)
+            }
         )
     }
 

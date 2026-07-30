@@ -352,7 +352,9 @@ The token is random and nonzero. It is meaningful only to Agent Island and is
 bound internally to connection nonce, slot epoch, session ID, allowed action,
 expiration, and the current interaction identity. Approval actions bind the
 current permission request ID; question actions bind the current question
-prompt ID.
+prompt ID. Ordinary and question selections begin with a 15-second lifetime.
+An actionable approval selection uses a fixed 30-second lifetime and is not
+renewed.
 
 ## `SELECTION_UPDATE` (`0x07`)
 
@@ -377,6 +379,14 @@ snapshot generation, with a nonzero token and lifetime. It applies the same
 host-capability filtering and expiration rules as `SELECTION_ACK`. The host
 still binds the token to the slot epoch and exact permission or question
 identity before accepting any later action.
+
+While the exact selected question remains visibly expanded, Agent Island
+renews its 15-second lease every 5 seconds with the same token. This allows the
+user to consider a question for an arbitrary amount of time without selecting
+the task again. Renewal stops and the host immediately sends an update with no
+allowed actions when the detail collapses, the island closes, the prompt
+changes or is submitted, or the bridge disconnects. The nonce, slot epoch,
+session, and prompt checks remain mandatory on every action.
 
 ## `ACTION_INVOKED` (`0x83`)
 

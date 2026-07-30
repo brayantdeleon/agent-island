@@ -43,6 +43,9 @@ final class OverlayUICoordinator {
     var onStatusMessage: ((String) -> Void)?
 
     @ObservationIgnored
+    var onNotchClosed: (() -> Void)?
+
+    @ObservationIgnored
     var onPlacementDiagnosticsChanged: (() -> Void)?
 
     @ObservationIgnored
@@ -173,6 +176,7 @@ final class OverlayUICoordinator {
                 self?.isPointerInsideIslandSurface = false
                 self?.appModel?.measuredNotificationContentHeight = 0
                 self?.appModel?.measuredSessionRowsContentHeight = 0
+                self?.onNotchClosed?()
             }
         )
     }
