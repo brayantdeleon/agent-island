@@ -320,24 +320,62 @@ struct CodexNativeApprovalRemote {
         Self.logger.notice(
             "Targeting background Codex candidate \(candidateLabels, privacy: .public)."
         )
-        guard Self.clickCenter(
-            of: control,
-            delivery: .process(app.processIdentifier)
-        ) else {
+
+        if Self.focusForBackgroundKeyboard(control),
+           NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                != Self.codexBundleIdentifier,
+           Self.pressReturn(inProcess: app.processIdentifier) {
+            Self.logger.notice(
+                "Sent Return to the focused background Codex candidate."
+            )
+            if await waitUntil(
+                timeout: Self.pointerAttemptTimeout,
+                condition: {
+                    !Self.isAvailable(control)
+                }
+            ) {
+                Self.logger.notice(
+                    "Background Codex candidate disappeared after Return."
+                )
+                return true
+            }
+            Self.logger.notice(
+                "Background Codex candidate remained after Return."
+            )
+        }
+
+        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                != Self.codexBundleIdentifier else {
             return false
         }
-        guard await waitUntil(
+        let currentApplication = AXUIElementCreateApplication(
+            app.processIdentifier
+        )
+        guard let pointerControl = Self.findApprovalControls(
+            inApplication: currentApplication,
+            matching: labels
+        ).first,
+              Self.clickCenter(
+                  of: pointerControl,
+                  delivery: .process(app.processIdentifier)
+              ) else {
+            return false
+        }
+        if await waitUntil(
             timeout: Self.pointerAttemptTimeout,
             condition: {
-                !Self.isAvailable(control)
+                !Self.isAvailable(pointerControl)
             }
-        ) else {
+        ) {
             Self.logger.notice(
-                "Background Codex candidate remained available."
+                "Background Codex candidate disappeared after pointer delivery."
             )
-            return false
+            return true
         }
-        return true
+        Self.logger.notice(
+            "Background Codex candidate remained after pointer delivery."
+        )
+        return false
     }
 
     @MainActor
@@ -570,6 +608,65 @@ struct CodexNativeApprovalRemote {
                 "Could not restore previous app through LaunchServices: \(error.localizedDescription, privacy: .public)."
             )
         }
+    }
+
+    private static func focusForBackgroundKeyboard(
+        _ element: AXUIElement
+    ) -> Bool {
+        var settable = DarwinBoolean(false)
+        let settableResult = AXUIElementIsAttributeSettable(
+            element,
+            kAXFocusedAttribute as CFString,
+            &settable
+        )
+        guard settableResult == .success, settable.boolValue else {
+            logger.notice(
+                "Background Codex candidate does not expose settable focus."
+            )
+            return false
+        }
+        let focusResult = AXUIElementSetAttributeValue(
+            element,
+            kAXFocusedAttribute as CFString,
+            kCFBooleanTrue
+        )
+        guard focusResult == .success,
+              boolAttribute(kAXFocusedAttribute, of: element) == true else {
+            logger.notice(
+                "Could not verify focus on the background Codex candidate."
+            )
+            return false
+        }
+        return true
+    }
+
+    private static func pressReturn(inProcess processIdentifier: pid_t) -> Bool {
+        guard CGPreflightPostEventAccess() else {
+            _ = CGRequestPostEventAccess()
+            logger.error(
+                "Input-control permission is unavailable; requested PostEvent access."
+            )
+            return false
+        }
+        let source = CGEventSource(stateID: .combinedSessionState)
+        guard let keyDown = CGEvent(
+            keyboardEventSource: source,
+            virtualKey: 36,
+            keyDown: true
+        ),
+              let keyUp = CGEvent(
+                  keyboardEventSource: source,
+                  virtualKey: 36,
+                  keyDown: false
+              ) else {
+            logger.error(
+                "Could not create Return events for background Codex approval."
+            )
+            return false
+        }
+        keyDown.postToPid(processIdentifier)
+        keyUp.postToPid(processIdentifier)
+        return true
     }
 
     private static func clickCenter(
