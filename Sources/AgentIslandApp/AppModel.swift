@@ -396,6 +396,7 @@ final class AppModel {
             agentControlDeviceCoordinator.setApprovalActionsEnabled(
                 agentControlKeyboardApprovalsEnabled
             )
+            reconcileCodexPermissionRequestHandling()
             updateAgentControlDeviceSnapshot()
         }
     }
@@ -410,9 +411,7 @@ final class AppModel {
                 codexApprovalBrokerEnabled,
                 forKey: Self.codexApprovalBrokerDefaultsKey
             )
-            hooks.setCodexPermissionRequestBrokerEnabled(
-                codexApprovalBrokerEnabled
-            )
+            reconcileCodexPermissionRequestHandling()
         }
     }
     var launchAtLoginEnabled: Bool = false {
@@ -683,6 +682,10 @@ final class AppModel {
     ) -> BridgeQuestionResolutionResult)?
 
     @ObservationIgnored
+    private let nativeCodexApprovalAction:
+        @MainActor (AgentSession, Bool) async throws -> Void
+
+    @ObservationIgnored
     private var bridgeClient = LocalBridgeClient()
 
     @ObservationIgnored
@@ -774,6 +777,15 @@ final class AppModel {
             UUID,
             QuestionPromptResponse
         ) -> BridgeQuestionResolutionResult)? = nil,
+        nativeCodexApprovalAction:
+            @escaping @MainActor (AgentSession, Bool) async throws -> Void = {
+                session,
+                approved in
+                try await CodexNativeApprovalRemote().resolve(
+                    session,
+                    approved: approved
+                )
+            },
         agentControlSelectionTokenGenerator: @escaping () -> UInt64 = {
             UInt64.random(in: 1...UInt64.max)
         },
@@ -794,6 +806,7 @@ final class AppModel {
             agentControlPermissionResolver
         self.injectedAgentControlQuestionResolver =
             agentControlQuestionResolver
+        self.nativeCodexApprovalAction = nativeCodexApprovalAction
         self.agentControlSelectionTokenGenerator =
             agentControlSelectionTokenGenerator
         self.agentControlDateProvider = agentControlDateProvider
@@ -829,9 +842,7 @@ final class AppModel {
         codexApprovalBrokerEnabled = UserDefaults.standard.bool(
             forKey: Self.codexApprovalBrokerDefaultsKey
         )
-        hooks.setCodexPermissionRequestBrokerEnabled(
-            codexApprovalBrokerEnabled
-        )
+        reconcileCodexPermissionRequestHandling()
         agentControlDeviceCoordinator.setApprovalActionsEnabled(
             agentControlKeyboardApprovalsEnabled
         )
@@ -945,6 +956,18 @@ final class AppModel {
         }
         refreshOverlayDisplayConfiguration()
         hasFinishedInit = true
+    }
+
+    private func reconcileCodexPermissionRequestHandling() {
+        bridgeServer.setCodexPermissionRequestHandlingMode(
+            codexApprovalBrokerEnabled ? .broker : .observeNative
+        )
+        hooks.setCodexPermissionRequestHandling(
+            brokerEnabled: codexApprovalBrokerEnabled,
+            observeNative:
+                agentControlKeyboardApprovalsEnabled
+                    && !codexApprovalBrokerEnabled
+        )
     }
 
     var sessions: [AgentSession] {
@@ -2231,16 +2254,6 @@ final class AppModel {
         slotIndex: UInt8,
         action: AgentControlAction
     ) {
-        guard isBridgeReady else {
-            sendAgentControlActionResult(
-                requestSequence: requestSequence,
-                connectionNonce: connectionNonce,
-                slotIndex: slotIndex,
-                action: action,
-                result: .transportUnavailable
-            )
-            return
-        }
         guard session.phase == .waitingForApproval,
               let requestID = selection.permissionRequestID,
               let currentRequest = session.permissionRequest,
@@ -2252,6 +2265,37 @@ final class AppModel {
                 slotIndex: slotIndex,
                 action: action,
                 result: .permissionRequestChangedOrExpired
+            )
+            return
+        }
+
+        let approved = action == .allowOnce
+        if currentRequest.resolutionRoute == .nativeCodex {
+            guard sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .acceptedForDispatch
+            ) else {
+                return
+            }
+            resolveNativeCodexPermission(
+                for: session,
+                requestID: requestID,
+                approved: approved
+            )
+            notchClose()
+            return
+        }
+
+        guard isBridgeReady else {
+            sendAgentControlActionResult(
+                requestSequence: requestSequence,
+                connectionNonce: connectionNonce,
+                slotIndex: slotIndex,
+                action: action,
+                result: .transportUnavailable
             )
             return
         }
@@ -2532,11 +2576,17 @@ final class AppModel {
     private func canResolveAgentControlPermission(
         for session: AgentSession
     ) -> Bool {
-        agentControlKeyboardApprovalsEnabled
-            && isBridgeReady
-            && session.phase == .waitingForApproval
-            && session.permissionRequest != nil
-            && session.permissionRequest?.requiresTerminalApproval == false
+        guard agentControlKeyboardApprovalsEnabled,
+              session.phase == .waitingForApproval,
+              let request = session.permissionRequest,
+              !request.requiresTerminalApproval else {
+            return false
+        }
+        if request.resolutionRoute == .nativeCodex {
+            return session.jumpTarget?.terminalApp == "Codex.app"
+                && session.jumpTarget?.codexThreadID?.isEmpty == false
+        }
+        return isBridgeReady
     }
 
     private func scheduleAgentControlCompletionExpiry(
@@ -3179,6 +3229,15 @@ final class AppModel {
         resolution: PermissionResolution,
         message: String
     ) {
+        if session.permissionRequest?.resolutionRoute == .nativeCodex {
+            resolveNativeCodexPermission(
+                for: session,
+                requestID: requestID,
+                approved: resolution.isApproved
+            )
+            return
+        }
+
         guard state.resolvePermission(
             sessionID: session.id,
             requestID: requestID,
@@ -3205,6 +3264,57 @@ final class AppModel {
             ),
             userMessage: message
         )
+    }
+
+    private func resolveNativeCodexPermission(
+        for session: AgentSession,
+        requestID: UUID,
+        approved: Bool
+    ) {
+        let action = nativeCodexApprovalAction
+        Task { [weak self] in
+            do {
+                try await action(session, approved)
+                guard let self,
+                      self.state.session(id: session.id)?
+                        .permissionRequest?.id == requestID else {
+                    return
+                }
+
+                let resolution = approved
+                    ? PermissionResolution.allowOnce()
+                    : .deny(
+                        message: "Permission denied in Codex.",
+                        interrupt: false
+                    )
+                _ = self.state.resolvePermission(
+                    sessionID: session.id,
+                    requestID: requestID,
+                    resolution: resolution
+                )
+                self.requestAgentControlDetailPresentation(
+                    for: session.id,
+                    isExpanded: false
+                )
+                self.dismissNotificationSurfaceIfPresent(for: session.id)
+                self.clearAgentControlSelection()
+                self.notchClose()
+                self.synchronizeSelection()
+                self.updateAgentControlDeviceSnapshot()
+                self.refreshOverlayPlacementIfVisible()
+                self.lastActionMessage = approved
+                    ? "Pressed Allow in Codex for \(session.title)."
+                    : "Pressed Deny in Codex for \(session.title)."
+            } catch {
+                guard let self,
+                      self.state.session(id: session.id)?
+                        .permissionRequest?.id == requestID else {
+                    return
+                }
+                self.lastActionMessage =
+                    "Could not use Codex's approval UI: \(error.localizedDescription)"
+            }
+        }
     }
 
     func dismissSession(_ sessionID: String) {

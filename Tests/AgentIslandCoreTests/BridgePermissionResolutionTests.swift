@@ -5,6 +5,42 @@ import Testing
 @Suite(.serialized)
 struct BridgePermissionResolutionTests {
     @Test
+    func nativeObservationPublishesRequestWithoutOwningDecision() async throws {
+        let socketURL = BridgeSocketLocation.uniqueTestURL()
+        let server = BridgeServer(socketURL: socketURL)
+        server.setCodexPermissionRequestHandlingMode(.observeNative)
+        try server.start()
+        defer { server.stop() }
+
+        let observer = LocalBridgeClient(socketURL: socketURL)
+        let stream = try observer.connect()
+        defer { observer.disconnect() }
+        try await observer.send(.registerClient(role: .observer))
+        var iterator = stream.makeAsyncIterator()
+
+        async let response = sendBridgeCommand(
+            .processCodexHook(
+                codexPermissionPayload(
+                    sessionID: "native-observation",
+                    toolUseID: "native"
+                )
+            ),
+            socketURL: socketURL
+        )
+        let request = try await nextPermissionRequest(from: &iterator)
+
+        #expect(request.resolutionRoute == .nativeCodex)
+        #expect(try await response == .acknowledged)
+        #expect(
+            server.resolvePermission(
+                sessionID: "native-observation",
+                requestID: request.id,
+                resolution: .allowOnce()
+            ) == .requestNotActive
+        )
+    }
+
+    @Test
     func replacedAndReplayedPermissionIdentitiesFailClosed() async throws {
         let socketURL = BridgeSocketLocation.uniqueTestURL()
         let server = BridgeServer(socketURL: socketURL)
@@ -194,6 +230,25 @@ struct BridgePermissionResolutionTests {
                 description: "Apply \(toolUseID) patch"
             )
         )
+    }
+}
+
+private func sendBridgeCommand(
+    _ command: BridgeCommand,
+    socketURL: URL
+) async throws -> BridgeResponse? {
+    try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue.global().async {
+            do {
+                continuation.resume(
+                    returning: try BridgeCommandClient(
+                        socketURL: socketURL
+                    ).send(command)
+                )
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
     }
 }
 

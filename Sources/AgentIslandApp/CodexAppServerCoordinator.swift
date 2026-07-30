@@ -137,8 +137,9 @@ final class CodexAppServerCoordinator {
                     // This coordinator owns a separate app-server subprocess,
                     // not the stdio connection used by Codex Desktop. Its
                     // status can tell us that Desktop is waiting, but it does
-                    // not carry a routable approval request. Only the blocking
-                    // PermissionRequest hook may create an actionable card.
+                    // not carry an exact request. The PermissionRequest hook
+                    // supplies the actionable card in either native-remote or
+                    // direct-routing mode.
                     onEvent?(.activityUpdated(
                         SessionActivityUpdated(
                             sessionID: threadId,

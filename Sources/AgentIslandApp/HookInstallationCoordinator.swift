@@ -38,6 +38,7 @@ final class HookInstallationCoordinator {
     var isKimiHookSetupBusy = false
     var isClaudeUsageSetupBusy = false
     private var codexPermissionRequestBrokerEnabled = false
+    private var codexPermissionRequestObservationEnabled = false
 
     @ObservationIgnored
     var onStatusMessage: ((String) -> Void)?
@@ -819,12 +820,20 @@ final class HookInstallationCoordinator {
         }
     }
 
-    /// Keeps the blocking Codex PermissionRequest hook aligned with the
-    /// explicit keyboard-approval preference. Lifecycle hooks remain installed
-    /// either way, so Codex's native reviewer is authoritative by default.
-    func setCodexPermissionRequestBrokerEnabled(_ enabled: Bool) {
-        guard codexPermissionRequestBrokerEnabled != enabled else { return }
-        codexPermissionRequestBrokerEnabled = enabled
+    /// Keeps the Codex PermissionRequest hook aligned with the selected
+    /// handling mode. In observation mode the bridge immediately returns no
+    /// decision, leaving Codex's native reviewer authoritative.
+    func setCodexPermissionRequestHandling(
+        brokerEnabled: Bool,
+        observeNative: Bool
+    ) {
+        guard codexPermissionRequestBrokerEnabled != brokerEnabled
+                || codexPermissionRequestObservationEnabled != observeNative
+        else {
+            return
+        }
+        codexPermissionRequestBrokerEnabled = brokerEnabled
+        codexPermissionRequestObservationEnabled = observeNative
 
         guard codexHooksInstalled, hooksBinaryURL != nil else { return }
         installCodexHooks()
@@ -833,7 +842,8 @@ final class HookInstallationCoordinator {
     func reconcileCodexPermissionRequestBrokerIfNeeded() {
         guard let status = codexHookStatus,
               status.managedHooksPresent,
-              status.brokersPermissionRequests != codexPermissionRequestBrokerEnabled,
+              status.permissionRequestHookInstalled
+                != shouldInstallCodexPermissionRequestHook,
               hooksBinaryURL != nil else {
             return
         }
@@ -877,9 +887,15 @@ final class HookInstallationCoordinator {
         updateCodexHooks(userMessage: "Installing Codex hooks.", intent: .installed) { manager in
             try manager.install(
                 hooksBinaryURL: hooksBinaryURL,
-                brokerPermissionRequests: self.codexPermissionRequestBrokerEnabled
+                installPermissionRequestHook:
+                    self.shouldInstallCodexPermissionRequestHook
             )
         }
+    }
+
+    private var shouldInstallCodexPermissionRequestHook: Bool {
+        codexPermissionRequestBrokerEnabled
+            || codexPermissionRequestObservationEnabled
     }
 
     func uninstallCodexHooks() {

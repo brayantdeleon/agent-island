@@ -77,9 +77,10 @@ public enum CodexHookInstaller {
     private static let currentFeatureKey = CodexHooksFeatureFlagKey.current.rawValue
     private static let legacyFeatureKey = CodexHooksFeatureFlagKey.legacy.rawValue
 
-    // Keep lifecycle observation low-noise and non-intercepting. In particular,
-    // PermissionRequest is opt-in because a blocking hook runs before Codex's
-    // native approval reviewer, including "Approve for me".
+    // Keep lifecycle observation low-noise. PermissionRequest is installed
+    // only when Agent Island needs either direct routing or native-UI remote
+    // control. Runtime handling determines whether the hook returns a decision
+    // or immediately defers to Codex's reviewer.
     private static let lifecycleEventSpecs: [(name: String, matcher: String?, timeout: Int)] = [
         ("SessionStart", "startup|resume", managedTimeout),
         ("UserPromptSubmit", nil, managedTimeout),
@@ -101,7 +102,7 @@ public enum CodexHookInstaller {
     public static func installHooksJSON(
         existingData: Data?,
         hookCommand: String,
-        brokerPermissionRequests: Bool = false
+        installPermissionRequestHook: Bool = false
     ) throws -> CodexHookFileMutation {
         var rootObject = try loadRootObject(from: existingData)
         let existingHooksObject = rootObject["hooks"] as? [String: Any] ?? [:]
@@ -117,7 +118,7 @@ public enum CodexHookInstaller {
         }
 
         var installedEventSpecs = lifecycleEventSpecs
-        if brokerPermissionRequests {
+        if installPermissionRequestHook {
             installedEventSpecs.append(permissionRequestSpec)
         }
 
