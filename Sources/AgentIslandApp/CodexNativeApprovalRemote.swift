@@ -45,7 +45,7 @@ struct CodexNativeApprovalRemote {
     )
     private static let codexBundleIdentifier = "com.openai.codex"
     private static let activationTimeout: Duration = .seconds(2)
-    private static let controlTimeout: Duration = .seconds(2)
+    private static let controlTimeout: Duration = .seconds(4)
     private static let responseTimeout: Duration = .seconds(1)
     private static let pollInterval: Duration = .milliseconds(50)
     private static let maximumVisitedElements = 4_096
@@ -86,21 +86,13 @@ struct CodexNativeApprovalRemote {
         let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
         // Electron exposes its web accessibility tree on demand. This is a
         // process-local accessibility flag and does not change Codex policy.
-        AXUIElementSetAttributeValue(
+        let accessibilityResult = AXUIElementSetAttributeValue(
             applicationElement,
             "AXManualAccessibility" as CFString,
             kCFBooleanTrue
         )
-
-        let searchRoot = Self.elementAttribute(
-            kAXFocusedWindowAttribute,
-            of: applicationElement
-        ) ?? applicationElement
-        let searchRootTitle =
-            Self.stringAttribute(kAXTitleAttribute, of: searchRoot)
-                ?? "<untitled>"
         Self.logger.notice(
-            "Searching focused Codex window: \(searchRootTitle, privacy: .public)"
+            "Enabled Electron accessibility with result \(accessibilityResult.rawValue, privacy: .public)."
         )
         let preferredLabel = approved
             ? session.permissionRequest?.primaryActionTitle
@@ -112,18 +104,41 @@ struct CodexNativeApprovalRemote {
 
         var controls: [AXUIElement] = []
         _ = await waitUntil(timeout: Self.controlTimeout) {
+            // Enabling Electron accessibility can rebuild its AX hierarchy.
+            // Recreate the application element and reacquire the focused
+            // window on every poll instead of traversing a stale snapshot.
+            let currentApplication = AXUIElementCreateApplication(
+                app.processIdentifier
+            )
+            _ = AXUIElementSetAttributeValue(
+                currentApplication,
+                "AXManualAccessibility" as CFString,
+                kCFBooleanTrue
+            )
             controls = Self.findApprovalControls(
-                in: searchRoot,
+                inApplication: currentApplication,
                 matching: labels
             )
             return !controls.isEmpty
         }
 
         guard !controls.isEmpty else {
-            let visibleLabels = Self.pressableControlLabels(in: searchRoot)
+            let currentApplication = AXUIElementCreateApplication(
+                app.processIdentifier
+            )
+            let focusedWindow = Self.elementAttribute(
+                kAXFocusedWindowAttribute,
+                of: currentApplication
+            )
+            let focusedWindowTitle = focusedWindow.flatMap {
+                Self.stringAttribute(kAXTitleAttribute, of: $0)
+            } ?? "<untitled>"
+            let visibleLabels = Self.pressableControlLabels(
+                in: currentApplication
+            )
                 .joined(separator: " | ")
             Self.logger.error(
-                "No approval control matched. Pressable labels: \(visibleLabels, privacy: .public)"
+                "No approval control matched in Codex window \(focusedWindowTitle, privacy: .public). Web area exposed: \(Self.containsWebArea(in: currentApplication), privacy: .public). Pressable labels: \(visibleLabels, privacy: .public)"
             )
             throw CodexNativeApprovalRemoteError.approvalControlUnavailable
         }
@@ -185,6 +200,25 @@ struct CodexNativeApprovalRemote {
     }
 
     private static func findApprovalControls(
+        inApplication application: AXUIElement,
+        matching labels: Set<String>
+    ) -> [AXUIElement] {
+        if let focusedWindow = elementAttribute(
+            kAXFocusedWindowAttribute,
+            of: application
+        ) {
+            let focusedMatches = findApprovalControls(
+                in: focusedWindow,
+                matching: labels
+            )
+            if !focusedMatches.isEmpty {
+                return focusedMatches
+            }
+        }
+        return findApprovalControls(in: application, matching: labels)
+    }
+
+    private static func findApprovalControls(
         in root: AXUIElement,
         matching labels: Set<String>
     ) -> [AXUIElement] {
@@ -235,6 +269,22 @@ struct CodexNativeApprovalRemote {
             queue.append(contentsOf: childElements(of: element))
         }
         return labels
+    }
+
+    private static func containsWebArea(in root: AXUIElement) -> Bool {
+        var queue: [AXUIElement] = [root]
+        var cursor = 0
+
+        while cursor < queue.count,
+              cursor < maximumVisitedElements {
+            let element = queue[cursor]
+            cursor += 1
+            if stringAttribute(kAXRoleAttribute, of: element) == "AXWebArea" {
+                return true
+            }
+            queue.append(contentsOf: childElements(of: element))
+        }
+        return false
     }
 
     private static func matchScore(
