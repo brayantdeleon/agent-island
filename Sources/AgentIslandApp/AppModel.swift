@@ -2285,7 +2285,6 @@ final class AppModel {
                 requestID: requestID,
                 approved: approved
             )
-            notchClose()
             return
         }
 
@@ -3281,30 +3280,9 @@ final class AppModel {
                     return
                 }
 
-                let resolution = approved
-                    ? PermissionResolution.allowOnce()
-                    : .deny(
-                        message: "Permission denied in Codex.",
-                        interrupt: false
-                    )
-                _ = self.state.resolvePermission(
-                    sessionID: session.id,
-                    requestID: requestID,
-                    resolution: resolution
-                )
-                self.requestAgentControlDetailPresentation(
-                    for: session.id,
-                    isExpanded: false
-                )
-                self.dismissNotificationSurfaceIfPresent(for: session.id)
-                self.clearAgentControlSelection()
-                self.notchClose()
-                self.synchronizeSelection()
-                self.updateAgentControlDeviceSnapshot()
-                self.refreshOverlayPlacementIfVisible()
                 self.lastActionMessage = approved
-                    ? "Pressed Allow in Codex for \(session.title)."
-                    : "Pressed Deny in Codex for \(session.title)."
+                    ? "Pressed Allow in Codex for \(session.title). Waiting for Codex to resume."
+                    : "Pressed Deny in Codex for \(session.title). Waiting for Codex to resume."
             } catch {
                 guard let self,
                       self.state.session(id: session.id)?

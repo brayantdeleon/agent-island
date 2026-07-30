@@ -7,7 +7,9 @@ enum CodexNativeApprovalRemoteError: Error, LocalizedError {
     case missingThread
     case appUnavailable
     case appDidNotActivate
+    case accessibilityPermissionRequired
     case approvalControlUnavailable
+    case approvalControlDidNotRespond
     case approvalControlFailed(AXError)
 
     var errorDescription: String? {
@@ -18,8 +20,12 @@ enum CodexNativeApprovalRemoteError: Error, LocalizedError {
             "Codex Desktop is not running."
         case .appDidNotActivate:
             "Codex Desktop did not become active."
+        case .accessibilityPermissionRequired:
+            "Agent Island needs Accessibility permission to control Codex."
         case .approvalControlUnavailable:
             "Codex's native approval control was not available."
+        case .approvalControlDidNotRespond:
+            "Codex's native approval control did not dismiss the prompt."
         case let .approvalControlFailed(error):
             "Codex's native approval control could not be pressed (\(error.rawValue))."
         }
@@ -35,6 +41,7 @@ struct CodexNativeApprovalRemote {
     private static let codexBundleIdentifier = "com.openai.codex"
     private static let activationTimeout: Duration = .seconds(2)
     private static let controlTimeout: Duration = .seconds(2)
+    private static let responseTimeout: Duration = .seconds(1)
     private static let pollInterval: Duration = .milliseconds(50)
     private static let maximumVisitedElements = 4_096
 
@@ -52,6 +59,9 @@ struct CodexNativeApprovalRemote {
             withBundleIdentifier: Self.codexBundleIdentifier
         ).first else {
             throw CodexNativeApprovalRemoteError.appUnavailable
+        }
+        guard AXIsProcessTrusted() else {
+            throw CodexNativeApprovalRemoteError.accessibilityPermissionRequired
         }
 
         NSWorkspace.shared.open(threadURL)
@@ -76,6 +86,10 @@ struct CodexNativeApprovalRemote {
             kCFBooleanTrue
         )
 
+        let searchRoot = Self.elementAttribute(
+            kAXFocusedWindowAttribute,
+            of: applicationElement
+        ) ?? applicationElement
         let preferredLabel = approved
             ? session.permissionRequest?.primaryActionTitle
             : session.permissionRequest?.secondaryActionTitle
@@ -84,22 +98,46 @@ struct CodexNativeApprovalRemote {
             preferredLabel: preferredLabel
         )
 
-        var control: AXUIElement?
+        var controls: [AXUIElement] = []
         _ = await waitUntil(timeout: Self.controlTimeout) {
-            control = Self.findApprovalControl(
-                in: applicationElement,
+            controls = Self.findApprovalControls(
+                in: searchRoot,
                 matching: labels
             )
-            return control != nil
+            return !controls.isEmpty
         }
 
-        guard let control else {
+        guard !controls.isEmpty else {
             throw CodexNativeApprovalRemoteError.approvalControlUnavailable
         }
-        let result = AXUIElementPerformAction(control, kAXPressAction as CFString)
-        guard result == .success else {
-            throw CodexNativeApprovalRemoteError.approvalControlFailed(result)
+
+        var lastFailure: AXError?
+        for control in controls {
+            let result = AXUIElementPerformAction(
+                control,
+                kAXPressAction as CFString
+            )
+            guard result == .success else {
+                lastFailure = result
+                continue
+            }
+
+            if await waitUntil(
+                timeout: Self.responseTimeout,
+                condition: {
+                    !Self.isAvailable(control)
+                }
+            ) {
+                return
+            }
         }
+
+        if let lastFailure {
+            throw CodexNativeApprovalRemoteError.approvalControlFailed(
+                lastFailure
+            )
+        }
+        throw CodexNativeApprovalRemoteError.approvalControlDidNotRespond
     }
 
     private static func controlLabels(
@@ -116,12 +154,13 @@ struct CodexNativeApprovalRemote {
         return labels
     }
 
-    private static func findApprovalControl(
-        in application: AXUIElement,
+    private static func findApprovalControls(
+        in root: AXUIElement,
         matching labels: Set<String>
-    ) -> AXUIElement? {
-        var queue: [AXUIElement] = [application]
+    ) -> [AXUIElement] {
+        var queue: [AXUIElement] = [root]
         var cursor = 0
+        var matches: [(element: AXUIElement, score: Int)] = []
 
         while cursor < queue.count,
               cursor < maximumVisitedElements {
@@ -129,21 +168,63 @@ struct CodexNativeApprovalRemote {
             cursor += 1
 
             if isPressableControl(element),
-               !labels.isDisjoint(with: accessibleLabels(for: element)) {
-                return element
+               let score = matchScore(
+                   accessibleLabels(for: element),
+                   expected: labels
+               ) {
+                matches.append((element, score))
             }
 
             queue.append(contentsOf: childElements(of: element))
         }
-        return nil
+        return matches
+            .sorted { $0.score > $1.score }
+            .map(\.element)
+    }
+
+    private static func matchScore(
+        _ candidateLabels: Set<String>,
+        expected: Set<String>
+    ) -> Int? {
+        var bestScore: Int?
+        for candidate in candidateLabels {
+            for label in expected {
+                let score: Int?
+                if candidate == label {
+                    score = 1_000 + label.count
+                } else if candidate.hasPrefix("\(label) ")
+                            || candidate.hasPrefix("\(label)\n")
+                            || candidate.hasPrefix("\(label)\t") {
+                    score = 500 + label.count
+                } else {
+                    score = nil
+                }
+                if let score, score > (bestScore ?? .min) {
+                    bestScore = score
+                }
+            }
+        }
+        return bestScore
     }
 
     private static func isPressableControl(_ element: AXUIElement) -> Bool {
         guard let role = stringAttribute(kAXRoleAttribute, of: element) else {
             return false
         }
-        return role == kAXButtonRole as String
-            || role == kAXRadioButtonRole as String
+        guard role == kAXButtonRole as String
+                || role == kAXRadioButtonRole as String else {
+            return false
+        }
+        return boolAttribute(kAXEnabledAttribute, of: element) != false
+    }
+
+    private static func isAvailable(_ element: AXUIElement) -> Bool {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(
+            element,
+            kAXRoleAttribute as CFString,
+            &value
+        ) == .success
     }
 
     private static func accessibleLabels(for element: AXUIElement) -> Set<String> {
@@ -186,6 +267,38 @@ struct CodexNativeApprovalRemote {
             return nil
         }
         return value as? String
+    }
+
+    private static func boolAttribute(
+        _ attribute: String,
+        of element: AXUIElement
+    ) -> Bool? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            attribute as CFString,
+            &value
+        ) == .success else {
+            return nil
+        }
+        return value as? Bool
+    }
+
+    private static func elementAttribute(
+        _ attribute: String,
+        of element: AXUIElement
+    ) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            attribute as CFString,
+            &value
+        ) == .success,
+              let value,
+              CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return (value as! AXUIElement)
     }
 
     private static func childElements(of element: AXUIElement) -> [AXUIElement] {

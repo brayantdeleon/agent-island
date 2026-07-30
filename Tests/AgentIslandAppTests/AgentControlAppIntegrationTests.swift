@@ -1868,9 +1868,28 @@ struct AgentControlAppIntegrationTests {
         #expect(remoteCalls.first?.sessionID == session.id)
         #expect(remoteCalls.first?.approved == true)
         #expect(
+            harness.model.state.session(id: session.id)?.phase
+                == .waitingForApproval
+        )
+        #expect(
+            harness.model.agentControlSelectedSessionID == session.id
+        )
+
+        harness.model.applyTrackedEvent(
+            .activityUpdated(
+                SessionActivityUpdated(
+                    sessionID: session.id,
+                    summary: "Codex resumed work.",
+                    phase: .running,
+                    timestamp: now.addingTimeInterval(1)
+                )
+            ),
+            updateLastActionMessage: false,
+            ingress: .rollout
+        )
+        #expect(
             harness.model.state.session(id: session.id)?.phase == .running
         )
-        #expect(harness.model.agentControlSelectedSessionID == nil)
     }
 
     @Test
