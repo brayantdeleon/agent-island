@@ -45,9 +45,12 @@ struct CodexNativeApprovalRemote {
     )
     private static let codexBundleIdentifier = "com.openai.codex"
     private static let activationTimeout: Duration = .seconds(2)
+    private static let crossAppSettleDelay: Duration = .milliseconds(400)
     private static let controlTimeout: Duration = .seconds(4)
+    private static let pointerAttemptTimeout: Duration = .milliseconds(500)
     private static let responseTimeout: Duration = .seconds(2)
     private static let pollInterval: Duration = .milliseconds(50)
+    private static let maximumPointerAttempts = 3
     private static let maximumVisitedElements = 4_096
 
     @MainActor
@@ -70,6 +73,9 @@ struct CodexNativeApprovalRemote {
             throw CodexNativeApprovalRemoteError.accessibilityPermissionRequired
         }
 
+        let wasCodexFrontmost =
+            NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                == Self.codexBundleIdentifier
         NSWorkspace.shared.open(threadURL)
         app.activate()
 
@@ -94,6 +100,13 @@ struct CodexNativeApprovalRemote {
         Self.logger.notice(
             "Enabled Electron accessibility with result \(accessibilityResult.rawValue, privacy: .public)."
         )
+        Self.focusActiveWindow(in: applicationElement)
+        if !wasCodexFrontmost {
+            // A window or full-screen Space can be frontmost before it is ready
+            // to receive the first pointer event. Let that transition settle
+            // once; retries below remain guarded by the exact matched control.
+            try? await Task.sleep(for: Self.crossAppSettleDelay)
+        }
         let preferredLabel = approved
             ? session.permissionRequest?.primaryActionTitle
             : session.permissionRequest?.secondaryActionTitle
@@ -144,23 +157,34 @@ struct CodexNativeApprovalRemote {
         }
 
         var lastFailure: AXError?
-        for control in controls {
-            let candidateLabels = Self.accessibleLabels(for: control)
-                .sorted()
-                .joined(separator: " | ")
-            Self.logger.notice(
-                "Activating Codex candidate: \(candidateLabels, privacy: .public)"
-            )
-
+        for initialControl in controls {
+            var fallbackControl = initialControl
             // Electron currently advertises AXPress but does not dispatch its
             // DOM click. Prefer a real pointer click at the center of the exact
-            // accessibility-matched Allow/Deny control.
-            if Self.clickCenter(of: control) {
-                Self.logger.notice(
-                    "Clicked the center of the matched Codex approval control."
+            // accessibility-matched Allow/Deny control. Reacquire and retry
+            // that exact control when macOS swallows the first cross-app click.
+            for attempt in 1 ... Self.maximumPointerAttempts {
+                let currentApplication = AXUIElementCreateApplication(
+                    app.processIdentifier
                 )
+                Self.focusActiveWindow(in: currentApplication)
+                let control = Self.findApprovalControls(
+                    inApplication: currentApplication,
+                    matching: labels
+                ).first ?? fallbackControl
+                fallbackControl = control
+
+                let candidateLabels = Self.accessibleLabels(for: control)
+                    .sorted()
+                    .joined(separator: " | ")
+                Self.logger.notice(
+                    "Activating Codex candidate \(candidateLabels, privacy: .public), pointer attempt \(attempt, privacy: .public)."
+                )
+                guard Self.clickCenter(of: control) else {
+                    break
+                }
                 if await waitUntil(
-                    timeout: Self.responseTimeout,
+                    timeout: Self.pointerAttemptTimeout,
                     condition: {
                         !Self.isAvailable(control)
                     }
@@ -171,12 +195,13 @@ struct CodexNativeApprovalRemote {
                     return
                 }
                 Self.logger.error(
-                    "Pointer activation completed but the candidate remained available."
+                    "Pointer attempt \(attempt, privacy: .public) completed but the candidate remained available."
                 )
             }
 
             // Keep AXPress as a fallback in case a future Codex build exposes
             // a working native accessibility action.
+            let control = fallbackControl
             Self.logger.notice("Trying AXPress fallback.")
             let result = AXUIElementPerformAction(
                 control,
@@ -359,6 +384,26 @@ struct CodexNativeApprovalRemote {
         ) == .success
     }
 
+    private static func focusActiveWindow(in application: AXUIElement) {
+        guard let window = elementAttribute(
+            kAXFocusedWindowAttribute,
+            of: application
+        ) else {
+            return
+        }
+        _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        _ = AXUIElementSetAttributeValue(
+            window,
+            kAXMainAttribute as CFString,
+            kCFBooleanTrue
+        )
+        _ = AXUIElementSetAttributeValue(
+            window,
+            kAXFocusedAttribute as CFString,
+            kCFBooleanTrue
+        )
+    }
+
     private static func clickCenter(of element: AXUIElement) -> Bool {
         guard CGPreflightPostEventAccess() else {
             _ = CGRequestPostEventAccess()
@@ -367,6 +412,11 @@ struct CodexNativeApprovalRemote {
             )
             return false
         }
+        _ = AXUIElementSetAttributeValue(
+            element,
+            kAXFocusedAttribute as CFString,
+            kCFBooleanTrue
+        )
         guard let position = pointAttribute(
             kAXPositionAttribute,
             of: element
