@@ -130,6 +130,13 @@ extension AgentSession {
     }
 
     var spotlightRuntimeSurfaceBadge: String? {
+        // Classification can arrive before the jump-target merge that replaces
+        // a hook's temporary "Unknown" host. Keep the visible badge aligned
+        // with the authoritative runtime classification during that window.
+        if isCodexAppSession || isClaudeDesktopSession {
+            return "app"
+        }
+
         guard let terminalApp = jumpTarget?.terminalApp.trimmedForSurface,
               !terminalApp.isEmpty else {
             return nil
