@@ -111,6 +111,7 @@ struct IslandPanelView: View {
 
     var model: AppModel
     private var lang: LanguageManager { model.lang }
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     @State private var isHovering = false
     @State private var keepsOpenedSurfaceMounted = false
@@ -339,9 +340,11 @@ struct IslandPanelView: View {
         )
 
         ZStack(alignment: .top) {
-            surfaceShape
-                .fill(V6Palette.ink)
-                .frame(width: surfaceWidth, height: surfaceHeight)
+            openedSurfaceBackground(
+                shape: surfaceShape,
+                width: surfaceWidth,
+                height: surfaceHeight
+            )
 
             VStack(spacing: 0) {
                 openedHeaderContent
@@ -356,12 +359,40 @@ struct IslandPanelView: View {
             .padding(.horizontal, horizontalInset)
             .padding(.bottom, bottomInset)
             .clipShape(surfaceShape)
-            .overlay {
-                surfaceShape
-                    .stroke(Color.white.opacity(0.07), lineWidth: 1)
-            }
         }
         .frame(width: surfaceWidth, height: surfaceHeight, alignment: .top)
+    }
+
+    @ViewBuilder
+    private func openedSurfaceBackground(
+        shape: OpenedIslandSurfaceShape,
+        width: CGFloat,
+        height: CGFloat
+    ) -> some View {
+        ZStack {
+            shape
+                .fill(IslandDesignPalette.Glass.inkTint.opacity(0.52))
+                .shadow(
+                    color: .black.opacity(0.42),
+                    radius: 18,
+                    x: 0,
+                    y: 10
+                )
+
+            if reduceTransparency {
+                shape.fill(IslandDesignPalette.Glass.opaqueFallback)
+            } else {
+                shape.fill(.ultraThinMaterial)
+                shape.fill(IslandDesignPalette.Glass.inkTint.opacity(0.62))
+            }
+
+            shape
+                .stroke(
+                    IslandDesignPalette.Glass.edge,
+                    lineWidth: 0.75
+                )
+        }
+        .frame(width: width, height: height)
     }
 
     nonisolated static func openedBodyContentWidth(
@@ -394,7 +425,7 @@ struct IslandPanelView: View {
                 let metrics = openedHeaderMetrics(for: geometry.size.width)
 
                 HStack(spacing: 0) {
-                    usageLaneView(providerGroups.left, alignment: .leading)
+                    openedHeaderLeadingContent(providerGroups.left)
                         .frame(width: metrics.leftUsageWidth, alignment: .leading)
 
                     Color.clear
@@ -414,7 +445,7 @@ struct IslandPanelView: View {
             }
         } else {
             HStack(spacing: 12) {
-                openedUsageSummary
+                openedHeaderLeadingContent(openedUsageProviders)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 openedHeaderButtons
@@ -422,6 +453,31 @@ struct IslandPanelView: View {
             .padding(.leading, openedHeaderHorizontalPadding)
             .padding(.trailing, openedHeaderHorizontalPadding)
             .padding(.top, Self.headerTopPadding)
+        }
+    }
+
+    @ViewBuilder
+    private func openedHeaderLeadingContent(
+        _ providers: [UsageProviderPresentation]
+    ) -> some View {
+        let sessionLabel = lang.t("island.sessionList.title").lowercased()
+
+        if providers.isEmpty {
+            HStack(spacing: 7) {
+                UnifiedBars(
+                    mode: model.islandClosedMode,
+                    size: 15,
+                    tint: V6Palette.paper.opacity(0.82)
+                )
+                .frame(width: 15, height: 15)
+
+                Text("\(model.liveSessionCount) \(sessionLabel)")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(V6Palette.paper.opacity(0.72))
+                    .lineLimit(1)
+            }
+        } else {
+            compactUsageSummaryView(providers)
         }
     }
 
@@ -440,13 +496,25 @@ struct IslandPanelView: View {
                 model.showSettings()
             }
 
-            headerIconButton(
-                systemName: "power",
-                tint: .white.opacity(0.62),
-                accessibilityLabel: model.lang.t("island.quit.confirmTitle")
-            ) {
-                model.isQuitConfirmationPresented = true
+            Menu {
+                Button {
+                    model.isQuitConfirmationPresented = true
+                } label: {
+                    Label(
+                        model.lang.t("settings.about.quitApp"),
+                        systemImage: "power"
+                    )
+                }
+            } label: {
+                headerControlLabel(
+                    systemName: "ellipsis",
+                    tint: .white.opacity(0.62)
+                )
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel(model.lang.t("island.quit.confirmTitle"))
         }
     }
 
@@ -457,14 +525,30 @@ struct IslandPanelView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: Self.headerControlButtonSize, height: Self.headerControlButtonSize)
-                .background(.white.opacity(0.08), in: Circle())
+            headerControlLabel(systemName: systemName, tint: tint)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel ?? systemName)
+    }
+
+    private func headerControlLabel(
+        systemName: String,
+        tint: Color
+    ) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(
+                width: Self.headerControlButtonSize,
+                height: Self.headerControlButtonSize
+            )
+            .background(IslandDesignPalette.Glass.controlFill, in: Circle())
+            .overlay(
+                Circle().strokeBorder(
+                    IslandDesignPalette.Glass.controlStroke,
+                    lineWidth: 0.5
+                )
+            )
     }
 
     @ViewBuilder
@@ -975,11 +1059,11 @@ struct IslandPanelView: View {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text(model.lang.t("island.hint.installHooks"))
+                    .foregroundStyle(V6Palette.paper.opacity(0.9))
+                Text(model.lang.t("island.hint.finishSetup"))
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(2)
+                    .foregroundStyle(V6Palette.paper.opacity(0.82))
+                    .lineLimit(1)
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
@@ -990,10 +1074,13 @@ struct IslandPanelView: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.14))
+                    .fill(IslandDesignPalette.Glass.calloutFill)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.accentColor.opacity(0.35), lineWidth: 0.5)
+                            .stroke(
+                                IslandDesignPalette.Glass.calloutStroke,
+                                lineWidth: 0.5
+                            )
                     )
             )
         }
@@ -1458,10 +1545,9 @@ struct IslandPanelView: View {
         let overview = sessionOverviewItems(referenceDate: referenceDate)
 
         return HStack(spacing: 8) {
-            Text(lang.t("island.sessionList.title").uppercased())
-                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                .tracking(1.4)
-                .foregroundStyle(V6Palette.paper.opacity(0.55))
+            Text(lang.t("island.sessionList.title"))
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(V6Palette.paper.opacity(0.78))
 
             ViewThatFits(in: .horizontal) {
                 sessionOverviewView(overview, compact: false)
