@@ -738,9 +738,24 @@ struct AgentSessionPresentationTests {
                 paneTitle: "codex"
             )
         )
+        var desktopSessionAwaitingTargetMerge = AgentSession(
+            id: "desktop-session",
+            title: "Codex · app",
+            tool: .codex,
+            phase: .running,
+            summary: "Working",
+            updatedAt: .now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Unknown",
+                workspaceName: "app",
+                paneTitle: "Codex"
+            )
+        )
+        desktopSessionAwaitingTargetMerge.isCodexAppSession = true
 
         #expect(appSession.spotlightRuntimeSurfaceBadge == "app")
         #expect(terminalSession.spotlightRuntimeSurfaceBadge == "terminal")
+        #expect(desktopSessionAwaitingTargetMerge.spotlightRuntimeSurfaceBadge == "app")
     }
 
     @Test

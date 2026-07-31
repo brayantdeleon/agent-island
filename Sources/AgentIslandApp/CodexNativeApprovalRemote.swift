@@ -55,9 +55,7 @@ struct CodexNativeApprovalRemote {
 
     @MainActor
     func resolve(_ session: AgentSession, approved: Bool) async throws {
-        guard let threadID = session.jumpTarget?.codexThreadID?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !threadID.isEmpty,
+        guard let threadID = Self.threadID(for: session),
             let threadURL = URL(string: "codex://threads/\(threadID)")
         else {
             throw CodexNativeApprovalRemoteError.missingThread
@@ -238,6 +236,27 @@ struct CodexNativeApprovalRemote {
             )
         }
         throw CodexNativeApprovalRemoteError.approvalControlDidNotRespond
+    }
+
+    static func threadID(for session: AgentSession) -> String? {
+        if let threadID = session.jumpTarget?.codexThreadID?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !threadID.isEmpty {
+            return threadID
+        }
+
+        // Codex Desktop's session ID is its thread ID. During startup, a hook
+        // can create the session before rollout discovery enriches the jump
+        // target. The runtime flag remains sufficient evidence to route the
+        // native approval to that exact thread.
+        guard session.isCodexAppSession
+                || session.jumpTarget?.terminalApp == "Codex.app" else {
+            return nil
+        }
+        let sessionID = session.id.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return sessionID.isEmpty ? nil : sessionID
     }
 
     private static func controlLabels(
