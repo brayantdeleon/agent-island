@@ -341,6 +341,20 @@ final class SessionDiscoveryCoordinator {
         } ?? false
 
         if tool == .codex,
+           discovered.terminalApp == "Codex.app" {
+            let existingTerminalApp = existing.terminalApp
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if existingTerminalApp.isEmpty || existingTerminalApp == "unknown" {
+                // A hook can arrive before rollout/app-server discovery has
+                // identified its host. Prefer the first-class Desktop target
+                // so the row, jump action, and native approval route all use
+                // the Codex thread rather than retaining a placeholder.
+                return discovered
+            }
+        }
+
+        if tool == .codex,
            existing.terminalApp == "Codex.app",
            discovered.terminalApp == "Codex.app",
            !existingHasUsefulWorkspace,

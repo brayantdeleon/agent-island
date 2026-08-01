@@ -1929,6 +1929,57 @@ struct AppModelSessionListTests {
     }
 
     @Test
+    func mergeDiscoveredCodexDesktopSessionReplacesUnknownHookTarget() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let model = AppModel()
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "codex-desktop-thread",
+                    title: "Review native approval routing",
+                    tool: .codex,
+                    origin: .live,
+                    attachmentState: .attached,
+                    phase: .running,
+                    summary: "Working",
+                    updatedAt: now,
+                    jumpTarget: JumpTarget(
+                        terminalApp: "Unknown",
+                        workspaceName: "agent-island",
+                        paneTitle: "Codex codex-de",
+                        workingDirectory: "/tmp/agent-island"
+                    )
+                ),
+            ]
+        )
+
+        var discovered = AgentSession(
+            id: "codex-desktop-thread",
+            title: "Review native approval routing",
+            tool: .codex,
+            origin: .live,
+            attachmentState: .stale,
+            phase: .running,
+            summary: "Working",
+            updatedAt: now.addingTimeInterval(1),
+            jumpTarget: JumpTarget(
+                terminalApp: "Codex.app",
+                workspaceName: "agent-island",
+                paneTitle: "Review native approval routing",
+                workingDirectory: "/tmp/agent-island",
+                codexThreadID: "codex-desktop-thread"
+            )
+        )
+        discovered.isCodexAppSession = true
+
+        let merged = model.discovery.mergeDiscoveredSessions([discovered])
+
+        #expect(merged.first?.jumpTarget?.terminalApp == "Codex.app")
+        #expect(merged.first?.jumpTarget?.codexThreadID == "codex-desktop-thread")
+        #expect(merged.first?.isCodexAppSession == true)
+    }
+
+    @Test
     func mergedWithSyntheticClaudeSessionsAddsGhosttyClaudeProcessWhenNoTrackedSessionExists() {
         let now = Date(timeIntervalSince1970: 2_000)
         let model = AppModel()

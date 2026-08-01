@@ -17,6 +17,7 @@ Packages/
 Package.resolved
 
 # Local tooling artifacts
+.Rhistory
 .claude/
 .playwright-mcp/
 output/
