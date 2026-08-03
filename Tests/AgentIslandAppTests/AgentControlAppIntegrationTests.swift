@@ -393,6 +393,71 @@ struct AgentControlAppIntegrationTests {
     }
 
     @Test
+    func unchangedSlotAcceptsSelectionFromPreviousSnapshotAfterNewThreadAppears() throws {
+        let token: UInt64 = 0xB8B7_B6B5_B4B3_B2B1
+        let harness = makeHarness(enabled: true, selectionToken: token)
+        defer {
+            harness.model.agentControlKeyboardEnabled = false
+        }
+        let now = Date()
+        let first = makeSession(
+            id: "first",
+            firstSeenAt: now,
+            updatedAt: now,
+            phase: .running
+        )
+        harness.model.state = SessionState(sessions: [first])
+        harness.model.startAgentControlDeviceIntegrationIfNeeded()
+        let hello = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports[0]
+        )
+        harness.transport.emit(
+            .report(try capabilitiesReport(sequence: hello.sequence))
+        )
+        let firstSnapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        let firstGeneration = readUInt16(firstSnapshot.payload, at: 8)
+
+        harness.model.state = SessionState(
+            sessions: [
+                first,
+                makeSession(
+                    id: "new-thread",
+                    firstSeenAt: now.addingTimeInterval(1),
+                    updatedAt: now.addingTimeInterval(1),
+                    phase: .running
+                ),
+            ]
+        )
+        let currentSnapshot = try latestSnapshotPacket(
+            in: harness.transport.sentReports
+        )
+        #expect(readUInt16(currentSnapshot.payload, at: 8) != firstGeneration)
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 1,
+                    slotIndex: 0,
+                    generation: firstGeneration
+                )
+            )
+        )
+        let response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+
+        #expect(response.messageType == .selectionAcknowledgement)
+        #expect(response.flags == [.response])
+        #expect(
+            response.payload[9]
+                == AgentControlSelectionResult.accepted.rawValue
+        )
+        #expect(harness.model.agentControlSelectedSessionID == "first")
+    }
+
+    @Test
     func repeatedSelectedDigitPressesToggleItsDetailPresentation() throws {
         let harness = makeHarness(enabled: true)
         defer {
@@ -1523,6 +1588,10 @@ struct AgentControlAppIntegrationTests {
             response.payload[9]
                 == AgentControlSelectionResult.staleSnapshot.rawValue
         )
+        #expect(
+            harness.model.agentControlDeviceDiagnostics.snapshotResendCount
+                == 1
+        )
         #expect(harness.model.selectedSessionID == nil)
 
         harness.transport.emit(
@@ -1553,11 +1622,34 @@ struct AgentControlAppIntegrationTests {
             ]
         )
         #expect(harness.model.agentControlSelectedSessionID == nil)
+
+        harness.transport.emit(
+            .report(
+                try slotSelectionReport(
+                    sequence: 3,
+                    slotIndex: 0,
+                    generation: generation
+                )
+            )
+        )
+        response = try AgentControlPacketCodec.decode(
+            harness.transport.sentReports.last!
+        )
+        #expect(response.flags == [.response, .error])
+        #expect(
+            response.payload[9]
+                == AgentControlSelectionResult.staleSnapshot.rawValue
+        )
+        #expect(
+            harness.model.agentControlDeviceDiagnostics.snapshotResendCount
+                == 2
+        )
+
         harness.transport.emit(
             .report(
                 try deviceReport(
                     type: .actionInvoked,
-                    sequence: 3,
+                    sequence: 4,
                     payload: littleEndianBytes(nonce)
                         + [0, AgentControlAction.jump.rawValue]
                         + littleEndianBytes(token)

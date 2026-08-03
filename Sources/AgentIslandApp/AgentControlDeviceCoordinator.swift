@@ -1,6 +1,12 @@
 import Foundation
 import Observation
+import OSLog
 import AgentIslandCore
+
+private let agentControlLogger = Logger(
+    subsystem: "app.agentisland",
+    category: "AgentControl"
+)
 
 enum AgentControlDeviceConnectionState: String, Equatable, Sendable {
     case stopped
@@ -29,6 +35,9 @@ struct AgentControlDeviceDiagnostics: Equatable, Sendable {
     var ignoredReportCount = 0
     var duplicateOrOutOfOrderReportCount = 0
     var reconnectCount = 0
+    var snapshotResendCount = 0
+    var lastSelectionResult: AgentControlSelectionResult?
+    var lastActionResult: AgentControlActionResult?
     var lastError: String?
 
     var summary: String {
@@ -74,6 +83,8 @@ struct AgentControlDeviceSnapshot: Equatable, Sendable {
 @MainActor
 @Observable
 final class AgentControlDeviceCoordinator {
+    private static let retainedSnapshotLimit = 8
+
     private(set) var diagnostics = AgentControlDeviceDiagnostics()
 
     @ObservationIgnored
@@ -84,6 +95,12 @@ final class AgentControlDeviceCoordinator {
 
     @ObservationIgnored
     private(set) var currentSnapshot: AgentControlDeviceSnapshot?
+
+    @ObservationIgnored
+    private var retainedSnapshots: [UInt16: AgentControlDeviceSnapshot] = [:]
+
+    @ObservationIgnored
+    private var retainedSnapshotGenerations: [UInt16] = []
 
     @ObservationIgnored
     private let transport: any AgentControlHIDTransport
@@ -222,6 +239,47 @@ final class AgentControlDeviceCoordinator {
             return
         }
         sendSnapshot(content)
+    }
+
+    func snapshot(
+        connectionNonce: UInt64,
+        generation: UInt16
+    ) -> AgentControlDeviceSnapshot? {
+        guard let snapshot = retainedSnapshots[generation],
+              snapshot.connectionNonce == connectionNonce else {
+            return nil
+        }
+        return snapshot
+    }
+
+    /// Replays the latest authoritative snapshot without advancing its
+    /// generation. A stale selection proves the device missed or raced that
+    /// snapshot; replaying it lets the next intent recover without changing
+    /// any slot identity or epoch.
+    func resendCurrentSnapshot() {
+        guard diagnostics.state == .ready,
+              let connectionNonce,
+              let snapshot = currentSnapshot,
+              snapshot.connectionNonce == connectionNonce else {
+            return
+        }
+
+        do {
+            _ = try sendPacket(
+                messageType: .stateSnapshot,
+                payload: AgentControlMessageCodec.stateSnapshotPayload(
+                    connectionNonce: connectionNonce,
+                    generation: snapshot.generation,
+                    content: snapshot.content
+                )
+            )
+            diagnostics.snapshotResendCount += 1
+            agentControlLogger.notice(
+                "Replayed snapshot generation \(snapshot.generation) after stale device selection"
+            )
+        } catch {
+            scheduleTransportRestart(after: error)
+        }
     }
 
     func prepareForSleep() {
@@ -497,12 +555,14 @@ final class AgentControlDeviceCoordinator {
             )
             slotEpochs = nextSlotEpochs
             lastSentSnapshot = content
-            currentSnapshot = AgentControlDeviceSnapshot(
+            let snapshot = AgentControlDeviceSnapshot(
                 connectionNonce: connectionNonce,
                 generation: snapshotGeneration,
                 content: content,
                 slotEpochs: slotEpochs
             )
+            currentSnapshot = snapshot
+            retainSnapshot(snapshot)
             diagnostics.snapshotGeneration = snapshotGeneration
         } catch {
             scheduleTransportRestart(after: error)
@@ -525,6 +585,10 @@ final class AgentControlDeviceCoordinator {
             return false
         }
 
+        diagnostics.lastSelectionResult = result
+        agentControlLogger.debug(
+            "Selection response slot=\(slotIndex) result=\(result.rawValue)"
+        )
         do {
             try sendResponsePacket(
                 messageType: .selectionAcknowledgement,
@@ -594,6 +658,10 @@ final class AgentControlDeviceCoordinator {
             return false
         }
 
+        diagnostics.lastActionResult = result
+        agentControlLogger.debug(
+            "Action response slot=\(slotIndex) action=\(action.rawValue) result=\(result.rawValue)"
+        )
         do {
             try sendResponsePacket(
                 messageType: .actionResult,
@@ -768,6 +836,8 @@ final class AgentControlDeviceCoordinator {
         lastDeviceSequence = nil
         lastSentSnapshot = nil
         currentSnapshot = nil
+        retainedSnapshots.removeAll()
+        retainedSnapshotGenerations.removeAll()
         snapshotGeneration = 0
         slotEpochs = [UInt16](
             repeating: 0,
@@ -779,6 +849,25 @@ final class AgentControlDeviceCoordinator {
         diagnostics.firmwareBuildIdentifier = nil
         diagnostics.snapshotGeneration = nil
         diagnostics.lastLayerEnabled = nil
+        diagnostics.lastSelectionResult = nil
+        diagnostics.lastActionResult = nil
+    }
+
+    private func retainSnapshot(_ snapshot: AgentControlDeviceSnapshot) {
+        if let existingIndex = retainedSnapshotGenerations.firstIndex(
+            of: snapshot.generation
+        ) {
+            retainedSnapshotGenerations.remove(at: existingIndex)
+        }
+        retainedSnapshots[snapshot.generation] = snapshot
+        retainedSnapshotGenerations.append(snapshot.generation)
+
+        while retainedSnapshotGenerations.count
+                > Self.retainedSnapshotLimit,
+              let expiredGeneration = retainedSnapshotGenerations.first {
+            retainedSnapshotGenerations.removeFirst()
+            retainedSnapshots.removeValue(forKey: expiredGeneration)
+        }
     }
 
     private func setConnectionState(

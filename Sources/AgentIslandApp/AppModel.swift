@@ -1600,17 +1600,35 @@ final class AppModel {
             )
             return
         }
-        guard snapshot.generation == snapshotGeneration else {
-            rejectAgentControlSelection(
-                requestSequence: requestSequence,
+        let index = Int(slotIndex)
+        if snapshot.generation != snapshotGeneration {
+            let requestedSnapshot = agentControlDeviceCoordinator.snapshot(
                 connectionNonce: connectionNonce,
-                slotIndex: slotIndex,
-                result: .staleSnapshot
+                generation: snapshotGeneration
             )
-            return
+            let keepsExactSlotIdentity = requestedSnapshot.map { requested in
+                index < requested.content.slots.count
+                    && index < requested.slotEpochs.count
+                    && index < snapshot.content.slots.count
+                    && index < snapshot.slotEpochs.count
+                    && requested.content.slots[index]?.identity
+                        == snapshot.content.slots[index]?.identity
+                    && requested.slotEpochs[index]
+                        == snapshot.slotEpochs[index]
+            } ?? false
+
+            guard keepsExactSlotIdentity else {
+                agentControlDeviceCoordinator.resendCurrentSnapshot()
+                rejectAgentControlSelection(
+                    requestSequence: requestSequence,
+                    connectionNonce: connectionNonce,
+                    slotIndex: slotIndex,
+                    result: .staleSnapshot
+                )
+                return
+            }
         }
 
-        let index = Int(slotIndex)
         if slotIndex == AgentControlProtocolV1.toggleSlotIndex {
             handleAgentControlIslandToggle(
                 requestSequence: requestSequence,
