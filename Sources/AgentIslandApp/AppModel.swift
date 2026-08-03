@@ -1,8 +1,14 @@
 import AppKit
 import Foundation
 import Observation
+import OSLog
 import AgentIslandCore
 import SwiftUI
+
+private let appModelAgentControlLogger = Logger(
+    subsystem: "app.agentisland",
+    category: "AgentControl"
+)
 
 extension Notification.Name {
     /// Posted by `AppModel.showOnboarding()` to ask `SettingsView` to
@@ -1492,6 +1498,9 @@ final class AppModel {
             slotIndex,
             snapshotGeneration
         ):
+            appModelAgentControlLogger.notice(
+                "Received slot selection slot=\(slotIndex) deviceGeneration=\(snapshotGeneration) currentGeneration=\(self.agentControlDeviceDiagnostics.snapshotGeneration ?? 0)"
+            )
             handleAgentControlSlotSelection(
                 requestSequence: event.sequence,
                 connectionNonce: connectionNonce,
@@ -1505,6 +1514,9 @@ final class AppModel {
             action,
             selectionToken
         ):
+            appModelAgentControlLogger.notice(
+                "Received action slot=\(slotIndex) action=\(action.rawValue)"
+            )
             handleAgentControlAction(
                 requestSequence: event.sequence,
                 connectionNonce: connectionNonce,
@@ -1600,17 +1612,38 @@ final class AppModel {
             )
             return
         }
-        guard snapshot.generation == snapshotGeneration else {
-            rejectAgentControlSelection(
-                requestSequence: requestSequence,
+        let index = Int(slotIndex)
+        if snapshot.generation != snapshotGeneration {
+            let requestedSnapshot = agentControlDeviceCoordinator.snapshot(
                 connectionNonce: connectionNonce,
-                slotIndex: slotIndex,
-                result: .staleSnapshot
+                generation: snapshotGeneration
             )
-            return
+            let keepsExactSlotIdentity = requestedSnapshot.map { requested in
+                index < requested.content.slots.count
+                    && index < requested.slotEpochs.count
+                    && index < snapshot.content.slots.count
+                    && index < snapshot.slotEpochs.count
+                    && requested.content.slots[index]?.identity
+                        == snapshot.content.slots[index]?.identity
+                    && requested.slotEpochs[index]
+                        == snapshot.slotEpochs[index]
+            } ?? false
+
+            guard keepsExactSlotIdentity else {
+                agentControlDeviceCoordinator.resendCurrentSnapshot()
+                rejectAgentControlSelection(
+                    requestSequence: requestSequence,
+                    connectionNonce: connectionNonce,
+                    slotIndex: slotIndex,
+                    result: .staleSnapshot
+                )
+                return
+            }
+            appModelAgentControlLogger.notice(
+                "Accepted prior-generation selection for unchanged slot=\(slotIndex)"
+            )
         }
 
-        let index = Int(slotIndex)
         if slotIndex == AgentControlProtocolV1.toggleSlotIndex {
             handleAgentControlIslandToggle(
                 requestSequence: requestSequence,
@@ -3132,6 +3165,10 @@ final class AppModel {
         let shouldDelayForDismissAnimation = isOverlayVisible
         let jumpAction = terminalJumpAction
 
+        appModelAgentControlLogger.notice(
+            "Dispatching jump target=\(jumpTarget.terminalApp, privacy: .public) hasCodexThread=\(jumpTarget.codexThreadID?.isEmpty == false)"
+        )
+
         dismissOverlayForJump()
         jumpTask?.cancel()
         jumpTask = Task { [weak self] in
@@ -3148,6 +3185,9 @@ final class AppModel {
                     return
                 }
 
+                appModelAgentControlLogger.notice(
+                    "Jump completed result=\(result, privacy: .public)"
+                )
                 self?.lastActionMessage = result
             } catch is CancellationError {
                 return
@@ -3156,6 +3196,9 @@ final class AppModel {
                     return
                 }
 
+                appModelAgentControlLogger.error(
+                    "Jump failed error=\(error.localizedDescription, privacy: .public)"
+                )
                 self?.lastActionMessage = "Jump failed: \(error.localizedDescription)"
             }
         }

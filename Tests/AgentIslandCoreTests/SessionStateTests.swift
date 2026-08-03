@@ -1145,6 +1145,74 @@ struct SessionStateTests {
     }
 
     @Test
+    func unresolvedCodexHookPreservesPreviouslyProvenDesktopJumpTarget() async throws {
+        let socketURL = BridgeSocketLocation.uniqueTestURL()
+        let server = BridgeServer(socketURL: socketURL)
+        try server.start()
+        defer { server.stop() }
+
+        let observer = LocalBridgeClient(socketURL: socketURL)
+        let stream = try observer.connect()
+        defer { observer.disconnect() }
+        try await observer.send(.registerClient(role: .observer))
+
+        let sessionID = "codex-desktop-preserved"
+        let startedPayload = CodexHookPayload(
+            cwd: "/tmp/old-workspace",
+            hookEventName: .sessionStart,
+            model: "gpt-5-codex",
+            permissionMode: .default,
+            sessionID: sessionID,
+            terminalApp: "Codex.app",
+            transcriptPath: "/tmp/codex-desktop-preserved.jsonl"
+        )
+        _ = try BridgeCommandClient(socketURL: socketURL).send(
+            .processCodexHook(startedPayload)
+        )
+
+        let unresolvedPayload = CodexHookPayload(
+            cwd: "/tmp/current-workspace",
+            hookEventName: .userPromptSubmit,
+            model: "gpt-5-codex",
+            permissionMode: .default,
+            sessionID: sessionID,
+            transcriptPath: "/tmp/codex-desktop-preserved.jsonl",
+            prompt: "continue from the desktop app"
+        )
+        _ = try BridgeCommandClient(socketURL: socketURL).send(
+            .processCodexHook(unresolvedPayload)
+        )
+
+        var iterator = stream.makeAsyncIterator()
+        let startedEvent = try await nextEvent(from: &iterator)
+        let jumpTargetEvent = try await nextEvent(from: &iterator)
+        let metadataEvent = try await nextEvent(from: &iterator)
+        let activityEvent = try await nextEvent(from: &iterator)
+
+        #expect(startedEvent.isSessionStarted)
+        #expect(
+            jumpTargetEvent.jumpTargetUpdate?.jumpTarget.terminalApp
+                == "Codex.app"
+        )
+        #expect(
+            jumpTargetEvent.jumpTargetUpdate?.jumpTarget.codexThreadID
+                == sessionID
+        )
+        #expect(
+            jumpTargetEvent.jumpTargetUpdate?.jumpTarget.workingDirectory
+                == "/tmp/current-workspace"
+        )
+        #expect(
+            metadataEvent.trackedMetadataUpdate?.codexMetadata.lastUserPrompt
+                == "continue from the desktop app"
+        )
+        #expect(
+            activityEvent.activityUpdate?.summary
+                == "Prompt: continue from the desktop app"
+        )
+    }
+
+    @Test
     func cursorHookPreservesToolMetadataAcrossNonStopEvents() async throws {
         let socketURL = BridgeSocketLocation.uniqueTestURL()
         let server = BridgeServer(socketURL: socketURL)
