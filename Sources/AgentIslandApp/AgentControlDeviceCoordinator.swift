@@ -586,7 +586,7 @@ final class AgentControlDeviceCoordinator {
         }
 
         diagnostics.lastSelectionResult = result
-        agentControlLogger.debug(
+        agentControlLogger.notice(
             "Selection response slot=\(slotIndex) result=\(result.rawValue)"
         )
         do {
@@ -659,7 +659,7 @@ final class AgentControlDeviceCoordinator {
         }
 
         diagnostics.lastActionResult = result
-        agentControlLogger.debug(
+        agentControlLogger.notice(
             "Action response slot=\(slotIndex) action=\(action.rawValue) result=\(result.rawValue)"
         )
         do {
