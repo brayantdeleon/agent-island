@@ -3,12 +3,12 @@ import Testing
 @testable import AgentIslandCore
 
 /// Pins `BridgeServer.mergeJumpTargetPreservingExistingResolvedFields`
-/// behavior on two "resolved" fields — `terminalSessionID` and
-/// `warpPaneUUID`. Both fields are determined at hook time by
-/// potentially-flaky runtime probes (AppleScript locators, SQLite
-/// reads, process-tree walks), so when a later hook fails to re-resolve
-/// them the merged jumpTarget must carry forward the previous value
-/// instead of clearing it.
+/// behavior on runtime-resolved fields such as `terminalSessionID`,
+/// `warpPaneUUID`, and the Codex Desktop host identity. These are determined
+/// at hook time by potentially-flaky runtime probes (AppleScript locators,
+/// SQLite reads, process-tree walks), so when a later hook fails to re-resolve
+/// them the merged jumpTarget must carry forward the previous value instead
+/// of clearing it.
 struct BridgeServerJumpTargetMergeTests {
     @Test
     func preservesWarpPaneUUIDWhenIncomingIsNilAndExistingHasValue() {
@@ -98,6 +98,60 @@ struct BridgeServerJumpTargetMergeTests {
         )
 
         #expect(merged.terminalSessionID == "ghostty-session-42")
+    }
+
+    @Test
+    func preservesCodexDesktopIdentityWhenIncomingHookHostIsUnknown() {
+        let existing = JumpTarget(
+            terminalApp: "Codex.app",
+            workspaceName: "old-workspace",
+            paneTitle: "Codex Desktop task",
+            workingDirectory: "/tmp/old-workspace",
+            codexThreadID: "codex-desktop-thread"
+        )
+        let incoming = JumpTarget(
+            terminalApp: "Unknown",
+            workspaceName: "current-workspace",
+            paneTitle: "Codex codex-de",
+            workingDirectory: "/tmp/current-workspace"
+        )
+
+        let merged = BridgeServer.mergeJumpTargetPreservingExistingResolvedFields(
+            incoming: incoming,
+            existing: existing
+        )
+
+        #expect(merged.terminalApp == "Codex.app")
+        #expect(merged.codexThreadID == "codex-desktop-thread")
+        #expect(merged.workspaceName == "current-workspace")
+        #expect(merged.workingDirectory == "/tmp/current-workspace")
+    }
+
+    @Test
+    func concreteTerminalHostCanReplaceCodexDesktopIdentity() {
+        let existing = JumpTarget(
+            terminalApp: "Codex.app",
+            workspaceName: "demo",
+            paneTitle: "Codex Desktop task",
+            workingDirectory: "/tmp/demo",
+            codexThreadID: "codex-desktop-thread"
+        )
+        let incoming = JumpTarget(
+            terminalApp: "Ghostty",
+            workspaceName: "demo",
+            paneTitle: "Codex CLI task",
+            workingDirectory: "/tmp/demo",
+            terminalSessionID: "ghostty-session-99"
+        )
+
+        let merged = BridgeServer.mergeJumpTargetPreservingExistingResolvedFields(
+            incoming: incoming,
+            existing: existing
+        )
+
+        #expect(merged.terminalApp == "Ghostty")
+        #expect(merged.codexThreadID == nil)
+        #expect(merged.terminalSessionID == "ghostty-session-99")
     }
 
     @Test

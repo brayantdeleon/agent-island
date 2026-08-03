@@ -2003,7 +2003,13 @@ public final class BridgeServer: @unchecked Sendable {
     ///    the mapping for the rest of the session, demoting precision
     ///    jump to bare activation until the NEXT lucky hook.
     ///
-    /// Both are "resolved fields": the hook either succeeds at
+    /// 3. Codex Desktop identity — app-server or rollout discovery can prove
+    ///    that a session belongs to Codex.app before a later hook runs without
+    ///    the app bundle environment. That hook reports `Unknown`; preserve
+    ///    the proven app host and thread ID while still accepting its fresher
+    ///    workspace fields. A concrete terminal host is allowed to replace it.
+    ///
+    /// These are "resolved fields": the hook either succeeds at
     /// finding them or reports nil. nil does NOT mean "absence is the
     /// ground truth" — it means "this invocation could not determine
     /// the value, prefer the last known good one".
@@ -2021,6 +2027,18 @@ public final class BridgeServer: @unchecked Sendable {
            let existingUUID = existing?.warpPaneUUID,
            !existingUUID.isEmpty {
             merged.warpPaneUUID = existingUUID
+        }
+        let incomingHost = merged.terminalApp
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if (incomingHost.isEmpty || incomingHost == "unknown"),
+           existing?.terminalApp == "Codex.app" {
+            merged.terminalApp = "Codex.app"
+            if merged.codexThreadID?.isEmpty != false,
+               let existingThreadID = existing?.codexThreadID,
+               !existingThreadID.isEmpty {
+                merged.codexThreadID = existingThreadID
+            }
         }
         return merged
     }

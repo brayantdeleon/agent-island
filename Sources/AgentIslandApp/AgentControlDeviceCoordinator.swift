@@ -587,7 +587,7 @@ final class AgentControlDeviceCoordinator {
 
         diagnostics.lastSelectionResult = result
         agentControlLogger.notice(
-            "Selection response slot=\(slotIndex) result=\(result.rawValue)"
+            "Selection response slot=\(slotIndex) result=\(result.rawValue) actions=\(allowedActions.rawValue) lifetime=\(lifetimeSeconds)"
         )
         do {
             try sendResponsePacket(
