@@ -87,6 +87,79 @@ struct CodexHooksTests {
     }
 
     @Test
+    func resumedCodexDesktopUsesRolloutOriginWhenRuntimeHostIsUnknown() {
+        let transcriptPath = "/tmp/resumed-codex-desktop.jsonl"
+        let payload = CodexHookPayload(
+            cwd: "/Users/u/project",
+            hookEventName: .userPromptSubmit,
+            model: "gpt-5-codex",
+            permissionMode: .default,
+            sessionID: "desktop-thread",
+            transcriptPath: transcriptPath,
+            prompt: "resume this task"
+        ).withRuntimeContext(
+            environment: [:],
+            currentTTYProvider: { nil },
+            terminalLocatorProvider: { _ in
+                (sessionID: nil, tty: nil, title: nil)
+            },
+            warpPaneResolver: { _ in nil },
+            rolloutOriginatorProvider: { path in
+                path == transcriptPath ? "Codex Desktop" : nil
+            }
+        )
+
+        #expect(payload.terminalApp == "Codex.app")
+        #expect(payload.defaultJumpTarget.codexThreadID == "desktop-thread")
+    }
+
+    @Test
+    func concreteTerminalHostWinsOverDesktopRolloutOrigin() {
+        let payload = CodexHookPayload(
+            cwd: "/Users/u/project",
+            hookEventName: .userPromptSubmit,
+            model: "gpt-5-codex",
+            permissionMode: .default,
+            sessionID: "desktop-thread-resumed-in-cli",
+            transcriptPath: "/tmp/desktop-thread-resumed-in-cli.jsonl",
+            prompt: "resume from the cli"
+        ).withRuntimeContext(
+            environment: ["TERM_PROGRAM": "ghostty"],
+            currentTTYProvider: { "/dev/ttys001" },
+            terminalLocatorProvider: { _ in
+                (sessionID: "ghostty-session", tty: nil, title: "Codex CLI")
+            },
+            warpPaneResolver: { _ in nil },
+            rolloutOriginatorProvider: { _ in "Codex Desktop" }
+        )
+
+        #expect(payload.terminalApp == "Ghostty")
+        #expect(payload.defaultJumpTarget.codexThreadID == nil)
+        #expect(payload.defaultJumpTarget.terminalSessionID == "ghostty-session")
+    }
+
+    @Test
+    func readsCodexDesktopOriginatorFromRolloutSessionMetadata() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let rolloutURL = rootURL.appendingPathComponent("rollout.jsonl")
+        let line = """
+        {"type":"session_meta","payload":{"id":"desktop-thread","originator":"Codex Desktop"}}
+        """
+        try Data("\(line)\n".utf8).write(to: rolloutURL)
+
+        #expect(
+            CodexHookPayload.rolloutOriginator(atPath: rolloutURL.path)
+                == "Codex Desktop"
+        )
+    }
+
+    @Test
     func codexPermissionRequestPayloadAcceptsDescriptionOnlyToolInput() throws {
         let data = """
         {

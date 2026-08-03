@@ -652,16 +652,75 @@ public extension CodexHookPayload {
         return reader.lookupPaneUUID(forCwd: cwd)
     }
 
+    static let defaultRolloutOriginatorProvider:
+        @Sendable (String) -> String? = { path in
+            rolloutOriginator(atPath: path)
+        }
+
+    static func rolloutOriginator(atPath path: String) -> String? {
+        let path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty,
+              let handle = try? FileHandle(
+                forReadingFrom: URL(fileURLWithPath: path)
+              ) else {
+            return nil
+        }
+        defer { try? handle.close() }
+
+        let maximumSessionMetaBytes = 1_048_576
+        let chunkSize = 65_536
+        let newline = UInt8(ascii: "\n")
+        var data = Data()
+        var foundLineEnd = false
+
+        while data.count < maximumSessionMetaBytes {
+            let remaining = maximumSessionMetaBytes - data.count
+            guard let chunk = try? handle.read(
+                upToCount: min(chunkSize, remaining)
+            ), !chunk.isEmpty else {
+                break
+            }
+            data.append(chunk)
+            if let newlineIndex = data.firstIndex(of: newline) {
+                data = Data(data[..<newlineIndex])
+                foundLineEnd = true
+                break
+            }
+        }
+
+        guard foundLineEnd || data.count < maximumSessionMetaBytes,
+              let object = try? JSONSerialization.jsonObject(with: data)
+                as? [String: Any],
+              object["type"] as? String == "session_meta",
+              let payload = object["payload"] as? [String: Any] else {
+            return nil
+        }
+        return payload["originator"] as? String
+    }
+
     func withRuntimeContext(
         environment: [String: String],
         currentTTYProvider: () -> String?,
         terminalLocatorProvider: (String) -> (sessionID: String?, tty: String?, title: String?),
-        warpPaneResolver: (String) -> String? = Self.defaultWarpPaneResolver
+        warpPaneResolver: (String) -> String? = Self.defaultWarpPaneResolver,
+        rolloutOriginatorProvider: (String) -> String? =
+            Self.defaultRolloutOriginatorProvider
     ) -> CodexHookPayload {
         var payload = self
 
         if payload.terminalApp == nil {
             payload.terminalApp = inferTerminalApp(from: environment)
+        }
+
+        let resolvedHost = payload.terminalApp?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if resolvedHost == nil || resolvedHost?.isEmpty == true
+            || resolvedHost == "unknown",
+           let transcriptPath = payload.transcriptPath,
+           rolloutOriginatorProvider(transcriptPath)?
+            .caseInsensitiveCompare("Codex Desktop") == .orderedSame {
+            payload.terminalApp = "Codex.app"
         }
 
         if payload.terminalApp == "Warp", payload.warpPaneUUID == nil {
